@@ -11,6 +11,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  container_bridge:
+    path: packages/container_bridge
   maclauncher_sdk:
     git:
       url: https://github.com/Ghost233/MacLauncher.git

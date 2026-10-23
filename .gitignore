@@ -4,10 +4,15 @@
 .flutter-plugins
 .flutter-plugins-dependencies
 .packages
+.pub-cache/
+.pub/
 build/
 dist/
 .tooling/
 macos/Flutter/ephemeral/
 macos/Pods/
+**/Pods/
+*.iml
+.idea/
 **/__pycache__/
 *.pyc
