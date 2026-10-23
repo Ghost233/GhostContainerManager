@@ -3,6 +3,8 @@
 /// （停止需确认并列出运行中容器数）+ 常驻「重新运行引导检查」。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../services/errors.dart';
@@ -39,7 +41,9 @@ class RuntimePage extends StatelessWidget {
                   ),
                 const Spacer(),
                 OutlinedButton.icon(
-                  onPressed: controller.busy ? null : controller.refresh,
+                  onPressed: controller.busy
+                      ? null
+                      : () => unawaited(controller.refresh()),
                   icon: const Icon(Icons.refresh, size: 16),
                   label: const Text('重新运行引导检查'),
                 ),
@@ -216,7 +220,7 @@ class _ActionRow extends StatelessWidget {
       children: [
         if (!running && readiness.level != ReadinessLevel.notInstalled)
           FilledButton.icon(
-            onPressed: busy ? null : controller.startRuntime,
+            onPressed: busy ? null : () => unawaited(controller.startRuntime()),
             icon: const Icon(Icons.play_arrow, size: 16),
             label: Text(
               controller.action == SystemAction.starting
@@ -234,7 +238,9 @@ class _ActionRow extends StatelessWidget {
           ),
         if (readiness.level == ReadinessLevel.kernelMissing)
           FilledButton.icon(
-            onPressed: busy ? null : controller.installKernel,
+            onPressed: busy
+                ? null
+                : () => unawaited(controller.installKernel()),
             icon: const Icon(Icons.download, size: 16),
             label: Text(
               controller.action == SystemAction.installingKernel
@@ -256,7 +262,8 @@ class _ActionRow extends StatelessWidget {
         content: Text(
           '停止后所有容器将暂停运行'
           '${runningCount > 0 ? '（当前 $runningCount 个容器运行中）' : ''}'
-          '。MCP 管理工具在运行时就绪前将返回 runtime_unavailable。',
+          '。MCP 管理工具在运行时就绪前将返回 '
+          '${GcmErrorCode.runtimeUnavailable.wireName}。',
         ),
         actions: [
           TextButton(

@@ -106,6 +106,86 @@ class MethodChannelContainerBridge implements seam.ContainerBridge {
     return _events.containerLogs(id).map(_toLogEvent);
   }
 
+  @override
+  Future<seam.BridgeCommandResult> networkList() =>
+      _command(() => _channel.networkList());
+
+  @override
+  Future<seam.BridgeCommandResult> networkInspect(String id) =>
+      _command(() => _channel.networkInspect(id));
+
+  @override
+  Future<seam.BridgeCommandResult> composeHelp() =>
+      _command(() => _channel.composeHelp());
+
+  @override
+  Future<seam.BridgeCommandResult> composeRun(
+    List<String> arguments, {
+    Duration? timeout,
+  }) => _command(
+    () => _channel.composeRun(arguments, timeoutSeconds: timeout?.inSeconds),
+  );
+
+  // -- image domain (T5) -----------------------------------------------------
+
+  @override
+  Future<List<Map<String, Object?>>> imageList() async {
+    try {
+      return await _channel.imageList();
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<Map<String, Object?>> imageInspect(String reference) async {
+    try {
+      return await _channel.imageInspect(reference);
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<void> imageDelete(String reference) async {
+    try {
+      await _channel.imageDelete(reference);
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<Map<String, Object?>> imagePull({
+    required String pullId,
+    required String reference,
+    String? platform,
+  }) async {
+    try {
+      return await _channel.imagePull(
+        pullId: pullId,
+        reference: reference,
+        platform: platform,
+      );
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<void> imagePullCancel(String pullId) async {
+    try {
+      await _channel.imagePullCancel(pullId);
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Stream<seam.BridgeImagePullEvent> imagePullEvents() {
+    return _events.imagePull().map(seam.BridgeImagePullEvent.fromMap);
+  }
+
   static seam.BridgeLogEvent _toLogEvent(Map<String, Object?> event) {
     final kind = event['event'] as String? ?? 'data';
     switch (kind) {

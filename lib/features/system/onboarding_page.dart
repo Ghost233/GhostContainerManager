@@ -4,6 +4,8 @@
 /// use the degraded shell instead (see app_shell.dart).
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -96,7 +98,9 @@ class OnboardingPage extends StatelessWidget {
                 children: [
                   ..._actions(context, level),
                   OutlinedButton.icon(
-                    onPressed: controller.busy ? null : controller.refresh,
+                    onPressed: controller.busy
+                        ? null
+                        : () => unawaited(controller.refresh()),
                     icon: const Icon(Icons.refresh, size: 16),
                     label: Text(
                       controller.action == SystemAction.checking
@@ -174,25 +178,27 @@ class OnboardingPage extends StatelessWidget {
     return switch (level) {
       ReadinessLevel.notInstalled => [
         FilledButton.icon(
-          onPressed: () => copy('下载页地址', kContainerReleaseUrl),
+          onPressed: () => unawaited(copy('下载页地址', kContainerReleaseUrl)),
           icon: const Icon(Icons.copy, size: 16),
           label: const Text('复制官方下载页地址'),
         ),
         OutlinedButton.icon(
-          onPressed: () => copy('brew 命令', 'brew install container'),
+          onPressed: () => unawaited(copy('brew 命令', 'brew install container')),
           icon: const Icon(Icons.terminal, size: 16),
           label: const Text('复制 brew 安装命令'),
         ),
       ],
       ReadinessLevel.versionTooLow => [
         OutlinedButton.icon(
-          onPressed: () =>
-              copy('升级命令', 'sudo /usr/local/bin/update-container.sh'),
+          onPressed: () => unawaited(
+            copy('升级命令', 'sudo /usr/local/bin/update-container.sh'),
+          ),
           icon: const Icon(Icons.copy, size: 16),
           label: const Text('复制 pkg 升级命令'),
         ),
         OutlinedButton.icon(
-          onPressed: () => copy('brew 升级命令', 'brew upgrade container'),
+          onPressed: () =>
+              unawaited(copy('brew 升级命令', 'brew upgrade container')),
           icon: const Icon(Icons.copy, size: 16),
           label: const Text('复制 brew 升级命令'),
         ),

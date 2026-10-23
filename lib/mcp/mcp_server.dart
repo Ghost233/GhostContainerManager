@@ -12,9 +12,17 @@ library;
 
 import 'package:mcp_dart/mcp_dart.dart';
 
+import '../services/compose_service.dart';
 import '../services/container_service.dart';
+import '../services/image_service.dart';
+import '../services/mount_service.dart';
+import '../services/network_service.dart';
 import '../services/system_service.dart';
+import 'tools/compose_tools.dart';
 import 'tools/container_tools.dart';
+import 'tools/image_tools.dart';
+import 'tools/mount_tools.dart';
+import 'tools/network_tools.dart';
 import 'tools/system_tools.dart';
 
 /// MCP server embedded in the app. Lifecycle follows the app (start on
@@ -23,12 +31,20 @@ class GcmMcpServer {
   GcmMcpServer({
     required SystemService systemService,
     required ContainerService containerService,
+    ImageService? imageService,
+    MountService? mountService,
+    NetworkService? networkService,
+    ComposeService? composeService,
     this.host = '127.0.0.1',
     this.port = defaultPort,
     this.path = '/mcp',
     this.enableJsonResponse = false,
   }) : _systemService = systemService,
-       _containerService = containerService;
+       _containerService = containerService,
+       _imageService = imageService,
+       _mountService = mountService,
+       _networkService = networkService,
+       _composeService = composeService;
 
   /// Default MCP HTTP port (settings page default, issue #16 验收 4).
   static const int defaultPort = 35731;
@@ -41,6 +57,12 @@ class GcmMcpServer {
 
   final SystemService _systemService;
   final ContainerService _containerService;
+
+  /// Optional tool domains; null = not registered (tests, partial wiring).
+  final ImageService? _imageService;
+  final MountService? _mountService;
+  final NetworkService? _networkService;
+  final ComposeService? _composeService;
   final String host;
   final int port;
   final String path;
@@ -61,11 +83,27 @@ class GcmMcpServer {
     final server = McpServer(
       serverInfo,
       options: McpServerOptions(
-        instructions: '管理本机 Apple container 运行时（macOS）。system_* 工具报告与控制运行时状态；container_* 工具查询容器（只读）。',
+        instructions:
+            'Manages the local Apple container runtime on macOS. '
+            'system_* tools report and control runtime state; container_* '
+            'tools query and manage containers; image_* tools manage '
+            'images (pull/delete are slow or destructive); mount_*/'
+            'network_* tools are read-only views; compose_* tools run '
+            'the compose plugin (up/down change real resources). Confirm '
+            'with the user before calling tools annotated '
+            'destructiveHint: true.',
       ),
     );
     registerSystemTools(server, _systemService);
     registerContainerTools(server, _containerService);
+    final image = _imageService;
+    if (image != null) registerImageTools(server, image);
+    final mount = _mountService;
+    if (mount != null) registerMountTools(server, mount);
+    final network = _networkService;
+    if (network != null) registerNetworkTools(server, network);
+    final compose = _composeService;
+    if (compose != null) registerComposeTools(server, compose);
     return server;
   }
 

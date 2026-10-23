@@ -169,12 +169,14 @@ GcmException mapBridgeFailure(
   String combinedOutput, {
   required String operation,
   bool timedOut = false,
+  String? source,
 }) {
   if (timedOut) {
     return GcmException(
       GcmErrorCode.timeout,
       '$operation 超时',
       hint: '运行时可能卡住；重试或 container system restart',
+      source: source,
       cause: combinedOutput,
     );
   }
@@ -184,6 +186,7 @@ GcmException mapBridgeFailure(
       GcmErrorCode.runtimeUnavailable,
       'container apiserver 不可达',
       hint: '先执行 container system start',
+      source: source,
       cause: combinedOutput,
     );
   }
@@ -192,6 +195,7 @@ GcmException mapBridgeFailure(
       GcmErrorCode.versionMismatch,
       '客户端与 apiserver 版本不兼容',
       hint: 'container system restart；仍失败则对齐 CLI 与 app 内置客户端版本',
+      source: source,
       cause: combinedOutput,
     );
   }
@@ -202,6 +206,7 @@ GcmException mapBridgeFailure(
       GcmErrorCode.internal,
       '$operation 卡在交互式输入（kernel-install 标志缺失）',
       hint: '这是 app 缺陷：system start 必须显式传 --enable/--disable-kernel-install',
+      source: source,
       cause: combinedOutput,
     );
   }
@@ -209,12 +214,14 @@ GcmException mapBridgeFailure(
     return GcmException(
       GcmErrorCode.permissionDenied,
       '$operation 权限不足',
+      source: source,
       cause: combinedOutput,
     );
   }
   return GcmException(
     GcmErrorCode.internal,
     '$operation 失败',
+    source: source,
     cause: combinedOutput.trim().isEmpty ? null : combinedOutput,
   );
 }

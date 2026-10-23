@@ -1,5 +1,6 @@
 import Cocoa
 import ContainerAPIClient
+import ContainerizationOCI
 import FlutterMacOS
 
 /// Native bridge for Apple container operations (system domain first).
@@ -11,9 +12,11 @@ import FlutterMacOS
 ///   system start/stop or the recommended kernel install.
 ///
 /// The Dart side (lib/services/) owns all decisions; this layer only
-/// executes and returns raw payloads. Methods that the Dart adapter can
-/// resolve locally (binary lookup, kernel symlink check) never reach
-/// Swift.
+/// executes and returns raw payloads. Bridge-API probes (binary lookup,
+/// kernel symlink check) are resolved Dart-side via dart:io and never
+/// reach Swift; CliRunner still probes /usr/local/bin and
+/// /opt/homebrew/bin on its own, but only to locate the `container`
+/// binary when spawning CLI subprocesses.
 public class ContainerBridgePlugin: NSObject, FlutterPlugin {
   public static let methodsChannelName = "com.ghost233.container_bridge/methods"
   public static let eventsChannelName = "com.ghost233.container_bridge/events"
@@ -23,6 +26,16 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
   /// Active container log stream sessions, keyed by container id.
   /// Mutated on the main queue only.
   private var logSessions: [String: ContainerLogStreamSession] = [:]
+
+  /// In-flight image pulls, keyed by pullId (Dart issues the ids).
+  /// `image.pullCancel` removes and cancels the entry; completion only
+  /// answers the Flutter result when the entry is still present.
+  /// Mutated on the main queue only.
+  private var pullTasks: [String: Task<Void, Never>] = [:]
+
+  /// Sink for the "image.pull" event stream (single subscriber — the Dart
+  /// side fans out per pullId). Mutated on the main queue only.
+  private var imagePullSink: FlutterEventSink?
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let instance = ContainerBridgePlugin()
@@ -86,6 +99,99 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
         return
       }
       containerStats(id: id, result: result)
+    case "image.list":
+      imageList(result: result)
+    case "image.inspect":
+      guard let reference = args?["reference"] as? String else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "image.inspect requires a 'reference' string argument.",
+            details: nil
+          )
+        )
+        return
+      }
+      imageInspect(reference: reference, result: result)
+    case "image.delete":
+      guard let reference = args?["reference"] as? String else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "image.delete requires a 'reference' string argument.",
+            details: nil
+          )
+        )
+        return
+      }
+      imageDelete(reference: reference, result: result)
+    case "image.pull":
+      guard let pullId = args?["pullId"] as? String,
+        let reference = args?["reference"] as? String
+      else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "image.pull requires 'pullId' and 'reference' string arguments.",
+            details: nil
+          )
+        )
+        return
+      }
+      imagePull(
+        pullId: pullId,
+        reference: reference,
+        platform: args?["platform"] as? String,
+        result: result
+      )
+    case "image.pullCancel":
+      guard let pullId = args?["pullId"] as? String else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "image.pullCancel requires a 'pullId' string argument.",
+            details: nil
+          )
+        )
+        return
+      }
+      imagePullCancel(pullId: pullId, result: result)
+    case "network.list":
+      runCli(["network", "ls", "--format", "json"], result: result)
+    case "network.inspect":
+      guard let id = args?["id"] as? String else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "network.inspect requires an 'id' string argument.",
+            details: nil
+          )
+        )
+        return
+      }
+      runCli(["network", "inspect", id], result: result)
+    case "compose.help":
+      // Plugin-presence probe: exit 0 + up/down listing = plugin installed.
+      runCli(["compose", "--help"], result: result)
+    case "compose.run":
+      // The Dart Service layer builds the argument vector (flag decisions
+      // live there); this side only forwards to the plugin CLI.
+      guard let composeArgs = args?["arguments"] as? [String], !composeArgs.isEmpty else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "compose.run requires a non-empty 'arguments' string array.",
+            details: nil
+          )
+        )
+        return
+      }
+      let timeoutSeconds = (args?["timeoutSeconds"] as? Int) ?? 600
+      runCli(
+        ["compose"] + composeArgs,
+        timeout: TimeInterval(timeoutSeconds),
+        result: result
+      )
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -138,6 +244,120 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
         }
       }
     }
+  }
+
+  // MARK: - Image domain (ClientImage over container-core-images XPC)
+
+  private func imageList(result: @escaping FlutterResult) {
+    Task {
+      do {
+        let payload = try await ImageOps.list()
+        await MainActor.run { result(payload) }
+      } catch {
+        await MainActor.run {
+          result(
+            FlutterError(code: "xpcError", message: error.localizedDescription, details: nil)
+          )
+        }
+      }
+    }
+  }
+
+  private func imageInspect(reference: String, result: @escaping FlutterResult) {
+    Task {
+      do {
+        let payload = try await ImageOps.inspect(reference: reference)
+        await MainActor.run { result(payload) }
+      } catch {
+        await MainActor.run {
+          result(
+            FlutterError(code: "xpcError", message: error.localizedDescription, details: nil)
+          )
+        }
+      }
+    }
+  }
+
+  private func imageDelete(reference: String, result: @escaping FlutterResult) {
+    Task {
+      do {
+        try await ImageOps.delete(reference: reference)
+        await MainActor.run { result(["reference": reference, "deleted": true]) }
+      } catch {
+        await MainActor.run {
+          result(
+            FlutterError(code: "xpcError", message: error.localizedDescription, details: nil)
+          )
+        }
+      }
+    }
+  }
+
+  /// Starts a pull tracked under [pullId]. Progress flows through
+  /// PullProgressTracker (~10 Hz) onto the "image.pull" event stream.
+  private func imagePull(
+    pullId: String,
+    reference: String,
+    platform: String?,
+    result: @escaping FlutterResult
+  ) {
+    var parsedPlatform: Platform?
+    if let platform {
+      do {
+        parsedPlatform = try Platform(from: platform)
+      } catch {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "invalid platform '\(platform)': \(error.localizedDescription)",
+            details: nil
+          )
+        )
+        return
+      }
+    }
+    let tracker = PullProgressTracker(pullId: pullId) { [weak self] payload in
+      DispatchQueue.main.async { self?.imagePullSink?(payload) }
+    }
+    let task = Task { [weak self] in
+      guard let self else { return }
+      do {
+        let description = try await ImageOps.pull(
+          reference: reference,
+          platform: parsedPlatform,
+          progress: { events in await tracker.consume(events) }
+        )
+        await MainActor.run {
+          // Only answer when the pull is still tracked — a cancelled pull had
+          // its result answered by imagePullCancel already.
+          if self.pullTasks.removeValue(forKey: pullId) != nil {
+            result(ImageOps.descriptionMap(description))
+          }
+        }
+      } catch {
+        await MainActor.run {
+          if self.pullTasks.removeValue(forKey: pullId) != nil {
+            result(
+              FlutterError(code: "xpcError", message: error.localizedDescription, details: nil)
+            )
+          }
+        }
+      }
+    }
+    pullTasks[pullId] = task
+  }
+
+  /// v1 cancellation semantics: no server-side cancel route exists, so we
+  /// cancel the local waiting task and report `cancelled` to Dart; the
+  /// runtime may still finish the pull in the background. Unknown pullIds
+  /// are ignored (Dart may cancel after completion).
+  private func imagePullCancel(pullId: String, result: @escaping FlutterResult) {
+    guard let task = pullTasks.removeValue(forKey: pullId) else {
+      result(["cancelled": false])
+      return
+    }
+    task.cancel()
+    result(["cancelled": true])
   }
 
   private func runCli(
@@ -205,13 +425,23 @@ extension ContainerBridgePlugin: FlutterStreamHandler {
   ) -> FlutterError? {
     guard
       let args = arguments as? [String: Any],
-      let stream = args["stream"] as? String,
-      stream == "container.logs",
-      let id = args["id"] as? String
+      let stream = args["stream"] as? String
     else {
       return FlutterError(
         code: "invalidArgument",
-        message: "events channel requires {'stream': 'container.logs', 'id': ...}.",
+        message: "events channel requires {'stream': <name>, ...}.",
+        details: nil
+      )
+    }
+    if stream == "image.pull" {
+      imagePullSink = events
+      return nil
+    }
+    guard stream == "container.logs", let id = args["id"] as? String
+    else {
+      return FlutterError(
+        code: "invalidArgument",
+        message: "unknown event stream '\(stream)'.",
         details: nil
       )
     }
@@ -227,8 +457,14 @@ extension ContainerBridgePlugin: FlutterStreamHandler {
   }
 
   public func onCancel(withArguments arguments: Any?) -> FlutterError? {
-    if let args = arguments as? [String: Any], let id = args["id"] as? String {
-      logSessions.removeValue(forKey: id)?.cancel()
+    if let args = arguments as? [String: Any] {
+      if args["stream"] as? String == "image.pull" {
+        imagePullSink = nil
+        return nil
+      }
+      if let id = args["id"] as? String {
+        logSessions.removeValue(forKey: id)?.cancel()
+      }
     }
     return nil
   }

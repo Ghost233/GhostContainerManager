@@ -6,12 +6,24 @@
 /// 时主界面可进，内容区顶部显示横幅 + 一键修复。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../features/compose/compose_page.dart';
+import '../features/containers/containers_page.dart';
+import '../features/images/images_page.dart';
+import '../features/mounts/mounts_page.dart';
+import '../features/networks/networks_page.dart';
 import '../features/settings/mcp_settings_controller.dart';
 import '../features/settings/settings_page.dart';
 import '../features/system/readiness_controller.dart';
 import '../features/system/runtime_page.dart';
+import '../../services/compose_service.dart';
+import '../../services/container_service.dart';
+import '../../services/image_service.dart';
+import '../../services/mount_service.dart';
+import '../../services/network_service.dart';
 import '../../services/system_service.dart';
 import 'placeholders.dart';
 
@@ -33,11 +45,27 @@ class AppShell extends StatefulWidget {
     super.key,
     required this.readiness,
     required this.mcp,
+    required this.containers,
+    required this.images,
+    required this.mounts,
+    required this.networks,
+    required this.compose,
     this.initialIndex = 0,
   });
 
   final ReadinessController readiness;
   final McpSettingsController mcp;
+
+  /// 容器只读通路（T2a service，容器页消费其公开 API）。
+  final ContainerService containers;
+
+  /// T5 镜像通路（列表/inspect/pull/delete 页）。
+  final ImageService images;
+
+  /// T6 三个资源域服务（挂载/网络/Compose 页）。
+  final MountService mounts;
+  final NetworkService networks;
+  final ComposeService compose;
 
   /// 初始选中项（跳过引导进入设置时使用 kSidebarItems.indexOf('设置')）。
   final int initialIndex;
@@ -111,6 +139,41 @@ class _AppShellState extends State<AppShell> {
   Widget _page(BuildContext context) {
     final title = kSidebarItems[_selected];
     switch (title) {
+      case '容器':
+        return ContainersPage(
+          service: widget.containers,
+          controller: widget.readiness,
+          onOpenRuntime: () =>
+              setState(() => _selected = kSidebarItems.indexOf('运行时')),
+        );
+      case 'Compose 项目':
+        return ComposePage(
+          service: widget.compose,
+          controller: widget.readiness,
+          onOpenRuntime: () =>
+              setState(() => _selected = kSidebarItems.indexOf('运行时')),
+        );
+      case '镜像':
+        return ImagesPage(
+          service: widget.images,
+          controller: widget.readiness,
+          onOpenRuntime: () =>
+              setState(() => _selected = kSidebarItems.indexOf('运行时')),
+        );
+      case '挂载':
+        return MountsPage(
+          service: widget.mounts,
+          controller: widget.readiness,
+          onOpenRuntime: () =>
+              setState(() => _selected = kSidebarItems.indexOf('运行时')),
+        );
+      case '网络':
+        return NetworksPage(
+          service: widget.networks,
+          controller: widget.readiness,
+          onOpenRuntime: () =>
+              setState(() => _selected = kSidebarItems.indexOf('运行时')),
+        );
       case '运行时':
         return RuntimePage(controller: widget.readiness);
       case '设置':
@@ -168,9 +231,11 @@ class _DegradedBanner extends StatelessWidget {
             FilledButton(
               onPressed: controller.busy
                   ? null
-                  : (kernelMissing
-                        ? controller.installKernel
-                        : controller.startRuntime),
+                  : () => unawaited(
+                      kernelMissing
+                          ? controller.installKernel()
+                          : controller.startRuntime(),
+                    ),
               child: Text(
                 controller.busy
                     ? '正在处理…'

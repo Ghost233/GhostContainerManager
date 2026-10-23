@@ -16,14 +16,18 @@ let package = Package(
         .package(name: "FlutterFramework", path: "../FlutterFramework"),
         // Pinned per docs/research/bridge-flutter-apple-container.md and the
         // runtime gate anchor (docs/spec/onboarding.md): container 1.6.0.
-        .package(url: "https://github.com/apple/container.git", exact: "1.6.0")
+        .package(url: "https://github.com/apple/container.git", exact: "1.6.0"),
+        // Pinned alongside container 1.6.0 (orchard's resolved pair); gives
+        // us ContainerizationOCI.Platform for pull/inspect platform handling.
+        .package(url: "https://github.com/apple/containerization.git", exact: "0.52.1")
     ],
     targets: [
         .target(
             name: "container_bridge",
             dependencies: [
                 .product(name: "FlutterFramework", package: "FlutterFramework"),
-                .product(name: "ContainerAPIClient", package: "container")
+                .product(name: "ContainerAPIClient", package: "container"),
+                .product(name: "ContainerizationOCI", package: "containerization")
             ],
             resources: [
                 // If your plugin requires a privacy manifest, for example if it collects user

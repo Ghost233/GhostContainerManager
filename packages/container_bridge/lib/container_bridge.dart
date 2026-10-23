@@ -31,6 +31,15 @@ abstract final class ContainerBridgeMethods {
   static const String containerList = 'container.list';
   static const String containerGet = 'container.get';
   static const String containerStats = 'container.stats';
+  static const String networkList = 'network.list';
+  static const String networkInspect = 'network.inspect';
+  static const String composeHelp = 'compose.help';
+  static const String composeRun = 'compose.run';
+  static const String imageList = 'image.list';
+  static const String imageInspect = 'image.inspect';
+  static const String imageDelete = 'image.delete';
+  static const String imagePull = 'image.pull';
+  static const String imagePullCancel = 'image.pullCancel';
 }
 
 /// Stream selectors understood by the event channel (`onListen` arguments).
@@ -38,6 +47,11 @@ abstract final class ContainerBridgeStreams {
   /// `container.logs` — XPC log FileHandles (stdio + boot) for one
   /// container; arguments: `{'stream': 'container.logs', 'id': ...}`.
   static const String containerLogs = 'container.logs';
+
+  /// `image.pull` — throttled (~10 Hz) pull progress for ALL pulls;
+  /// consumers filter by the `pullId` payload field.
+  /// Arguments: `{'stream': 'image.pull'}`.
+  static const String imagePull = 'image.pull';
 }
 
 /// Typed wrapper over the method channel. Returns raw
@@ -116,6 +130,71 @@ class ContainerBridgeChannel {
       _invoke(ContainerBridgeMethods.containerStats, <String, Object?>{
         'id': id,
       });
+
+  /// `container network ls --format json`.
+  Future<Map<String, Object?>> networkList() =>
+      _invoke(ContainerBridgeMethods.networkList);
+
+  /// `container network inspect <id>`.
+  Future<Map<String, Object?>> networkInspect(String id) =>
+      _invoke(ContainerBridgeMethods.networkInspect, <String, Object?>{
+        'id': id,
+      });
+
+  /// `container compose --help` (plugin-presence probe).
+  Future<Map<String, Object?>> composeHelp() =>
+      _invoke(ContainerBridgeMethods.composeHelp);
+
+  /// `container compose <arguments>`; [timeoutSeconds] maps to the native
+  /// CLI runner timeout (default 600 on the Swift side).
+  Future<Map<String, Object?>> composeRun(
+    List<String> arguments, {
+    int? timeoutSeconds,
+  }) => _invoke(ContainerBridgeMethods.composeRun, <String, Object?>{
+    'arguments': arguments,
+    'timeoutSeconds': ?timeoutSeconds,
+  });
+
+  /// `ClientImage.list()` — unfiltered ImageDescription dictionaries.
+  Future<List<Map<String, Object?>>> imageList() async {
+    final result = await _channel.invokeListMethod<Object?>(
+      ContainerBridgeMethods.imageList,
+    );
+    return (result ?? const [])
+        .map((entry) => (entry! as Map).cast<String, Object?>())
+        .toList(growable: false);
+  }
+
+  /// `ClientImage.get()` + index/manifest/config rebuild.
+  Future<Map<String, Object?>> imageInspect(String reference) =>
+      _invoke(ContainerBridgeMethods.imageInspect, <String, Object?>{
+        'reference': reference,
+      });
+
+  /// `ClientImage.delete(reference:, garbageCollect: false)`.
+  Future<Map<String, Object?>> imageDelete(String reference) =>
+      _invoke(ContainerBridgeMethods.imageDelete, <String, Object?>{
+        'reference': reference,
+      });
+
+  /// `ClientImage.pull(...)`; progress flows on the `image.pull` event
+  /// stream tagged with [pullId]. Resolves with the pulled description or
+  /// `{reference, cancelled: true}` after [imagePullCancel].
+  Future<Map<String, Object?>> imagePull({
+    required String pullId,
+    required String reference,
+    String? platform,
+  }) => _invoke(ContainerBridgeMethods.imagePull, <String, Object?>{
+    'pullId': pullId,
+    'reference': reference,
+    'platform': ?platform,
+  });
+
+  /// Cancels the local wait for [pullId] (unknown ids are ignored).
+  Future<Map<String, Object?>> imagePullCancel(String pullId) =>
+      _invoke(ContainerBridgeMethods.imagePullCancel, <String, Object?>{
+        'pullId': pullId,
+      });
 }
 
 /// Typed wrapper over the event channel (log streams, pull progress, …).
@@ -134,6 +213,17 @@ class ContainerBridgeEvents {
         .receiveBroadcastStream(<String, Object?>{
           'stream': ContainerBridgeStreams.containerLogs,
           'id': id,
+        })
+        .map((event) => (event as Map).cast<String, Object?>());
+  }
+
+  /// Raw `image.pull` progress maps for ALL pulls:
+  /// {pullId, description?, completedBytes, totalBytes?, itemsDone?,
+  /// itemsTotal?}. Filter by pullId downstream.
+  Stream<Map<String, Object?>> imagePull() {
+    return _channel
+        .receiveBroadcastStream(<String, Object?>{
+          'stream': ContainerBridgeStreams.imagePull,
         })
         .map((event) => (event as Map).cast<String, Object?>());
   }

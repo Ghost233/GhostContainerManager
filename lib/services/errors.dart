@@ -25,13 +25,22 @@ enum GcmErrorCode {
 /// Structured service-layer failure. UI and MCP adaptors render it; the
 /// Service layer never returns ad-hoc strings for expected failures.
 class GcmException implements Exception {
-  const GcmException(this.code, this.message, {this.hint, this.cause});
+  const GcmException(
+    this.code,
+    this.message, {
+    this.hint,
+    this.source,
+    this.cause,
+  });
 
   final GcmErrorCode code;
   final String message;
 
   /// Actionable next step for the caller (docs link, retry advice, …).
   final String? hint;
+
+  /// Origin of the failure ('xpc' | 'cli' | …), per the §5 wire example.
+  final String? source;
 
   /// Original error / raw output kept for diagnostics.
   final Object? cause;
@@ -42,6 +51,7 @@ class GcmException implements Exception {
       'code': code.wireName,
       'message': message,
       if (hint != null) 'hint': hint,
+      if (source != null) 'source': source,
     },
   };
 

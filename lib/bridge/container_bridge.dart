@@ -111,6 +111,39 @@ class BridgeLogEvent {
   final String? message;
 }
 
+/// One progress sample on the `image.pull` event stream. The Swift side
+/// folds the granular upstream ProgressUpdateEvent stream into byte/item
+/// counters throttled to ~10 Hz (single throttle point shared by the UI and
+/// MCP progress notifications).
+class BridgeImagePullEvent {
+  const BridgeImagePullEvent({
+    required this.pullId,
+    this.description,
+    this.completedBytes = 0,
+    this.totalBytes,
+    this.itemsDone,
+    this.itemsTotal,
+  });
+
+  factory BridgeImagePullEvent.fromMap(Map<Object?, Object?> map) {
+    return BridgeImagePullEvent(
+      pullId: (map['pullId'] as String?) ?? '',
+      description: map['description'] as String?,
+      completedBytes: (map['completedBytes'] as num?)?.toInt() ?? 0,
+      totalBytes: (map['totalBytes'] as num?)?.toInt(),
+      itemsDone: (map['itemsDone'] as num?)?.toInt(),
+      itemsTotal: (map['itemsTotal'] as num?)?.toInt(),
+    );
+  }
+
+  final String pullId;
+  final String? description;
+  final int completedBytes;
+  final int? totalBytes;
+  final int? itemsDone;
+  final int? itemsTotal;
+}
+
 /// Failure of an XPC bridge call. [message] carries the raw native error
 /// text so the Service layer can classify it by feature (same fingerprint
 /// approach as `mapBridgeFailure`).
@@ -183,4 +216,82 @@ abstract interface class ContainerBridge {
   /// Log byte stream for [id] (XPC fd handover: stdio + boot handles).
   /// UI-only surface — MCP deliberately has no logs tool (#13 decision).
   Stream<BridgeLogEvent> containerLogs(String id);
+
+  // -- network domain (T6, read-only) ---------------------------------------
+
+  /// `container network ls --format json` (CLI route — XPC exposes no
+  /// network-list surface in 1.5/1.6, and reads here are low-frequency).
+  Future<BridgeCommandResult> networkList();
+
+  /// `container network inspect <id>` (CLI; JSON output by default).
+  Future<BridgeCommandResult> networkInspect(String id);
+
+  // -- compose domain (T6, plugin CLI route) --------------------------------
+
+  /// `container compose --help` — the official plugin-presence probe
+  /// (exit 0 + subcommand listing = plugin installed). Run on every use;
+  /// upgrading container wipes the plugin directory (apple/container#1617),
+  /// so the result is NEVER cached.
+  Future<BridgeCommandResult> composeHelp();
+
+  /// `container compose <arguments>` — executes the compose plugin. The
+  /// argument vector is built by the Service layer (flag decisions live
+  /// there); this seam only forwards and reports raw output.
+  ///
+  /// [timeout] defaults to the plugin-side default (600s on the native
+  /// side); `up` of a cold image set can legitimately take minutes.
+  Future<BridgeCommandResult> composeRun(
+    List<String> arguments, {
+    Duration? timeout,
+  });
+
+  // -- image domain (T5, issue #20) ----------------------------------------
+  // XPC image operations route to the independent
+  // com.apple.container.core.container-core-images service (not the
+  // apiserver router). Addressing is validated name:tag in the Service
+  // layer BEFORE calls reach here — the bridge passes references verbatim.
+
+  /// `ClientImage.list()` — ALL images (incl. infra/dangling) as
+  /// ImageDescription maps: {reference, digest, mediaType, sizeBytes,
+  /// createdAt?}. Dangling images arrive with tag-less references.
+  ///
+  /// Throws [BridgeCallException] on XPC failure.
+  Future<List<Map<String, Object?>>> imageList();
+
+  /// `ClientImage.get()` + index/manifest/config rebuild — config summary
+  /// payload: {reference, digest, sizeBytes, layers, platforms, config:
+  /// {env, entrypoint, cmd, exposedPorts, labels}}.
+  ///
+  /// Throws [BridgeCallException] on XPC failure (e.g. unknown reference).
+  Future<Map<String, Object?>> imageInspect(String reference);
+
+  /// `ClientImage.delete(reference:, garbageCollect: false)` — removes the
+  /// tag; blob GC is the runtime's business. In-use pre-check happens in
+  /// the Service layer (clearer error than the upstream refusal).
+  ///
+  /// Throws [BridgeCallException] on XPC failure.
+  Future<void> imageDelete(String reference);
+
+  /// `ClientImage.pull(...)` — pulls [reference] (validated name:tag).
+  /// Progress flows on [imagePullEvents] tagged with [pullId]; the method
+  /// call itself resolves with the pulled ImageDescription map, or with
+  /// `{reference, cancelled: true}` after [imagePullCancel].
+  ///
+  /// v1 cancel semantics: no server-side cancel route exists; cancelling
+  /// drops the local wait (the runtime may finish the pull in background).
+  ///
+  /// Throws [BridgeCallException] on XPC failure.
+  Future<Map<String, Object?>> imagePull({
+    required String pullId,
+    required String reference,
+    String? platform,
+  });
+
+  /// Cancels the local wait for [pullId]; the pending [imagePull] resolves
+  /// with `cancelled: true`. Unknown ids are ignored.
+  Future<void> imagePullCancel(String pullId);
+
+  /// Broadcast stream of throttled pull progress events (all pulls;
+  /// consumers filter by [BridgeImagePullEvent.pullId]).
+  Stream<BridgeImagePullEvent> imagePullEvents();
 }

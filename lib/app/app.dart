@@ -5,6 +5,8 @@
 /// - 其余 → AppShell（自修复级在壳内显示降级横幅）。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../bridge/container_bridge.dart';
@@ -12,7 +14,11 @@ import '../bridge/method_channel_container_bridge.dart';
 import '../features/settings/mcp_settings_controller.dart';
 import '../features/system/onboarding_page.dart';
 import '../features/system/readiness_controller.dart';
+import '../services/compose_service.dart';
 import '../services/container_service.dart';
+import '../services/image_service.dart';
+import '../services/mount_service.dart';
+import '../services/network_service.dart';
 import '../services/system_service.dart';
 import 'app_shell.dart';
 
@@ -41,6 +47,10 @@ class GhostContainerManagerApp extends StatefulWidget {
 class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
   late final SystemService _systemService;
   late final ContainerService _containerService;
+  late final ImageService _imageService;
+  late final MountService _mountService;
+  late final NetworkService _networkService;
+  late final ComposeService _composeService;
   late final ReadinessController _readiness;
   late final McpSettingsController _mcp;
 
@@ -56,6 +66,16 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
       debugBypassEnabled: widget.debugBypass,
     );
     _containerService = ContainerService(bridge: bridge);
+    _imageService = ImageService(bridge: bridge);
+    _mountService = MountService(containerService: _containerService);
+    _networkService = NetworkService(
+      bridge: bridge,
+      containerService: _containerService,
+    );
+    _composeService = ComposeService(
+      bridge: bridge,
+      containerService: _containerService,
+    );
     _readiness = ReadinessController(
       systemService: _systemService,
       bridge: bridge,
@@ -63,11 +83,27 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
     _mcp = McpSettingsController(
       systemService: _systemService,
       containerService: _containerService,
+      imageService: _imageService,
+      mountService: _mountService,
+      networkService: _networkService,
+      composeService: _composeService,
     );
-    _readiness.refresh();
+    unawaited(_readiness.refresh());
     if (widget.enableMcp) {
-      _mcp.sync();
+      unawaited(_mcp.sync());
     }
+  }
+
+  @override
+  void dispose() {
+    // E04: shut owned resources down in order — MCP server first (stops
+    // serving tool calls), then the container polling service, then the
+    // readiness controller. McpSettingsController keeps its own ownership;
+    // the public switch stops the server without reaching into settings.
+    unawaited(_mcp.setEnabled(false));
+    unawaited(_containerService.dispose());
+    _readiness.dispose();
+    super.dispose();
   }
 
   @override
@@ -101,6 +137,11 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
           return AppShell(
             readiness: _readiness,
             mcp: _mcp,
+            containers: _containerService,
+            images: _imageService,
+            mounts: _mountService,
+            networks: _networkService,
+            compose: _composeService,
             initialIndex: _skipToSettings ? kSidebarItems.indexOf('设置') : 0,
           );
         },

@@ -62,7 +62,8 @@ class ReadinessController extends ChangeNotifier {
   /// --disable-kernel-install.
   Future<void> startRuntime() => _run(SystemAction.starting, () async {
     final kernelPresent = await _bridge.kernelInstalled();
-    readiness = await _systemService.start(installKernel: !kernelPresent);
+    final result = await _systemService.start(installKernel: !kernelPresent);
+    readiness = result.readiness;
     await _refreshStatusOnly();
   });
 
@@ -95,6 +96,10 @@ class ReadinessController extends ChangeNotifier {
       await body();
     } on GcmException catch (e) {
       lastError = e;
+    } catch (e) {
+      // Non-service exceptions (e.g. bridge channel drops mid-flight) must
+      // still surface as an actionable error instead of dying silently.
+      lastError = GcmException(GcmErrorCode.internal, '未预期的错误', cause: e);
     } finally {
       action = SystemAction.none;
       notifyListeners();

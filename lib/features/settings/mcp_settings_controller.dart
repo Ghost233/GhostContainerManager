@@ -16,18 +16,34 @@ library;
 import 'package:flutter/foundation.dart';
 
 import '../../mcp/mcp_server.dart';
+import '../../services/compose_service.dart';
 import '../../services/container_service.dart';
+import '../../services/image_service.dart';
+import '../../services/mount_service.dart';
+import '../../services/network_service.dart';
 import '../../services/system_service.dart';
 
 class McpSettingsController extends ChangeNotifier {
   McpSettingsController({
     required SystemService systemService,
     required ContainerService containerService,
+    ImageService? imageService,
+    MountService? mountService,
+    NetworkService? networkService,
+    ComposeService? composeService,
   }) : _systemService = systemService,
-       _containerService = containerService;
+       _containerService = containerService,
+       _imageService = imageService,
+       _mountService = mountService,
+       _networkService = networkService,
+       _composeService = composeService;
 
   final SystemService _systemService;
   final ContainerService _containerService;
+  final ImageService? _imageService;
+  final MountService? _mountService;
+  final NetworkService? _networkService;
+  final ComposeService? _composeService;
   GcmMcpServer? _server;
 
   /// 开关状态（MCP-first：默认开启）。
@@ -71,6 +87,10 @@ class McpSettingsController extends ChangeNotifier {
     final server = GcmMcpServer(
       systemService: _systemService,
       containerService: _containerService,
+      imageService: _imageService,
+      mountService: _mountService,
+      networkService: _networkService,
+      composeService: _composeService,
       port: port,
     );
     try {

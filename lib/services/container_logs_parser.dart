@@ -53,9 +53,11 @@ Stream<ContainerLogEvent> decodeContainerLogs(
     if (existing != null) return existing;
     final buffer = StringBuffer();
     buffers[sourceName] = buffer;
-    sinks[sourceName] = const Utf8Decoder().startChunkedConversion(
-      StringConversionSink.fromStringSink(buffer),
-    );
+    // allowMalformed: an unfinished sequence at end-of-stream must flush as
+    // U+FFFD on close instead of throwing FormatException (matches the
+    // Swift side's lossy decoding).
+    sinks[sourceName] = const Utf8Decoder(allowMalformed: true)
+        .startChunkedConversion(StringConversionSink.fromStringSink(buffer));
     return buffer;
   }
 
@@ -74,8 +76,17 @@ Stream<ContainerLogEvent> decodeContainerLogs(
       case 'error':
         yield ContainerLogEvent.error(event.message ?? 'log stream error');
       case 'eof':
-        for (final sink in sinks.values) {
-          sink.close();
+        // Closing the chunked sinks flushes any tail fragment (an
+        // incomplete UTF-8 sequence at end-of-stream decodes to a
+        // replacement char) into the buffers; those tails belong to the
+        // log and must be emitted before the eof marker.
+        for (final MapEntry(:key, :value) in sinks.entries) {
+          value.close();
+          final tail = buffers[key]!.toString();
+          if (tail.isNotEmpty) {
+            yield ContainerLogEvent.data(source: key, text: tail);
+            buffers[key]!.clear();
+          }
         }
         yield const ContainerLogEvent.eof();
     }

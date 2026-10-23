@@ -189,6 +189,7 @@ GcmException mapContainerFailure(
       GcmErrorCode.runtimeUnavailable,
       'The container runtime is not reachable.',
       hint: 'Start the runtime from the System page (system.start).',
+      source: 'xpc',
       cause: error,
     );
   }
@@ -197,6 +198,7 @@ GcmException mapContainerFailure(
       GcmErrorCode.versionMismatch,
       'The runtime answered in an unexpected wire format during $operation.',
       hint: 'Check the container version in Settings (expected 1.6.x).',
+      source: 'xpc',
       cause: error,
     );
   }
@@ -204,6 +206,7 @@ GcmException mapContainerFailure(
     return GcmException(
       GcmErrorCode.permissionDenied,
       'Permission denied during $operation.',
+      source: 'xpc',
       cause: error,
     );
   }
@@ -212,6 +215,7 @@ GcmException mapContainerFailure(
       GcmErrorCode.notFound,
       'Container "${id ?? ''}" was not found.',
       hint: 'Refresh the list; it may have been deleted externally.',
+      source: 'xpc',
       cause: error,
     );
   }
@@ -221,12 +225,14 @@ GcmException mapContainerFailure(
       'Container "${id ?? ''}" is not running; this operation requires a '
       'running container.',
       hint: 'Start the container first.',
+      source: 'xpc',
       cause: error,
     );
   }
   return GcmException(
     GcmErrorCode.internal,
     'Container $operation failed: $message',
+    source: 'xpc',
     cause: error,
   );
 }

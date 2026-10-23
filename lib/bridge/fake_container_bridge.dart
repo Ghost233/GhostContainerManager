@@ -5,6 +5,8 @@
 /// explicit kernel-install flag.
 library;
 
+import 'dart:async';
+
 import 'container_bridge.dart';
 
 class FakeContainerBridge implements ContainerBridge {
@@ -172,6 +174,182 @@ class FakeContainerBridge implements ContainerBridge {
     final events = logResponses[id] ?? const <BridgeLogEvent>[];
     return Stream.fromIterable(events);
   }
+
+  // -- network domain (T6) ---------------------------------------------------
+
+  /// Scripted `container network ls --format json` result.
+  BridgeCommandResult networkListResult = _jsonOk('[]');
+
+  /// Scripted inspect results keyed by network id; missing id → exitCode 1
+  /// with a "not found"-style stderr (mirrors CLI behaviour).
+  final Map<String, BridgeCommandResult> networkInspectResults =
+      <String, BridgeCommandResult>{};
+
+  @override
+  Future<BridgeCommandResult> networkList() async {
+    calls.add('networkList');
+    return networkListResult;
+  }
+
+  @override
+  Future<BridgeCommandResult> networkInspect(String id) async {
+    calls.add('networkInspect:$id');
+    return networkInspectResults[id] ??
+        BridgeCommandResult(
+          exitCode: 1,
+          stdout: '',
+          stderr: 'Error: network "$id" not found',
+        );
+  }
+
+  // -- compose domain (T6) ---------------------------------------------------
+
+  /// Scripted `container compose --help` probe. Defaults to "installed"
+  /// (exit 0, up/down listed); set to a failure to simulate a missing plugin.
+  BridgeCommandResult composeHelpResult = _jsonOk(
+    'OVERVIEW: Bring a set of services up and down from a compose file.\n'
+    'SUBCOMMANDS:\n  up\n  down\n',
+  );
+
+  /// Scripted compose run results consumed one per [composeRun] call;
+  /// repeats the last entry when exhausted.
+  List<BridgeCommandResult> composeRunScript = <BridgeCommandResult>[_ok];
+
+  @override
+  Future<BridgeCommandResult> composeHelp() async {
+    calls.add('composeHelp');
+    return composeHelpResult;
+  }
+
+  @override
+  Future<BridgeCommandResult> composeRun(
+    List<String> arguments, {
+    Duration? timeout,
+  }) async {
+    calls.add('composeRun ${arguments.join(' ')}');
+    if (composeRunScript.length > 1) return composeRunScript.removeAt(0);
+    return composeRunScript.first;
+  }
+
+  // -- image domain (T5) -----------------------------------------------------
+
+  /// Current image set as ImageDescription maps (mutate between refreshes
+  /// to simulate runtime-side changes).
+  List<Map<String, Object?>> images = <Map<String, Object?>>[];
+
+  /// Whether [imageList] throws ("connection invalid") before answering.
+  bool imageListThrows = false;
+
+  /// Scripted inspect payloads keyed by reference.
+  final Map<String, Map<String, Object?>> imageInspectResponses =
+      <String, Map<String, Object?>>{};
+
+  /// Inspect failures keyed by reference (thrown as [BridgeCallException]).
+  final Map<String, String> imageInspectFailures = <String, String>{};
+
+  /// Delete failures keyed by reference (thrown as [BridgeCallException]).
+  final Map<String, String> imageDeleteFailures = <String, String>{};
+
+  /// Recorded deleted references, in order.
+  final List<String> deletedImages = <String>[];
+
+  /// Scripted pull result (ImageDescription map); [pullFailure] (when set)
+  /// is thrown as [BridgeCallException] instead. When [pullHangs] is true
+  /// the call only resolves after [imagePullCancel] (returns cancelled).
+  Map<String, Object?> pullResult = <String, Object?>{
+    'reference': 'docker.io/library/alpine:3.19',
+    'digest': 'sha256:${'a' * 64}',
+    'mediaType': 'application/vnd.oci.image.index.v1+json',
+    'sizeBytes': 4096,
+  };
+  String? pullFailure;
+  bool pullHangs = false;
+
+  /// When set, [imagePull] waits for this completer before resolving with
+  /// [pullResult]. Tests use it to emit progress events while the pull is
+  /// still in flight (an immediate completion would cancel the service's
+  /// event subscription before broadcast events are delivered).
+  Completer<void>? pullBlocker;
+
+  /// Recorded pulls as "pullId reference platform?" strings.
+  final List<String> pullCalls = <String>[];
+
+  /// Recorded cancel calls.
+  final List<String> pullCancelCalls = <String>[];
+
+  /// Gates for [pullHangs]: imagePull awaits, imagePullCancel completes.
+  final Map<String, Completer<void>> _hangGates = <String, Completer<void>>{};
+
+  /// Test-controlled broadcast of pull progress events.
+  final StreamController<BridgeImagePullEvent> pullEventsController =
+      StreamController<BridgeImagePullEvent>.broadcast();
+
+  @override
+  Future<List<Map<String, Object?>>> imageList() async {
+    calls.add('imageList');
+    if (imageListThrows) {
+      throw const BridgeCallException('connection invalid');
+    }
+    return images;
+  }
+
+  @override
+  Future<Map<String, Object?>> imageInspect(String reference) async {
+    calls.add('imageInspect:$reference');
+    final failure = imageInspectFailures[reference];
+    if (failure != null) throw BridgeCallException(failure);
+    final response = imageInspectResponses[reference];
+    if (response == null) {
+      throw BridgeCallException('image with reference $reference not found');
+    }
+    return response;
+  }
+
+  @override
+  Future<void> imageDelete(String reference) async {
+    calls.add('imageDelete:$reference');
+    final failure = imageDeleteFailures[reference];
+    if (failure != null) throw BridgeCallException(failure);
+    deletedImages.add(reference);
+    images.removeWhere((image) => image['reference'] == reference);
+  }
+
+  @override
+  Future<Map<String, Object?>> imagePull({
+    required String pullId,
+    required String reference,
+    String? platform,
+  }) async {
+    calls.add('imagePull:$pullId:$reference:${platform ?? '-'}');
+    pullCalls.add('$pullId $reference ${platform ?? '-'}');
+    final failure = pullFailure;
+    if (failure != null) throw BridgeCallException(failure);
+    if (pullHangs) {
+      // Resolve only when the test cancels this pull. Completer-based gate
+      // (microtask-driven): a `Future.delayed` poll loop is unreliable
+      // inside widget tests' fake-async zone.
+      final gate = Completer<void>();
+      _hangGates[pullId] = gate;
+      await gate.future;
+      _hangGates.remove(pullId);
+      return <String, Object?>{'reference': reference, 'cancelled': true};
+    }
+    await pullBlocker?.future;
+    final result = Map<String, Object?>.of(pullResult);
+    result['reference'] = reference;
+    images.add(Map<String, Object?>.of(result));
+    return result;
+  }
+
+  @override
+  Future<void> imagePullCancel(String pullId) async {
+    calls.add('imagePullCancel:$pullId');
+    pullCancelCalls.add(pullId);
+    _hangGates[pullId]?.complete();
+  }
+
+  @override
+  Stream<BridgeImagePullEvent> imagePullEvents() => pullEventsController.stream;
 
   static String? _snapshotId(Map<String, Object?> snapshot) {
     final config = snapshot['configuration'];

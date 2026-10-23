@@ -22,7 +22,7 @@ void main() {
       expect(find.text(item), findsOneWidget, reason: '侧栏缺 $item');
     }
     expect(kSidebarItems.length, 9);
-    expect(find.text('容器：暂无内容'), findsOneWidget);
+    expect(find.text('暂无容器'), findsOneWidget); // 容器页空态（#17）
     expect(find.text('运行时未启动'), findsNothing);
   });
 

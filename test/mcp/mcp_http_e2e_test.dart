@@ -137,8 +137,13 @@ void main() {
     final structured = result['structuredContent'] as Map<String, dynamic>;
     expect(structured['level'], 'ready');
     expect(structured['ready'], isTrue);
+    expect(structured['versionSupported'], isTrue);
     expect(structured['cliVersion'], '1.6.0');
     expect((structured['resources'] as Map)['images'], 3);
+    // 成功路径 content 是人工一行摘要，不是整串 JSON。
+    final summary = (result['content'] as List).single['text'] as String;
+    expect(summary, contains('运行时级别 ready'));
+    expect(summary, isNot(startsWith('{')));
   });
 
   test('system_stop 失败映射为 isError + 错误码（RUNTIME_UNAVAILABLE）', () async {
@@ -165,7 +170,38 @@ void main() {
     final result = body!['result'] as Map<String, dynamic>;
     expect(result['isError'], isTrue);
     final structured = result['structuredContent'] as Map<String, dynamic>;
-    expect((structured['error'] as Map)['code'], 'RUNTIME_UNAVAILABLE');
+    final error = structured['error'] as Map<String, dynamic>;
+    expect(error['code'], 'RUNTIME_UNAVAILABLE');
+    expect(error['source'], 'cli');
+  });
+
+  test('system_stop 成功：返回 stopped 与容器计数', () async {
+    bridge.containers = <Map<String, Object?>>[
+      <String, Object?>{'status': 'running'},
+      <String, Object?>{'status': 'stopped'},
+    ];
+    final (sessionId, protocolVersion) = await initialize();
+    final (status, body, _) = await rpc(
+      <String, dynamic>{
+        'jsonrpc': '2.0',
+        'id': 4,
+        'method': 'tools/call',
+        'params': <String, dynamic>{
+          'name': 'system_stop',
+          'arguments': <String, dynamic>{},
+        },
+      },
+      sessionId: sessionId,
+      protocolVersion: protocolVersion,
+    );
+    expect(status, 200);
+    final result = body!['result'] as Map<String, dynamic>;
+    expect(result['isError'], isNot(true));
+    final structured = result['structuredContent'] as Map<String, dynamic>;
+    expect(structured['status'], 'stopped');
+    expect(structured['containersStopped'], 1);
+    final summary = (result['content'] as List).single['text'] as String;
+    expect(summary, contains('连带停止 1 个'));
   });
 
   test('system_start 调用桥接并返回就绪级别', () async {
@@ -184,10 +220,14 @@ void main() {
       protocolVersion: protocolVersion,
     );
     expect(status, 200);
-    final structured =
-        (body!['result'] as Map<String, dynamic>)['structuredContent']
-            as Map<String, dynamic>;
+    final result = body!['result'] as Map<String, dynamic>;
+    final structured = result['structuredContent'] as Map<String, dynamic>;
     expect(structured['level'], 'ready');
+    expect(structured['status'], 'running');
+    expect(structured['kernelInstalled'], isTrue);
+    expect(structured['startupMs'], isA<int>());
     expect(bridge.calls, contains('systemStart installKernel=true'));
+    final summary = (result['content'] as List).single['text'] as String;
+    expect(summary, contains('运行时已启动'));
   });
 }

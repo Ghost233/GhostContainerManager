@@ -150,6 +150,7 @@ void main() {
       expect(info.statusData!.resources!.images, 3);
       final json = info.toJson();
       expect(json['level'], 'ready');
+      expect(json['versionSupported'], isTrue);
       expect((json['resources'] as Map)['containersRunning'], 1);
     });
   });
@@ -159,7 +160,20 @@ void main() {
       final r = await service.start(installKernel: true);
       expect(bridge.calls, contains('systemStart installKernel=true'));
       expect(bridge.calls, contains('ping'));
-      expect(r.level, ReadinessLevel.ready);
+      expect(r.readiness.level, ReadinessLevel.ready);
+      expect(r.status, 'running');
+      expect(r.kernelInstalled, isTrue);
+      expect(r.startupMs, greaterThanOrEqualTo(0));
+    });
+
+    test('installKernel=false 时启动后不额外探测内核（kernelInstalled 缺省）', () async {
+      final r = await service.start(installKernel: false);
+      expect(r.kernelInstalled, isNull);
+      expect(r.toJson().containsKey('kernelInstalled'), isFalse);
+      // 只有一次 kernelInstalled 探测——来自收尾 checkReadiness 的五级
+      // 状态机；installKernel=true 时会有两次（多一次启动后探测）。
+      expect(bridge.calls.where((c) => c == 'kernelInstalled').length, 1);
+      expect(bridge.calls, contains('systemStart installKernel=false'));
     });
 
     test('CLI 失败映射错误', () async {
@@ -194,6 +208,29 @@ void main() {
   });
 
   group('stop', () {
+    test('成功：返回 stopped 与运行中容器计数', () async {
+      bridge.containers = <Map<String, Object?>>[
+        <String, Object?>{'status': 'running'},
+        <String, Object?>{'status': 'stopped'},
+        <String, Object?>{'status': 'running'},
+      ];
+      final r = await service.stop();
+      expect(bridge.calls, contains('systemStop'));
+      expect(r.status, 'stopped');
+      expect(r.containersStopped, 2);
+      expect(r.toJson(), <String, Object?>{
+        'status': 'stopped',
+        'containersStopped': 2,
+      });
+    });
+
+    test('容器列表不可达时计数为 0，停止照常进行', () async {
+      bridge.containerListThrows = true;
+      final r = await service.stop();
+      expect(r.containersStopped, 0);
+      expect(bridge.calls, contains('systemStop'));
+    });
+
     test('失败映射：health check 解码错误 → VERSION_MISMATCH', () async {
       bridge.stopResult = fail(
         'failed to decode apiServerVersion in health check',

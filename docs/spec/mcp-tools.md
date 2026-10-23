@@ -36,7 +36,7 @@
 | 工具 | 描述要点 | 关键参数（schema 要点） | RO | D | I | 输出结构 |
 |---|---|---|---|---|---|---|
 | `container_list` | 列出容器，含状态/镜像/标签/端口 | `all?: bool`（含已停止，默认 true）；`label?: string`（过滤，如 `com.compose.project=x`）；`status?: enum` | ✓ | | ✓ | `{containers: [{id, name, image, status, labels, createdAt, networks: [{name, ip, hostname]}]}` |
-| `container_get` | 单容器详情（inspect） | `id: string`（ID 或名称） | ✓ | | ✓ | 完整容器对象（含 mounts、env、ports、resources、labels） |
+| `container_inspect` | 单容器详情（inspect） | `id: string`（ID 或名称） | ✓ | | ✓ | 完整容器对象（含 mounts、env、ports、resources、labels） |
 | `container_create` | 创建容器（默认不启动） | `image: string`（必）；`name?`、`command?: string[]`、`env?: object`、`ports?: [{host, container, proto?}]`、`mounts?: [{source, target, readonly?}]`、`labels?: object`、`cpus?: int`、`memoryBytes?: int`、`network?: string`、`start?: bool`（默认 false） | | | ✗（具名重复创建返回 CONFLICT） | `{id, name, status, warnings}` |
 | `container_start` | 启动容器 | `id` | | | ✓（已运行 = 幂等成功） | `{id, status, pid?}` |
 | `container_stop` | 优雅停止（SIGTERM → 超时后 SIGKILL） | `id`；`timeoutSeconds?: int`（默认 5，对齐上游 system stop 的 5s 优雅期惯例） | | | ✓ | `{id, status, stoppedGracefully: bool}` |

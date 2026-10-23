@@ -56,6 +56,17 @@ class ReadinessResult {
 
   bool get ready => level == ReadinessLevel.ready;
 
+  /// True when the detected runtime satisfies the version gates
+  /// (≥ anchor, supported major). False when unknown (notInstalled) or
+  /// gated; a debug bypass leaves this true while `debugBypassUsed` marks
+  /// the skip.
+  bool get versionSupported => switch (level) {
+    ReadinessLevel.notInstalled ||
+    ReadinessLevel.versionTooLow ||
+    ReadinessLevel.unsupportedMajor => false,
+    _ => true,
+  };
+
   Map<String, Object?> toJson() => <String, Object?>{
     'level': level.name,
     'ready': ready,
@@ -80,6 +91,7 @@ class SystemStatusInfo {
 
   Map<String, Object?> toJson() => <String, Object?>{
     ...readiness.toJson(),
+    'versionSupported': readiness.versionSupported,
     if (statusData != null) ...<String, Object?>{
       'status': statusData!.status,
       if (statusData!.appRoot != null) 'appRoot': statusData!.appRoot,
@@ -88,6 +100,58 @@ class SystemStatusInfo {
       if (statusData!.resources != null)
         'resources': statusData!.resources!.toJson(),
     },
+  };
+}
+
+/// Result of [SystemService.start] (mcp-tools.md §3.3 `system_start`
+/// contract): final readiness plus the wire fields `status`,
+/// `kernelInstalled?` and `startupMs`.
+class SystemStartResult {
+  const SystemStartResult({
+    required this.readiness,
+    required this.status,
+    this.kernelInstalled,
+    required this.startupMs,
+  });
+
+  final ReadinessResult readiness;
+
+  /// Daemon state after start (`running` — start only returns on a
+  /// successful health-check poll).
+  final String status;
+
+  /// Post-start kernel presence; only probed (and emitted) when the start
+  /// requested kernel installation.
+  final bool? kernelInstalled;
+
+  /// Wall-clock time from CLI invocation to the apiserver answering.
+  final int startupMs;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'status': status,
+    if (kernelInstalled != null) 'kernelInstalled': kernelInstalled,
+    'startupMs': startupMs,
+    ...readiness.toJson(),
+  };
+}
+
+/// Result of [SystemService.stop] (§3.3 `system_stop` contract).
+class SystemStopResult {
+  const SystemStopResult({
+    required this.status,
+    required this.containersStopped,
+  });
+
+  /// Daemon state after stop (`stopped`).
+  final String status;
+
+  /// Running containers the stop takes down with the daemon (best-effort
+  /// pre-stop count; 0 when the daemon was already unreachable).
+  final int containersStopped;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'status': status,
+    'containersStopped': containersStopped,
   };
 }
 
@@ -136,6 +200,7 @@ class SystemService {
           result.combinedOutput,
           operation: 'system version',
           timedOut: result.timedOut,
+          source: 'cli',
         );
       }
       versions = parseSystemVersions(result.stdout);
@@ -234,13 +299,15 @@ class SystemService {
   /// Starts the runtime. [installKernel] maps to the mandatory explicit
   /// `--enable/--disable-kernel-install` CLI flag. After the CLI returns,
   /// polls the XPC health check until the apiserver answers.
-  Future<ReadinessResult> start({required bool installKernel}) async {
+  Future<SystemStartResult> start({required bool installKernel}) async {
+    final stopwatch = Stopwatch()..start();
     final result = await _bridge.systemStart(installKernel: installKernel);
     if (!result.ok) {
       throw mapBridgeFailure(
         result.combinedOutput,
         operation: 'system start',
         timedOut: result.timedOut,
+        source: 'cli',
       );
     }
     BridgePingResult ping = const BridgePingResult.failure('not polled');
@@ -255,20 +322,50 @@ class SystemService {
       throw mapBridgeFailure(
         ping.error ?? 'ping failed',
         operation: 'system start 后健康检查',
+        source: 'xpc',
       );
     }
-    return checkReadiness();
+    stopwatch.stop();
+    // Post-start kernel presence is only meaningful when the caller asked
+    // for installation; otherwise leave it out of the wire contract.
+    final kernelInstalled = installKernel
+        ? await _bridge.kernelInstalled()
+        : null;
+    return SystemStartResult(
+      readiness: await checkReadiness(),
+      status: 'running',
+      kernelInstalled: kernelInstalled,
+      startupMs: stopwatch.elapsedMilliseconds,
+    );
   }
 
-  /// Stops the runtime (`container system stop`).
-  Future<void> stop() async {
+  /// Stops the runtime (`container system stop`). Counts running containers
+  /// beforehand (best-effort) so callers can report the blast radius.
+  Future<SystemStopResult> stop() async {
+    final containersStopped = await _runningContainerCount();
     final result = await _bridge.systemStop();
     if (!result.ok) {
       throw mapBridgeFailure(
         result.combinedOutput,
         operation: 'system stop',
         timedOut: result.timedOut,
+        source: 'cli',
       );
+    }
+    return SystemStopResult(
+      status: 'stopped',
+      containersStopped: containersStopped,
+    );
+  }
+
+  /// Running-container count via XPC; 0 when the daemon is unreachable or
+  /// the payload is unexpected — stop proceeds regardless.
+  Future<int> _runningContainerCount() async {
+    try {
+      final snapshots = await _bridge.containerList();
+      return snapshots.where((s) => s['status'] == 'running').length;
+    } catch (_) {
+      return 0;
     }
   }
 
@@ -285,6 +382,7 @@ class SystemService {
         result.combinedOutput,
         operation: 'kernel set',
         timedOut: result.timedOut,
+        source: 'cli',
       );
     }
   }
