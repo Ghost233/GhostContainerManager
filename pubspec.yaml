@@ -1,0 +1,26 @@
+name: ghost_container_manager
+description: Apple container management tool for macOS.
+publish_to: none
+# 基础配置占位；正式版本由人确定，发布入口拒绝 0.0.0。
+version: 0.0.0
+
+environment:
+  sdk: 3.13.5
+  flutter: 3.47.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+  maclauncher_sdk:
+    git:
+      url: https://github.com/Ghost233/MacLauncher.git
+      ref: 268f88ef5ff47dbafe88200d5cddd090983ad313
+      path: packages/maclauncher_sdk
+
+dev_dependencies:
+  flutter_lints: 6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

@@ -1,0 +1,90 @@
+name: Release
+
+# 推送 v* tag 触发正式发布；scripts/release.sh 校验并推送手动选定的版本。
+# 校验 tag 与根 pubspec.yaml 精确一致，再构建 DMG 与两份清单。
+#
+# 版本号只由人按 docs/release-versioning.md 手动递增，本 workflow 不推导版本。
+#
+# 第三方 action 引入说明（工程规范 E12）：subosito/flutter-action 解决 CI 中
+# Flutter SDK 精确固定与缓存问题；版本严格固定为 3.47.7 stable，
+# 与 docs/engineering.md 的工具链基线一致，不使用浮动版本。
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: ghostcontainermanager-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    # 钉 macos-26：与 Flutter 3.47.7 钉版本同理，避免 *-latest 漂移导致 CI 结果不可复现。
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      FLUTTER_VERSION: "3.47.7"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # 校验 tag 提交属于 main 的历史。
+          fetch-depth: 0
+
+      - name: Validate release tag
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(awk '/^version:/{print $2; exit}' pubspec.yaml)"
+          tag="$GITHUB_REF_NAME"
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.[0-9]$ ]]
+          [[ "$tag" == "v${version}" ]] || { echo "::error::tag 与 pubspec.yaml 版本不一致"; exit 1; }
+          [[ "$(git rev-parse "refs/tags/${tag}^{commit}")" == "$GITHUB_SHA" ]]
+          git fetch origin main --quiet
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Build DMG and manifests
+        env:
+          # 构建号（CFBundleVersion）由 CI 运行号注入，pubspec 不写构建号
+          # （见 docs/release-versioning.md）。
+          GCM_BUILD_NUMBER: ${{ github.run_number }}
+        run: scripts/build-release.sh
+
+      - name: Render release notes
+        run: |
+          set -euo pipefail
+          sed \
+            -e "s/{{VERSION}}/${{ steps.version.outputs.version }}/g" \
+            -e "s/{{TAG}}/${{ steps.version.outputs.tag }}/g" \
+            docs/release-notes-template.md > dist/release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        # tag 已由发布入口推送；不自动建 tag、不覆盖既有 Release。
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.version.outputs.tag }}" --verify-tag \
+            --title "GhostContainerManager ${{ steps.version.outputs.version }}" \
+            --notes-file dist/release-notes.md \
+            "dist/GhostContainerManager-${{ steps.version.outputs.version }}.dmg" \
+            dist/manifest.json \
+            dist/SHA256SUMS

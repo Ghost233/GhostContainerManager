@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "id": "com.ghost233.ghostcontainermanager",
+    "name": "GhostContainerManager"
+  },
+  "services": [],
+  "entry": {
+    "kind": "app",
+    "path": "build/macos/Build/Products/Release/GhostContainerManager.app"
+  }
+}
