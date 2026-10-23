@@ -167,6 +167,38 @@
   .pane-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex: none; }
   .pane-toolbar .grow { flex: 1; }
 
+  /* ===== 项目页（#13 回填） ===== */
+  .page-projects { display: none; }
+  body[data-page="projects"] .v-a .page-containers { display: none; }
+  body[data-page="projects"] .v-a .page-projects { display: flex; }
+  body[data-page="projects"] .v-a .inspector,
+  body[data-page="projects"] .v-a .detail-overlay { display: none !important; }
+  .project-overlay { position: absolute; inset: 0; background: var(--panel); display: none; flex-direction: column; z-index: 21; }
+  body[data-project="open"] .project-overlay { display: flex; }
+  .pbody { flex: 1; overflow: auto; padding: 16px 24px 24px; }
+  .pgrid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; max-width: 920px; }
+  .pcard { background: var(--panel); border: 1px solid var(--separator); border-radius: var(--radius-box); padding: 14px 16px; }
+  .pcard h4 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+  .pcard .note { font-size: 12px; color: var(--secondary); margin-top: 10px; }
+  .warnline { display: flex; gap: 8px; align-items: flex-start; background: #fdf3d7; border: 1px solid #f0dfae; color: #6b5600; border-radius: var(--radius-ctl); padding: 8px 10px; font-size: 12px; margin-top: 10px; }
+  .tl-item { position: relative; padding: 8px 0 10px 22px; border-left: 2px solid var(--separator); margin-left: 5px; }
+  .tl-item::before { content: ''; position: absolute; left: -6px; top: 14px; width: 8px; height: 8px; border-radius: 50%; background: var(--placeholder); border: 2px solid var(--panel); }
+  .tl-item.cur::before { background: var(--success); }
+  .tl-item .tl-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .tl-item .tl-meta { color: var(--secondary); font-size: 12px; margin-top: 2px; }
+  .badge { font-size: 10px; padding: 1px 7px; border-radius: 4px; background: #e8f7ec; color: #1d7a34; }
+  .badge.gray { background: #efeff2; color: var(--secondary); }
+  .badge.blue { background: #e5f4ff; color: #0a5a9e; }
+  .reclaim-mask { position: absolute; inset: 0; background: rgba(0,0,0,.25); display: none; z-index: 40; }
+  body[data-reclaim="open"] .reclaim-mask { display: block; }
+  .reclaim { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-52%); width: 480px; background: var(--panel); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.35); padding: 18px 20px; display: none; z-index: 41; }
+  body[data-reclaim="open"] .reclaim { display: block; }
+  .reclaim h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+  .reclaim ul { margin: 6px 0 6px 20px; font-size: 12px; line-height: 1.7; }
+  .reclaim .chk { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0; font-size: 12px; }
+  .reclaim .rfoot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+  .reclaim .skipline { font-size: 12px; color: var(--secondary); }
+
   /* ===== 方案 B：图标栏 + 统一资源列表 ===== */
   .rail {
     width: 56px; background: var(--sidebar); border-right: 1px solid var(--separator);
@@ -261,9 +293,9 @@
   body[data-variant="c"] .v-a, body[data-variant="c"] .v-b { display: none !important; }
 </style>
 </head>
-<body data-variant="a" data-state="content" data-detail="closed">
+<body data-variant="a" data-state="content" data-detail="closed" data-page="containers" data-project="closed" data-reclaim="closed">
 
-<p class="proto-note"><b>PROTOTYPE — 一次性原型。</b>对比 v1 主窗口信息架构的三个结构方案（A 三列工作台 / B 资源总列表 / C 顶部导航+仪表盘），用 ← → 或底部栏切换；「数据态」分段切换空态与「运行时未启动」错误态；A 方案点「打开详情」、C 方案点行可看容器详情形态差异。数据全部虚构。</p>
+<p class="proto-note"><b>PROTOTYPE — 一次性原型。</b>对比 v1 主窗口信息架构的三个结构方案（A 三列工作台 / B 资源总列表 / C 顶部导航+仪表盘），用 ← → 或底部栏切换；「数据态」分段切换空态与「运行时未启动」错误态；A 方案侧栏可切换「容器 / 项目」页（项目：列表 → 详情含镜像版本时间线、成员容器、registry 状态区、一键回收销毁清单弹窗）；A 方案点「打开详情」、C 方案点行可看容器详情形态差异。数据全部虚构。</p>
 
 <div class="window">
   <div class="titlebar">
@@ -277,7 +309,8 @@
   <div class="wb v-a">
     <nav class="sidebar">
       <div class="sb-group">管理</div>
-      <div class="sb-item active"><span class="ic">▣</span>容器<span class="count">5</span></div>
+      <div class="sb-item active" data-page="containers"><span class="ic">▣</span>容器<span class="count">5</span></div>
+      <div class="sb-item" data-page="projects"><span class="ic">⧉</span>项目<span class="count">2</span></div>
       <div class="sb-item"><span class="ic">◧</span>Compose 项目<span class="count">1</span></div>
       <div class="sb-item"><span class="ic">◈</span>镜像<span class="count">8</span></div>
       <div class="sb-item"><span class="ic">⛁</span>挂载</div>
@@ -290,7 +323,7 @@
       </div>
     </nav>
 
-    <main class="content">
+    <main class="content page-containers">
       <div class="toolbar">
         <h1>容器</h1>
         <div class="spacer" style="flex:1"></div>
@@ -356,6 +389,47 @@
         <div class="eic">⏻</div>
         <h3>container 运行时未启动</h3>
         <p>所有管理操作暂不可用。启动运行时后即可继续。</p>
+        <button class="btn primary">启动运行时</button>&nbsp;&nbsp;<button class="btn">打开引导检查</button>
+      </div>
+    </main>
+
+    <!-- 项目列表页（#13 回填：侧栏第 8 项） -->
+    <main class="content page-projects">
+      <div class="toolbar">
+        <h1>项目</h1>
+        <div style="flex:1"></div>
+        <input class="search" placeholder="搜索项目…">
+        <button class="btn primary">＋ 从目录新建项目…</button>
+      </div>
+      <div class="tablewrap state-content" style="flex:1">
+        <table class="list">
+          <thead><tr>
+            <th>名称</th><th>镜像版本</th><th>运行中容器</th><th>磁盘占用</th><th>最近构建</th><th></th>
+          </tr></thead>
+          <tbody>
+            <tr>
+              <td><span class="cname">mysite</span><span class="tag">本应用创建</span><div class="cmeta mono">com.ghost233.project=mysite</div></td>
+              <td>base + 3 个版本</td><td>2 个</td><td>1.2 GB</td><td>2 小时前</td>
+              <td><div class="row-actions"><button class="btn sm">详情</button></div></td>
+            </tr>
+            <tr>
+              <td><span class="cname">mllab</span><div class="cmeta mono">com.ghost233.project=mllab</div></td>
+              <td>base + 1 个版本</td><td>0 个</td><td>640 MB</td><td>3 天前</td>
+              <td><div class="row-actions"><button class="btn sm">详情</button></div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="emptybox state-empty">
+        <div class="eic">⧉</div>
+        <h3>还没有项目</h3>
+        <p>项目是一组共享标签与命名规约的镜像和容器。从包含 ghostcontainer.toml 的目录创建，或为现有资源添加 com.ghost233.project 标签。</p>
+        <button class="btn primary">＋ 从目录新建项目…</button>
+      </div>
+      <div class="emptybox state-error">
+        <div class="eic">⏻</div>
+        <h3>container 运行时未启动</h3>
+        <p>项目数据不可用。启动运行时后即可继续。</p>
         <button class="btn primary">启动运行时</button>&nbsp;&nbsp;<button class="btn">打开引导检查</button>
       </div>
     </main>
@@ -430,6 +504,97 @@
         <div class="termview">root@web-frontend:/# nginx -t
 nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
 root@web-frontend:/# ▊</div>
+      </div>
+    </div>
+
+    <!-- 项目详情覆盖层（#13 回填：版本时间线 + 成员容器 + registry 状态区 + 回收报告） -->
+    <div class="project-overlay">
+      <div class="toolbar">
+        <button class="btn" onclick="document.body.dataset.project='closed'">‹ 返回项目列表</button>
+        <h1 style="margin-left:6px">mysite</h1>
+        <span class="tag">本应用创建</span>
+        <span class="cmeta mono">com.ghost233.project=mysite</span>
+        <div style="flex:1"></div>
+        <button class="btn">构建新版本</button>
+        <button class="btn">推送到本地 registry</button>
+        <button class="btn destructive" onclick="document.body.dataset.reclaim='open'">一键回收…</button>
+      </div>
+      <div class="pbody">
+        <div class="pgrid">
+          <div class="pcard">
+            <h4>镜像版本时间线</h4>
+            <div class="tl">
+              <div class="tl-item cur">
+                <div class="tl-head"><span class="mono cname">go-mysite-v3</span><span class="badge">使用中</span><span class="badge blue">已推送 registry</span></div>
+                <div class="tl-meta">2 小时前构建 · 412 MB · 基于 go-mysite-base</div>
+              </div>
+              <div class="tl-item">
+                <div class="tl-head"><span class="mono">go-mysite-v2</span><span class="badge gray">未使用</span><span class="badge blue">已推送 registry</span>
+                  <span style="flex:1"></span><button class="btn sm">删除本地副本</button></div>
+                <div class="tl-meta">3 天前构建 · 398 MB · registry 有副本，删除本地不影响恢复</div>
+              </div>
+              <div class="tl-item">
+                <div class="tl-head"><span class="mono">go-mysite-v1</span><span class="badge gray">未使用</span><span class="badge gray">仅本地</span></div>
+                <div class="tl-meta">2 周前构建 · 390 MB · 删除即永久移除（无 registry 副本）</div>
+              </div>
+              <div class="tl-item">
+                <div class="tl-head"><span class="mono cname">go-mysite-base</span><span class="badge gray">基础镜像</span></div>
+                <div class="tl-meta">2 周前构建 · 96 MB · 与 v1–v3 共享层，独占部分仅 18 MB</div>
+              </div>
+            </div>
+            <div class="note">层级共享：删除某个版本 tag 只释放其独占层；最后一个引用删除并 GC 后才真正回收磁盘。</div>
+          </div>
+          <div>
+            <div class="pcard" style="margin-bottom:16px">
+              <h4>本地 registry</h4>
+              <div class="ikv"><span class="k">状态</span><span class="v"><span class="statusdot run"></span>运行中</span></div>
+              <div class="ikv"><span class="k">地址</span><span class="v mono">http://127.0.0.1:5056</span></div>
+              <div class="ikv"><span class="k">容器 / 数据卷</span><span class="v mono">gcm-registry · gcm-registry-data</span></div>
+              <div class="iact"><button class="btn sm">停止 registry</button><button class="btn sm">打开数据目录</button></div>
+              <div class="warnline">⚠ 循环依赖风险：推送后删除本地镜像可释放磁盘，但恢复依赖本 registry 容器与其数据卷存活——若 registry 被回收，已删除的本地镜像将无法拉回。</div>
+            </div>
+            <div class="pcard">
+              <h4>上次回收报告</h4>
+              <div class="bignum" style="color:#1d7a34;font-size:24px">已释放 786 MB</div>
+              <div class="rows" style="margin-top:8px">
+                <div class="r"><span>旧版本镜像本地副本 ×2（v1、v2）</span><span class="cmeta">registry 均有副本</span></div>
+                <div class="r"><span>dangling 镜像 ×3</span><span class="cmeta">无引用</span></div>
+                <div class="r"><span>已停止容器 ×1（mysite-debug）</span><span class="cmeta">—</span></div>
+                <div class="r"><span style="color:#8a6d00">跳过 ×1：go-mysite-v0</span><span class="cmeta">被项目外容器 cache-test 引用</span></div>
+              </div>
+              <div class="note">昨天 21:14 · 事实以 CLI 结果为准（container prune → image delete → image prune）</div>
+            </div>
+          </div>
+        </div>
+        <div class="pcard" style="margin-top:16px;max-width:920px">
+          <h4>成员容器（2 个运行中 / 共 3 个）</h4>
+          <table class="list">
+            <thead><tr><th style="width:22px"></th><th>名称</th><th>镜像</th><th>端口</th><th>运行时长</th><th></th></tr></thead>
+            <tbody>
+              <tr><td><span class="statusdot run"></span></td><td class="cname">web-frontend</td><td class="mono">go-mysite-v3</td><td class="mono">8080→80</td><td>2 小时</td><td><div class="row-actions"><button class="btn sm">停止</button><button class="btn sm">日志</button></div></td></tr>
+              <tr><td><span class="statusdot run"></span></td><td class="cname">api-server</td><td class="mono">go-mysite-v3</td><td class="mono">9000→9000</td><td>2 小时</td><td><div class="row-actions"><button class="btn sm">停止</button><button class="btn sm">日志</button></div></td></tr>
+              <tr><td><span class="statusdot stop"></span></td><td class="cname">mysite-debug</td><td class="mono">go-mysite-v2</td><td class="mono">—</td><td>已停止 1 天</td><td><div class="row-actions"><button class="btn sm">启动</button><button class="btn sm destructive">删除</button></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 一键回收确认弹窗：默认 force + 销毁清单 -->
+    <div class="reclaim-mask" onclick="document.body.dataset.reclaim='closed'"></div>
+    <div class="reclaim">
+      <h3>一键回收「mysite」</h3>
+      <p class="cmeta">以下资源将被销毁（事实以 CLI 结果为准，完成后显示回收报告）：</p>
+      <ul>
+        <li>已停止容器 ×1：<span class="mono">mysite-debug</span></li>
+        <li>旧版本镜像本地副本 ×2：<span class="mono">go-mysite-v1</span>、<span class="mono">go-mysite-v2</span>（registry 均有副本）</li>
+        <li>dangling 镜像 ×3</li>
+      </ul>
+      <p class="skipline">跳过 ×1：<span class="mono">go-mysite-v0</span> —— 被项目外容器 <span class="mono">cache-test</span> 引用，不删除。</p>
+      <label class="chk"><input type="checkbox" checked> <span><b>强制回收（force）</b><br><span class="cmeta">即使镜像仍被本项目的已停止容器引用也一并删除。项目自动化回收默认勾选；手动删除单个镜像时不默认勾选。</span></span></label>
+      <div class="rfoot">
+        <button class="btn" onclick="document.body.dataset.reclaim='closed'">取消</button>
+        <button class="btn primary" style="background:var(--error);border-color:var(--error)" onclick="document.body.dataset.reclaim='closed'">回收并显示报告</button>
       </div>
     </div>
   </div>
@@ -668,6 +833,22 @@ root@web-frontend:/# ▊</div>
   // 方案 C 行/卡片打开 sheet
   document.querySelectorAll('.v-c .card').forEach(function (c) {
     c.addEventListener('dblclick', function () { document.body.dataset.detail = 'open'; });
+  });
+
+  // 方案 A 侧栏页面切换（容器 / 项目）
+  document.querySelectorAll('.v-a .sb-item[data-page]').forEach(function (it) {
+    it.addEventListener('click', function () {
+      document.querySelectorAll('.v-a .sb-item').forEach(function (x) { x.classList.remove('active'); });
+      it.classList.add('active');
+      document.body.dataset.page = it.dataset.page;
+      document.body.dataset.detail = 'closed';
+      document.body.dataset.project = 'closed';
+      document.body.dataset.reclaim = 'closed';
+    });
+  });
+  // 项目行打开项目详情
+  document.querySelectorAll('.page-projects tbody tr').forEach(function (tr) {
+    tr.addEventListener('click', function () { document.body.dataset.project = 'open'; });
   });
 
   apply();

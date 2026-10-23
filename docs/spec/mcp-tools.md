@@ -1,17 +1,18 @@
 # v1 MCP 工具清单决策简报
 
-- 工单：GitHub issue #8（wayfinder 地图 #1 子工单）
+- 工单：GitHub issue #8（wayfinder 地图 #1 子工单）；#13 回填（project_*/registry_* 域、移除 container_logs）：2026-10-23
 - 日期：2026-10-23
-- 输入：docs/research/dart-mcp-server-options.md（#4，选型 mcp_dart ^2.4.3）、docs/research/bridge-flutter-apple-container.md（#7，XPC 主/CLI 补）、docs/research/apple-container-system-requirements.md（#11）、docs/research/compose-plugin-integration.md（#6）、GLOSSARY.md
-- 已定前提：MCP = app 内置 server（mcp_dart ^2.4.3），与 UI 同进程共用 Service layer；传输 stdio + 仅 127.0.0.1 Streamable HTTP；**不设破坏性操作门控，但注解必须标全**；桥接 XPC 为主、CLI 补 system 启停。
+- 输入：docs/research/dart-mcp-server-options.md（#4，选型 mcp_dart ^2.4.3）、docs/research/bridge-flutter-apple-container.md（#7，XPC 主/CLI 补）、docs/research/apple-container-system-requirements.md（#11）、docs/research/compose-plugin-integration.md（#6）、docs/research/container-build-registry.md（#12）、docs/spec/project-workflow.md（#13）、GLOSSARY.md
+- 已定前提：MCP = app 内置 server（mcp_dart ^2.4.3），与 UI 同进程共用 Service layer；传输 stdio + 仅 127.0.0.1 Streamable HTTP；**不设破坏性操作门控，但注解必须标全**；桥接 XPC 为主、CLI 补 system 启停与项目工作流的 build/push/测试容器；MCP 是策展封装层，底层通道对消费者不可见。
+- **工具总数：34**（containers 9 / images 4 / system 3 / networks 2 / mounts 2 / compose 3 / project 8 / registry 3）。
 
 ---
 
 ## 1. 命名规范
 
 - 形态：`<域>_<动词>`，全小写 snake_case。MCP 工具名约束为 `[a-zA-Z0-9_-]{1,64}`，**不允许点号**，故不采用 `container.list` 风格。
-- 域前缀：`container_` / `image_` / `system_` / `network_` / `mount_` / `compose_`。`mount_` 对齐 GLOSSARY（上游 volume 一律称 Mount），避免 agent 用 `volume_` 猜测而落空。
-- 动词约定：`list`（集合）、`get`（单个详情）、`create`、`start`、`stop`、`restart`、`kill`、`delete`、`logs`、`exec`、`stats`、`pull`、`inspect`、`up`、`down`。
+- 域前缀：`container_` / `image_` / `system_` / `network_` / `mount_` / `compose_` / `project_` / `registry_`。`mount_` 对齐 GLOSSARY（上游 volume 一律称 Mount），避免 agent 用 `volume_` 猜测而落空。
+- 动词约定：`list`（集合）、`get`（单个详情）、`create`、`start`、`stop`、`restart`、`kill`、`delete`、`exec`、`stats`、`pull`、`inspect`、`up`、`down`、`init`、`build`、`test`、`reclaim`、`publish`、`restore`。注意：**不提供 `logs` 动词**——`container_logs` 已被 #13 决策移除（MCP 是策展封装层，日志查看留 UI；agent 侧由 `container_exec` / `project_test` 的 stdout/stderr 覆盖）。
 - 资源标识参数统一命名 `id`，语义上接受容器 ID 或名称：服务端解析唯一性，歧义时返回错误并列出候选（见 §5 错误模型）。
 - title 注解字段填人类可读名（如 "List containers"）；description 用英文（agent 面向，模型通用性最好；中文界面是 UI 层决策，不影响 agent 接口）。⚠️ 此点列入待拍板（Q4）。
 
@@ -21,10 +22,10 @@
 
 | 方案 | 优 | 劣 |
 |---|---|---|
-| A. 每操作一工具（`container_start`、`container_delete`…） | 注解可按操作粒度标（delete 标 destructive、list 标 readOnly）；schema 精确、参数校验强；agent 可发现性好 | 工具数多（v1 约 25 个） |
+| A. 每操作一工具（`container_start`、`container_delete`…） | 注解可按操作粒度标（delete 标 destructive、list 标 readOnly）；schema 精确、参数校验强；agent 可发现性好 | 工具数多（v1 共 34 个） |
 | B. 域工具 + action 枚举（`container(action:"delete")`） | 工具数少（6 个） | **注解只能取并集**——一个含 delete 的工具无法同时诚实地标 readOnly/destructive；inputSchema 变成 action 联合类型，校验弱；与"不设门控但注解标全"的既定决策冲突 |
 
-**推荐 A**。注解粒度是用户决策（不设门控、注解标全）的直接推论：上层封装靠注解区分操作风险，action 合并会让 destructive 信息消失。25 个工具对现代 agent 是可管理规模。
+**推荐 A**。注解粒度是用户决策（不设门控、注解标全）的直接推论：上层封装靠注解区分操作风险，action 合并会让 destructive 信息消失。34 个工具对现代 agent 是可管理规模。
 
 ## 3. 工具清单（v1 全量）
 
@@ -78,7 +79,32 @@
 | `compose_down` | 停并删 compose 项目容器 | `file` 与 `projectName` 二选一；`keepNetworks?: bool` | | ✓ | ✓ | `{project, removed: [{service, containerId}]}` |
 | `compose_list` | 列出 compose 项目（客户端按 `com.compose.project` label 聚合 container_list，插件无此子命令） | 无 | ✓ | | ✓ | `{projects: [{name, services: [{name, containerId, status}]}]}` |
 
-**v1 明确不做**（迷雾/范围外，不暴露为工具）：container export/commit（commit 需 1.6.0，列入 v2 评估）、image build/push、network/mount 写操作、DNS 域管理（需 sudo）、builder、Machines/K8s。
+### 3.6 Project（8）
+
+项目工作流域，语义全文见 docs/spec/project-workflow.md（#13）。MCP 是策展封装层：工具暴露的是工作流操作，底层 XPC/CLI 通道对消费者不可见。寻址参数一律 `name:tag`（schema pattern 强制，禁 digest）。
+
+| 工具 | 描述要点 | 关键参数 | RO | D | I | 输出结构 |
+|---|---|---|---|---|---|---|
+| `project_list` | 列出项目（label `com.ghost233.project` 聚合 + toml 发现） | 无 | ✓ | | ✓ | `{projects: [{name, path?, versions: [int], containers: int, latestVersion?}]}` |
+| `project_get` | 项目详情（版本时间线 + 成员容器 + 配置 + 使用状态） | `name: string`（必） | ✓ | | ✓ | `{name, config, images: [{reference, version, sizeBytes, createdAt, inUse}], containers: [...], retain}` |
+| `project_init` | 在项目目录生成 ghostcontainer.toml | `path: string`（必）；`name?`（默认目录名）；`lang: string`（必）；`baseImage?`（须带 tag） | | | ✗（已存在 → CONFLICT） | `{path, name, config}` |
+| `project_build` | 执行构建工作流：拉基础镜像 → 构建 base → 构建 v{n} → 跑测试 → 清理旧版本（长操作，progress 见 §6） | `name` 与 `path` 二选一；`skipTests?: bool`（默认 false）；`noCache?: bool` | | | ✗（每次产出版本号递增的新镜像） | `{name, version, baseImage, image, testsPassed?, durationMs, reclaimed?: <回收报告>}` |
+| `project_test` | 对指定版本跑测试容器（--rm 一次性，退出码透传；exitCode≠0 不算工具错误） | `name`（必）；`version?: int`（默认最新）；`command?: string[]`（覆盖 toml） | | | ✗ | `{name, version, exitCode, stdout, stderr, truncated, durationMs}` |
+| `project_reclaim` | 项目回收：停删成员容器 + 释放无人使用旧镜像。**默认 force，返回销毁清单**；外部引用跳过并列名 | `name`（必）；`keepVersions?: int`（覆盖 toml）；`dryRun?: bool`（默认 false，只算不删） | | ✓ | ✓ | 回收报告（销毁清单 schema 见 project-workflow.md §4） |
+| `project_publish` | 推送项目镜像到本地 registry（tag 成 loopback 引用后 push，长操作） | `name`（必）；`version?: int`（默认最新）；`includeBase?: bool`（默认 false）；`deleteLocal?: bool`（默认 false，推送后删本地 tag 释放磁盘） | | | ✓ | `{name, pushed: [{source, target, sizeBytes}]}` |
+| `project_restore` | 从本地 registry 拉回版本并 tag 回本地规约名 | `name`（必）；`version: int`（必） | | | ✓ | `{name, restored: [{reference}]}` |
+
+### 3.7 Registry（3）
+
+本地 registry 最小形态的管理工具（单例 app 托管容器 `gcm-registry`，plain HTTP loopback，语义见 project-workflow.md §5）。域归属独立于此处是待确认项（project-workflow.md 遗留问题 L1）。
+
+| 工具 | 描述要点 | 关键参数 | RO | D | I | 输出结构 |
+|---|---|---|---|---|---|---|
+| `registry_status` | registry 容器与健康状态（GET /v2/ 探活） | 无 | ✓ | | ✓ | `{running: bool, port, containerId?, diskBytes?}` |
+| `registry_start` | 一键启动（缺失时 create + 拉 registry:2，bind mount 持久化，幂等） | `port?: int`（默认 5056） | | | ✓ | `{running: true, port, containerId}` |
+| `registry_stop` | 停止 registry（数据保留在 bind mount，不销毁） | 无 | | | ✓ | `{running: false}` |
+
+**v1 明确不做**（迷雾/范围外，不暴露为工具）：container export/commit（commit 需 1.6.0，列入 v2 评估）、独立的 image build/push 工具（build/push 仅以策展形态经 `project_build`/`project_publish` 暴露）、network/mount 写操作、DNS 域管理（需 sudo）、builder 管理（CLI 自管）、Machines/K8s、**`container_logs`**（#13 决策：MCP 不提供日志工具，日志查看留 UI 面板；agent 经 `container_exec`/`project_test` 的输出获取信息）。
 
 ## 4. 输出 schema 策略（关键决策点 2）
 
@@ -94,8 +120,8 @@
 
 **有界性规则**（对齐 agent-experience 原则：bounded outputs + 检索路径）：
 
-- `container_logs`：默认 `tail: 200` 行（上限 2000），返回 `{lines, truncated, since}`；`truncated: true` 时 agent 可用更大 tail 重取。follow 语义见 §6。
-- `container_exec`：stdout/stderr 各上限 64 KiB，超出截断 + `truncated: true`。
+- `container_exec` 与 `project_test`：stdout/stderr 各上限 64 KiB，超出截断 + `truncated: true`。
+- `project_build`：结果内嵌构建输出末尾 50 行（错误时）或不内嵌（成功时）；全程输出只经 progress notification 流式推送，不落盘（v1 无构建历史）。
 - `container_list`：v1 不分页（本机容器量级百以内）；若未来需要，加 `cursor` 而非页码。
 
 ## 5. 错误模型
@@ -134,7 +160,7 @@
 
 ## 6. 长操作与流式（关键决策点 3）
 
-**问题**：`image_pull`、`compose_up`、`container_logs(follow)` 这类长操作如何暴露？
+**问题**：`image_pull`、`project_build`、`compose_up` 这类长操作如何暴露？
 
 | 方案 | 优 | 劣 |
 |---|---|---|
@@ -144,8 +170,8 @@
 
 **推荐 B + 有界默认**：
 
-- `image_pull` / `compose_up` / `system_start`（含内核下载）：同步工具 + progress notification（百分比或已完成字节），`extra.signal` 支持取消。
-- `container_logs`：**默认非 follow**（`tail` 有界返回）；`follow: true` 时以 progress notification 推送新行，直到 agent 取消（`extra.signal`）。这避免了一个永不返回的 tool call 阻塞 agent 会话。
+- `image_pull` / `project_build` / `project_publish` / `project_restore` / `compose_up` / `system_start`（含内核下载）/ `registry_start`（首启拉 registry:2）：同步工具 + progress notification（百分比、已完成字节或构建阶段行），`extra.signal` 支持取消。`project_build` 的取消 = 杀 CLI 构建子进程（#12 §1.3）。
+- **无 follow 型工具**：`container_logs` 已移除（#13），v1 不存在永不返回的 tool call；所有长操作都有明确终态。
 - 进度节流：对齐 orchard 的 pull 进度折叠（~10Hz），Swift 桥接层 → Dart 的 EventChannel 推送与 MCP progress 共用同一节流点（见 #2 架构简报的状态同步模型）。
 
 ## 7. Resources / Prompts
@@ -161,10 +187,11 @@ server 的 `instructions` 字段（MCP 初始化握手）**要做**：一段简�
 
 - **Q1 粒度**：每操作一工具（推荐 A，约 25 个）还是域+action 合并？➡️ 推荐 A（注解粒度的直接推论）。
 - **Q2 输出**：双通道 structuredContent+文本摘要（推荐 C）还是仅结构化？➡️ 推荐 C。
-- **Q3 长操作**：progress notification + 有界默认（推荐 B）还是一次性返回？➡️ 推荐 B；其中 `container_logs` 默认非 follow。
+- **Q3 长操作**：progress notification + 有界默认（推荐 B）还是一次性返回？➡️ 推荐 B。**更新（#13 回填）**：`container_logs` 已随 #13 决策移除，v1 无 follow 型工具。
 - **Q4 工具描述语言**：英文（推荐，agent 通用性）还是中文？name/title 不受影响（英文标识符）。
-- **Q5 `container_stats` 是否进 v1**：当前清单未列（地图范围未含 stats），但 XPC 快照成本低、对 agent 价值高。➡️ 推荐补一个 `container_stats`（readOnly，单次快照；流式由 agent 轮询），工具数变 26。
-- **Q6 `compose_list` 的实现归属**：推荐由 Service layer 按 label 聚合实现（插件无此命令）。若认为 v1 不必，可砍掉（工具数 24）。
+- **Q5 `container_stats` 是否进 v1**：当前清单未列（地图范围未含 stats），但 XPC 快照成本低、对 agent 价值高。➡️ 推荐补一个 `container_stats`（readOnly，单次快照；流式由 agent 轮询），工具数 34 → 35。
+- **Q6 `compose_list` 的实现归属**：推荐由 Service layer 按 label 聚合实现（插件无此命令）。若认为 v1 不必，可砍掉（工具数 34 → 33）。
+- **Q7 registry 工具域归属**：独立 `registry_` 域（当前方案）vs 并入 `project_`。➡️ 对应 project-workflow.md 遗留问题 L1，推荐独立域。
 
 ## 9. GLOSSARY 新增术语建议
 
