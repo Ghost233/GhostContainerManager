@@ -1,0 +1,93 @@
+/// In-app MCP server (docs/spec/mcp-tools.md §1/§2).
+///
+/// Same-process design: tools call the Service layer directly (no HTTP
+/// self-loop). Transports: Streamable HTTP on 127.0.0.1 (default port 35731)
+/// plus a stdio thin proxy (`stdio_proxy.dart`) that forwards newline-
+/// delimited JSON-RPC to the HTTP endpoint.
+library;
+
+// Public named parameter `systemService` keeps its name; the
+// initializing-formals lint cannot apply to private fields.
+// ignore_for_file: prefer_initializing_formals
+
+import 'package:mcp_dart/mcp_dart.dart';
+
+import '../services/container_service.dart';
+import '../services/system_service.dart';
+import 'tools/container_tools.dart';
+import 'tools/system_tools.dart';
+
+/// MCP server embedded in the app. Lifecycle follows the app (start on
+/// launch when enabled in settings; stop on quit).
+class GcmMcpServer {
+  GcmMcpServer({
+    required SystemService systemService,
+    required ContainerService containerService,
+    this.host = '127.0.0.1',
+    this.port = defaultPort,
+    this.path = '/mcp',
+    this.enableJsonResponse = false,
+  }) : _systemService = systemService,
+       _containerService = containerService;
+
+  /// Default MCP HTTP port (settings page default, issue #16 验收 4).
+  static const int defaultPort = 35731;
+
+  static const Implementation serverInfo = Implementation(
+    name: 'ghost-container-manager',
+    title: 'GhostContainerManager',
+    version: '0.0.0',
+  );
+
+  final SystemService _systemService;
+  final ContainerService _containerService;
+  final String host;
+  final int port;
+  final String path;
+
+  /// Test hook: return plain JSON responses instead of SSE streams.
+  final bool enableJsonResponse;
+
+  StreamableMcpServer? _transport;
+
+  /// Port actually bound (differs from [port] when port 0 was requested).
+  int get boundPort => _transport?.boundPort ?? port;
+
+  bool get running => _transport != null;
+
+  /// Builds a protocol server with every tool domain registered. Exposed so
+  /// the stdio path and tests can attach their own transports.
+  McpServer buildServer() {
+    final server = McpServer(
+      serverInfo,
+      options: McpServerOptions(
+        instructions: '管理本机 Apple container 运行时（macOS）。system_* 工具报告与控制运行时状态；container_* 工具查询容器（只读）。',
+      ),
+    );
+    registerSystemTools(server, _systemService);
+    registerContainerTools(server, _containerService);
+    return server;
+  }
+
+  /// Starts the Streamable HTTP transport on 127.0.0.1.
+  Future<void> start() async {
+    if (_transport != null) {
+      throw StateError('MCP server already started');
+    }
+    final transport = StreamableMcpServer(
+      serverFactory: (_) => buildServer(),
+      host: host,
+      port: port,
+      path: path,
+      enableJsonResponse: enableJsonResponse,
+    );
+    await transport.start();
+    _transport = transport;
+  }
+
+  Future<void> stop() async {
+    final transport = _transport;
+    _transport = null;
+    await transport?.stop();
+  }
+}

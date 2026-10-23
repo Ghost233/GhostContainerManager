@@ -6,19 +6,24 @@ import PackageDescription
 let package = Package(
     name: "container_bridge",
     platforms: [
-        .macOS("12.0")
+        // ContainerAPIClient requires macOS 15+; the app targets macOS 26+.
+        .macOS("15.0")
     ],
     products: [
         .library(name: "container-bridge", targets: ["container_bridge"])
     ],
     dependencies: [
-        .package(name: "FlutterFramework", path: "../FlutterFramework")
+        .package(name: "FlutterFramework", path: "../FlutterFramework"),
+        // Pinned per docs/research/bridge-flutter-apple-container.md and the
+        // runtime gate anchor (docs/spec/onboarding.md): container 1.6.0.
+        .package(url: "https://github.com/apple/container.git", exact: "1.6.0")
     ],
     targets: [
         .target(
             name: "container_bridge",
             dependencies: [
-                .product(name: "FlutterFramework", package: "FlutterFramework")
+                .product(name: "FlutterFramework", package: "FlutterFramework"),
+                .product(name: "ContainerAPIClient", package: "container")
             ],
             resources: [
                 // If your plugin requires a privacy manifest, for example if it collects user

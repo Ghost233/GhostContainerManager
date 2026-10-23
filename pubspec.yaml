@@ -18,6 +18,8 @@ dependencies:
       url: https://github.com/Ghost233/MacLauncher.git
       ref: 268f88ef5ff47dbafe88200d5cddd090983ad313
       path: packages/maclauncher_sdk
+  # MCP server SDK（task-15，issue #16；选型见 docs/research/dart-mcp-server-options.md）
+  mcp_dart: ^2.4.3
 
 dev_dependencies:
   flutter_lints: 6.0.0

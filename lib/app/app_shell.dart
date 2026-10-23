@@ -1,0 +1,185 @@
+/// 三列工作台导航框架（ui-ia.md D1 方案 A；侧栏 224，9 项）。
+///
+/// 侧栏 = 资源类型 + 运行时 + 设置/MCP；内容区 = 当前页；
+/// 检查器列留给后续列表任务（T1b 仅占位）。
+/// 降级壳（onboarding.md §4 方案 C）：serviceNotRunning / kernelMissing
+/// 时主界面可进，内容区顶部显示横幅 + 一键修复。
+library;
+
+import 'package:flutter/material.dart';
+
+import '../features/settings/mcp_settings_controller.dart';
+import '../features/settings/settings_page.dart';
+import '../features/system/readiness_controller.dart';
+import '../features/system/runtime_page.dart';
+import '../../services/system_service.dart';
+import 'placeholders.dart';
+
+/// 侧栏项（ui-ia.md #13 回填后的 9 项）。
+const List<String> kSidebarItems = [
+  '容器',
+  '项目',
+  'Compose 项目',
+  '镜像',
+  '挂载',
+  '网络',
+  '运行时',
+  '设置',
+  'MCP',
+];
+
+class AppShell extends StatefulWidget {
+  const AppShell({
+    super.key,
+    required this.readiness,
+    required this.mcp,
+    this.initialIndex = 0,
+  });
+
+  final ReadinessController readiness;
+  final McpSettingsController mcp;
+
+  /// 初始选中项（跳过引导进入设置时使用 kSidebarItems.indexOf('设置')）。
+  final int initialIndex;
+
+  @override
+  State<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<AppShell> {
+  late int _selected = widget.initialIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Row(
+        children: [
+          SizedBox(
+            width: 224,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border(
+                  right: BorderSide(color: Theme.of(context).dividerColor),
+                ),
+              ),
+              child: Material(
+                color: Theme.of(context).colorScheme.surfaceContainerLow,
+                child: ListView(
+                  children: [
+                    for (var i = 0; i < kSidebarItems.length; i++)
+                      ListTile(
+                        title: Text(kSidebarItems[i]),
+                        dense: true,
+                        selected: i == _selected,
+                        onTap: () => setState(() => _selected = i),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: ListenableBuilder(
+              listenable: widget.readiness,
+              builder: (context, _) {
+                return Column(
+                  children: [
+                    if (_showDegradedBanner)
+                      _DegradedBanner(
+                        controller: widget.readiness,
+                        onOpenRuntime: () => setState(
+                          () => _selected = kSidebarItems.indexOf('运行时'),
+                        ),
+                      ),
+                    Expanded(child: _page(context)),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool get _showDegradedBanner {
+    final level = widget.readiness.readiness?.level;
+    return level == ReadinessLevel.serviceNotRunning ||
+        level == ReadinessLevel.kernelMissing;
+  }
+
+  Widget _page(BuildContext context) {
+    final title = kSidebarItems[_selected];
+    switch (title) {
+      case '运行时':
+        return RuntimePage(controller: widget.readiness);
+      case '设置':
+      case 'MCP': // MCP 是设置页内的区块（ui-ia.md D9）
+        return SettingsPage(mcp: widget.mcp);
+      default:
+        return PlaceholderSectionPage(
+          title: title,
+          controller: widget.readiness,
+          onOpenRuntime: () =>
+              setState(() => _selected = kSidebarItems.indexOf('运行时')),
+        );
+    }
+  }
+}
+
+/// 降级壳横幅：服务未运行 / 内核缺失时的一键修复入口（方案 C 非阻塞侧）。
+class _DegradedBanner extends StatelessWidget {
+  const _DegradedBanner({
+    required this.controller,
+    required this.onOpenRuntime,
+  });
+
+  final ReadinessController controller;
+  final VoidCallback onOpenRuntime;
+
+  @override
+  Widget build(BuildContext context) {
+    final level = controller.readiness!.level;
+    final kernelMissing = level == ReadinessLevel.kernelMissing;
+    final theme = Theme.of(context);
+
+    return Material(
+      color: theme.colorScheme.secondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        child: Row(
+          children: [
+            Icon(
+              Icons.warning_amber_outlined,
+              size: 16,
+              color: theme.colorScheme.onSecondaryContainer,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                kernelMissing ? '运行时缺少默认内核，容器无法启动' : '运行时未启动',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSecondaryContainer,
+                ),
+              ),
+            ),
+            TextButton(onPressed: onOpenRuntime, child: const Text('打开引导检查')),
+            const SizedBox(width: 8),
+            FilledButton(
+              onPressed: controller.busy
+                  ? null
+                  : (kernelMissing
+                        ? controller.installKernel
+                        : controller.startRuntime),
+              child: Text(
+                controller.busy
+                    ? '正在处理…'
+                    : (kernelMissing ? '安装推荐内核' : '启动运行时'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
