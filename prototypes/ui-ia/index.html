@@ -181,11 +181,6 @@
   .pcard h4 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
   .pcard .note { font-size: 12px; color: var(--secondary); margin-top: 10px; }
   .warnline { display: flex; gap: 8px; align-items: flex-start; background: #fdf3d7; border: 1px solid #f0dfae; color: #6b5600; border-radius: var(--radius-ctl); padding: 8px 10px; font-size: 12px; margin-top: 10px; }
-  .tl-item { position: relative; padding: 8px 0 10px 22px; border-left: 2px solid var(--separator); margin-left: 5px; }
-  .tl-item::before { content: ''; position: absolute; left: -6px; top: 14px; width: 8px; height: 8px; border-radius: 50%; background: var(--placeholder); border: 2px solid var(--panel); }
-  .tl-item.cur::before { background: var(--success); }
-  .tl-item .tl-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .tl-item .tl-meta { color: var(--secondary); font-size: 12px; margin-top: 2px; }
   .badge { font-size: 10px; padding: 1px 7px; border-radius: 4px; background: #e8f7ec; color: #1d7a34; }
   .badge.gray { background: #efeff2; color: var(--secondary); }
   .badge.blue { background: #e5f4ff; color: #0a5a9e; }
@@ -198,6 +193,19 @@
   .reclaim .chk { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0; font-size: 12px; }
   .reclaim .rfoot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
   .reclaim .skipline { font-size: 12px; color: var(--secondary); }
+  /* 底部构建日志面板（终轮拍板：与卡片共存，v1 即做，--progress plain 逐行） */
+  .buildlog { flex: none; border-top: 1px solid var(--separator); background: var(--panel); display: none; flex-direction: column; }
+  body[data-log="run"] .buildlog, body[data-log="fail"] .buildlog { display: flex; }
+  .bl-head { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; flex: none; }
+  .bl-body { height: 184px; border-radius: 0; }
+  body[data-log="run"] .bl-fail, body[data-log="fail"] .bl-run { display: none; }
+  /* 「删除本地副本」三选确认弹窗（终轮拍板：取消 / 仅删除 / 归档并删除） */
+  .del-mask { position: absolute; inset: 0; background: rgba(0,0,0,.25); display: none; z-index: 42; }
+  body[data-del="open"] .del-mask { display: block; }
+  .del { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-52%); width: 480px; background: var(--panel); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.35); padding: 18px 20px; display: none; z-index: 43; }
+  body[data-del="open"] .del { display: block; }
+  .del h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+  .del .rfoot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
   /* ===== 方案 B：图标栏 + 统一资源列表 ===== */
   .rail {
@@ -293,9 +301,9 @@
   body[data-variant="c"] .v-a, body[data-variant="c"] .v-b { display: none !important; }
 </style>
 </head>
-<body data-variant="a" data-state="content" data-detail="closed" data-page="containers" data-project="closed" data-reclaim="closed">
+<body data-variant="a" data-state="content" data-detail="closed" data-page="containers" data-project="closed" data-reclaim="closed" data-log="closed" data-del="closed">
 
-<p class="proto-note"><b>PROTOTYPE — 一次性原型。</b>对比 v1 主窗口信息架构的三个结构方案（A 三列工作台 / B 资源总列表 / C 顶部导航+仪表盘），用 ← → 或底部栏切换；「数据态」分段切换空态与「运行时未启动」错误态；A 方案侧栏可切换「容器 / 项目」页（项目：列表 → 详情含镜像版本时间线、成员容器、registry 状态区、一键回收销毁清单弹窗）；A 方案点「打开详情」、C 方案点行可看容器详情形态差异。数据全部虚构。</p>
+<p class="proto-note"><b>PROTOTYPE — 一次性原型。</b>对比 v1 主窗口信息架构的三个结构方案（A 三列工作台 / B 资源总列表 / C 顶部导航+仪表盘），用 ← → 或底部栏切换；「数据态」分段切换空态与「运行时未启动」错误态；A 方案侧栏可切换「容器 / 项目」页（项目：列表 → 详情含镜像列表、底部构建日志面板、成员容器、回收报告、一键回收销毁清单弹窗与「删除本地副本」三选弹窗）；A 方案点「打开详情」、C 方案点行可看容器详情形态差异。数据全部虚构。</p>
 
 <div class="window">
   <div class="titlebar">
@@ -399,22 +407,23 @@
         <h1>项目</h1>
         <div style="flex:1"></div>
         <input class="search" placeholder="搜索项目…">
+        <button class="btn">⟳ 刷新磁盘快照</button>
         <button class="btn primary">＋ 从目录新建项目…</button>
       </div>
       <div class="tablewrap state-content" style="flex:1">
         <table class="list">
           <thead><tr>
-            <th>名称</th><th>镜像版本</th><th>运行中容器</th><th>磁盘占用</th><th>最近构建</th><th></th>
+            <th>名称</th><th>镜像数</th><th>运行中容器</th><th>磁盘占用</th><th>最近构建</th><th></th>
           </tr></thead>
           <tbody>
             <tr>
               <td><span class="cname">mysite</span><span class="tag">本应用创建</span><div class="cmeta mono">com.ghost233.project=mysite</div></td>
-              <td>base + 3 个版本</td><td>2 个</td><td>1.2 GB</td><td>2 小时前</td>
+              <td>3 个镜像</td><td>2 个</td><td>1.2 GB</td><td>2 小时前</td>
               <td><div class="row-actions"><button class="btn sm">详情</button></div></td>
             </tr>
             <tr>
               <td><span class="cname">mllab</span><div class="cmeta mono">com.ghost233.project=mllab</div></td>
-              <td>base + 1 个版本</td><td>0 个</td><td>640 MB</td><td>3 天前</td>
+              <td>2 个镜像</td><td>0 个</td><td>640 MB</td><td>3 天前</td>
               <td><div class="row-actions"><button class="btn sm">详情</button></div></td>
             </tr>
           </tbody>
@@ -507,7 +516,7 @@ root@web-frontend:/# ▊</div>
       </div>
     </div>
 
-    <!-- 项目详情覆盖层（#13 回填：版本时间线 + 成员容器 + registry 状态区 + 回收报告） -->
+    <!-- 项目详情覆盖层（终轮拍板定稿：镜像列表 + 底部构建日志面板 + 成员容器 + 回收报告；无 registry 状态区） -->
     <div class="project-overlay">
       <div class="toolbar">
         <button class="btn" onclick="document.body.dataset.project='closed'">‹ 返回项目列表</button>
@@ -515,55 +524,42 @@ root@web-frontend:/# ▊</div>
         <span class="tag">本应用创建</span>
         <span class="cmeta mono">com.ghost233.project=mysite</span>
         <div style="flex:1"></div>
-        <button class="btn">构建新版本</button>
+        <button class="btn" onclick="document.body.dataset.log='run'">构建新版本</button>
         <button class="btn">推送到本地 registry</button>
         <button class="btn destructive" onclick="document.body.dataset.reclaim='open'">一键回收…</button>
       </div>
       <div class="pbody">
         <div class="pgrid">
           <div class="pcard">
-            <h4>镜像版本时间线</h4>
-            <div class="tl">
-              <div class="tl-item cur">
-                <div class="tl-head"><span class="mono cname">go-mysite-v3</span><span class="badge">使用中</span><span class="badge blue">已推送 registry</span></div>
-                <div class="tl-meta">2 小时前构建 · 412 MB · 基于 go-mysite-base</div>
-              </div>
-              <div class="tl-item">
-                <div class="tl-head"><span class="mono">go-mysite-v2</span><span class="badge gray">未使用</span><span class="badge blue">已推送 registry</span>
-                  <span style="flex:1"></span><button class="btn sm">删除本地副本</button></div>
-                <div class="tl-meta">3 天前构建 · 398 MB · registry 有副本，删除本地不影响恢复</div>
-              </div>
-              <div class="tl-item">
-                <div class="tl-head"><span class="mono">go-mysite-v1</span><span class="badge gray">未使用</span><span class="badge gray">仅本地</span></div>
-                <div class="tl-meta">2 周前构建 · 390 MB · 删除即永久移除（无 registry 副本）</div>
-              </div>
-              <div class="tl-item">
-                <div class="tl-head"><span class="mono cname">go-mysite-base</span><span class="badge gray">基础镜像</span></div>
-                <div class="tl-meta">2 周前构建 · 96 MB · 与 v1–v3 共享层，独占部分仅 18 MB</div>
-              </div>
-            </div>
-            <div class="note">层级共享：删除某个版本 tag 只释放其独占层；最后一个引用删除并 GC 后才真正回收磁盘。</div>
+            <h4 style="display:flex;align-items:center">镜像列表
+              <span style="flex:1"></span>
+              <button class="btn sm" onclick="document.body.dataset.log='fail'">查看上次失败日志</button>
+            </h4>
+            <table class="list">
+              <thead><tr><th>名称</th><th>大小</th><th>创建时间</th><th>状态</th><th></th></tr></thead>
+              <tbody>
+                <tr><td class="mono cname">mysite-go2</td><td>412 MB</td><td>2 小时前</td>
+                  <td><span class="badge">使用中</span> <span class="badge blue">已推送</span></td><td></td></tr>
+                <tr><td class="mono">mysite-go1</td><td>398 MB</td><td>3 天前</td>
+                  <td><span class="badge gray">未使用</span> <span class="badge blue">已推送</span></td>
+                  <td><div class="row-actions"><button class="btn sm" onclick="document.body.dataset.del='open'">删除本地副本…</button></div></td></tr>
+                <tr><td class="mono">mysite-debug</td><td>390 MB</td><td>2 周前</td>
+                  <td><span class="badge gray">未使用</span> <span class="badge gray">仅本地</span></td>
+                  <td><div class="row-actions"><button class="btn sm destructive">删除…</button></div></td></tr>
+              </tbody>
+            </table>
+            <div class="note">同名构建默认替换（无确认）；删 tag 只释放独占层，最后一个引用删除 + GC 后才真正回收磁盘。</div>
           </div>
-          <div>
-            <div class="pcard" style="margin-bottom:16px">
-              <h4>本地 registry</h4>
-              <div class="ikv"><span class="k">状态</span><span class="v"><span class="statusdot run"></span>运行中</span></div>
-              <div class="ikv"><span class="k">地址</span><span class="v mono">http://127.0.0.1:5056</span></div>
-              <div class="ikv"><span class="k">容器 / 数据卷</span><span class="v mono">gcm-registry · gcm-registry-data</span></div>
-              <div class="iact"><button class="btn sm">停止 registry</button><button class="btn sm">打开数据目录</button></div>
-              <div class="warnline">⚠ 循环依赖风险：推送后删除本地镜像可释放磁盘，但恢复依赖本 registry 容器与其数据卷存活——若 registry 被回收，已删除的本地镜像将无法拉回。</div>
+          <div class="pcard">
+            <h4>上次回收报告</h4>
+            <div class="bignum" style="color:#1d7a34;font-size:24px">已释放 786 MB</div>
+            <div class="rows" style="margin-top:8px">
+              <div class="r"><span>旧镜像本地副本 ×2（mysite-go0、mysite-go1）</span><span class="cmeta">registry 均有副本</span></div>
+              <div class="r"><span>dangling 镜像 ×3</span><span class="cmeta">无引用</span></div>
+              <div class="r"><span>已停止容器 ×1（mysite-debug-run）</span><span class="cmeta">—</span></div>
+              <div class="r"><span style="color:#8a6d00">跳过 ×1：mysite-old</span><span class="cmeta">被项目外容器 cache-test 引用</span></div>
             </div>
-            <div class="pcard">
-              <h4>上次回收报告</h4>
-              <div class="bignum" style="color:#1d7a34;font-size:24px">已释放 786 MB</div>
-              <div class="rows" style="margin-top:8px">
-                <div class="r"><span>旧版本镜像本地副本 ×2（v1、v2）</span><span class="cmeta">registry 均有副本</span></div>
-                <div class="r"><span>dangling 镜像 ×3</span><span class="cmeta">无引用</span></div>
-                <div class="r"><span>已停止容器 ×1（mysite-debug）</span><span class="cmeta">—</span></div>
-                <div class="r"><span style="color:#8a6d00">跳过 ×1：go-mysite-v0</span><span class="cmeta">被项目外容器 cache-test 引用</span></div>
-              </div>
-              <div class="note">昨天 21:14 · 事实以 CLI 结果为准（container prune → image delete → image prune）</div>
-            </div>
+            <div class="note">昨天 21:14 · 事实以 CLI 结果为准（container prune → image delete → image prune）</div>
           </div>
         </div>
         <div class="pcard" style="margin-top:16px;max-width:920px">
@@ -571,12 +567,39 @@ root@web-frontend:/# ▊</div>
           <table class="list">
             <thead><tr><th style="width:22px"></th><th>名称</th><th>镜像</th><th>端口</th><th>运行时长</th><th></th></tr></thead>
             <tbody>
-              <tr><td><span class="statusdot run"></span></td><td class="cname">web-frontend</td><td class="mono">go-mysite-v3</td><td class="mono">8080→80</td><td>2 小时</td><td><div class="row-actions"><button class="btn sm">停止</button><button class="btn sm">日志</button></div></td></tr>
-              <tr><td><span class="statusdot run"></span></td><td class="cname">api-server</td><td class="mono">go-mysite-v3</td><td class="mono">9000→9000</td><td>2 小时</td><td><div class="row-actions"><button class="btn sm">停止</button><button class="btn sm">日志</button></div></td></tr>
-              <tr><td><span class="statusdot stop"></span></td><td class="cname">mysite-debug</td><td class="mono">go-mysite-v2</td><td class="mono">—</td><td>已停止 1 天</td><td><div class="row-actions"><button class="btn sm">启动</button><button class="btn sm destructive">删除</button></div></td></tr>
+              <tr><td><span class="statusdot run"></span></td><td class="cname">web-frontend</td><td class="mono">mysite-go2</td><td class="mono">8080→80</td><td>2 小时</td><td><div class="row-actions"><button class="btn sm">停止</button><button class="btn sm">日志</button></div></td></tr>
+              <tr><td><span class="statusdot run"></span></td><td class="cname">api-server</td><td class="mono">mysite-go2</td><td class="mono">9000→9000</td><td>2 小时</td><td><div class="row-actions"><button class="btn sm">停止</button><button class="btn sm">日志</button></div></td></tr>
+              <tr><td><span class="statusdot stop"></span></td><td class="cname">mysite-debug-run</td><td class="mono">mysite-go1</td><td class="mono">—</td><td>已停止 1 天</td><td><div class="row-actions"><button class="btn sm">启动</button><button class="btn sm destructive">删除</button></div></td></tr>
             </tbody>
           </table>
         </div>
+      </div>
+
+      <!-- 底部构建日志面板（与卡片共存；构建进行中逐行 --progress plain；失败日志落盘可回看） -->
+      <div class="buildlog">
+        <div class="bl-head">
+          <span class="statusdot run bl-run"></span>
+          <b class="bl-run">构建日志 — mysite-go2 · 进行中</b>
+          <b class="bl-fail">上次失败日志 — mysite-go3 · 构建失败</b>
+          <span class="cmeta">--progress plain</span>
+          <span style="flex:1"></span>
+          <button class="btn sm" onclick="document.body.dataset.log='closed'">关闭</button>
+        </div>
+        <div class="logview bl-body bl-run">#1 [internal] load build definition from Dockerfile
+#2 [internal] load metadata for docker.io/library/golang:1.25
+#3 [builder 1/3] FROM docker.io/library/golang:1.25
+#4 [builder 2/3] COPY . /src
+#5 [builder 3/3] RUN go build -o /out/app ./cmd/app
+#6 exporting to oci image format
+#7 unpacking image → mysite-go2
+<span class="t">…逐行流式追加中</span></div>
+        <div class="logview bl-body bl-fail">#5 [builder 3/3] RUN go build -o /out/app ./cmd/app
+<span class="err">#5 ERROR: process "/bin/sh -c go build -o /out/app ./cmd/app" did not complete successfully: exit code: 1</span>
+------
+ &gt; [builder 3/3]:
+./cmd/app/main.go:42:2: undefined: handler
+------
+<span class="t">构建失败 · 日志已落盘（尾部 1000 行 · 保留 20 条 · 仅失败/取消落盘）· 2026-10-23 20:41</span></div>
       </div>
     </div>
 
@@ -586,15 +609,27 @@ root@web-frontend:/# ▊</div>
       <h3>一键回收「mysite」</h3>
       <p class="cmeta">以下资源将被销毁（事实以 CLI 结果为准，完成后显示回收报告）：</p>
       <ul>
-        <li>已停止容器 ×1：<span class="mono">mysite-debug</span></li>
-        <li>旧版本镜像本地副本 ×2：<span class="mono">go-mysite-v1</span>、<span class="mono">go-mysite-v2</span>（registry 均有副本）</li>
+        <li>已停止容器 ×1：<span class="mono">mysite-debug-run</span></li>
+        <li>旧镜像本地副本 ×2：<span class="mono">mysite-go0</span>、<span class="mono">mysite-go1</span>（registry 均有副本）</li>
         <li>dangling 镜像 ×3</li>
       </ul>
-      <p class="skipline">跳过 ×1：<span class="mono">go-mysite-v0</span> —— 被项目外容器 <span class="mono">cache-test</span> 引用，不删除。</p>
+      <p class="skipline">跳过 ×1：<span class="mono">mysite-old</span> —— 被项目外容器 <span class="mono">cache-test</span> 引用，不删除。</p>
       <label class="chk"><input type="checkbox" checked> <span><b>强制回收（force）</b><br><span class="cmeta">即使镜像仍被本项目的已停止容器引用也一并删除。项目自动化回收默认勾选；手动删除单个镜像时不默认勾选。</span></span></label>
       <div class="rfoot">
         <button class="btn" onclick="document.body.dataset.reclaim='closed'">取消</button>
         <button class="btn primary" style="background:var(--error);border-color:var(--error)" onclick="document.body.dataset.reclaim='closed'">回收并显示报告</button>
+      </div>
+    </div>
+
+    <!-- 「删除本地副本」三选确认弹窗（终轮拍板：取消 / 仅删除 / 归档并删除） -->
+    <div class="del-mask" onclick="document.body.dataset.del='closed'"></div>
+    <div class="del">
+      <h3>删除本地副本「mysite-go1」</h3>
+      <p class="cmeta">该镜像已推送到本地 registry。是否需要先归档（推送最新副本到本地 registry）再删除本地副本？<br><br>⚠ 循环依赖提示：删除后的恢复依赖本地 registry 容器与其数据卷存活——若 registry 被回收，已删除的本地镜像将无法拉回。</p>
+      <div class="rfoot">
+        <button class="btn" onclick="document.body.dataset.del='closed'">取消</button>
+        <button class="btn destructive" onclick="document.body.dataset.del='closed'">仅删除</button>
+        <button class="btn primary" onclick="document.body.dataset.del='closed'">归档并删除</button>
       </div>
     </div>
   </div>
@@ -844,6 +879,8 @@ root@web-frontend:/# ▊</div>
       document.body.dataset.detail = 'closed';
       document.body.dataset.project = 'closed';
       document.body.dataset.reclaim = 'closed';
+      document.body.dataset.log = 'closed';
+      document.body.dataset.del = 'closed';
     });
   });
   // 项目行打开项目详情

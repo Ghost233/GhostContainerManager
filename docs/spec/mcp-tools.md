@@ -81,22 +81,22 @@
 
 ### 3.6 Project（8）
 
-项目工作流域，语义全文见 docs/spec/project-workflow.md（#13）。MCP 是策展封装层：工具暴露的是工作流操作，底层 XPC/CLI 通道对消费者不可见。寻址参数一律 `name:tag`（schema pattern 强制，禁 digest）。
+项目工作流域，语义全文见 docs/spec/project-workflow.md（#13，v2 终轮拍板简化版）。MCP 是策展封装层：工具暴露的是工作流操作，底层 XPC/CLI 通道对消费者不可见。项目内镜像命名 `{prefix}-{自定义名}:latest`，同名构建默认替换；寻址一律 `name:tag`（schema pattern 强制，禁 digest）。项目定位参数：`project`（prefix）与 `path`（项目目录，经 toml 解析 prefix）二选一。
 
 | 工具 | 描述要点 | 关键参数 | RO | D | I | 输出结构 |
 |---|---|---|---|---|---|---|
-| `project_list` | 列出项目（label `com.ghost233.project` 聚合 + toml 发现） | 无 | ✓ | | ✓ | `{projects: [{name, path?, versions: [int], containers: int, latestVersion?}]}` |
-| `project_get` | 项目详情（版本时间线 + 成员容器 + 配置 + 使用状态） | `name: string`（必） | ✓ | | ✓ | `{name, config, images: [{reference, version, sizeBytes, createdAt, inUse}], containers: [...], retain}` |
-| `project_init` | 在项目目录生成 ghostcontainer.toml | `path: string`（必）；`name?`（默认目录名）；`lang: string`（必）；`baseImage?`（须带 tag） | | | ✗（已存在 → CONFLICT） | `{path, name, config}` |
-| `project_build` | 执行构建工作流：拉基础镜像 → 构建 base → 构建 v{n} → 跑测试 → 清理旧版本（长操作，progress 见 §6） | `name` 与 `path` 二选一；`skipTests?: bool`（默认 false）；`noCache?: bool` | | | ✗（每次产出版本号递增的新镜像） | `{name, version, baseImage, image, testsPassed?, durationMs, reclaimed?: <回收报告>}` |
-| `project_test` | 对指定版本跑测试容器（--rm 一次性，退出码透传；exitCode≠0 不算工具错误） | `name`（必）；`version?: int`（默认最新）；`command?: string[]`（覆盖 toml） | | | ✗ | `{name, version, exitCode, stdout, stderr, truncated, durationMs}` |
-| `project_reclaim` | 项目回收：停删成员容器 + 释放无人使用旧镜像。**默认 force，返回销毁清单**；外部引用跳过并列名 | `name`（必）；`keepVersions?: int`（覆盖 toml）；`dryRun?: bool`（默认 false，只算不删） | | ✓ | ✓ | 回收报告（销毁清单 schema 见 project-workflow.md §4） |
-| `project_publish` | 推送项目镜像到本地 registry（tag 成 loopback 引用后 push，长操作） | `name`（必）；`version?: int`（默认最新）；`includeBase?: bool`（默认 false）；`deleteLocal?: bool`（默认 false，推送后删本地 tag 释放磁盘） | | | ✓ | `{name, pushed: [{source, target, sizeBytes}]}` |
-| `project_restore` | 从本地 registry 拉回版本并 tag 回本地规约名 | `name`（必）；`version: int`（必） | | | ✓ | `{name, restored: [{reference}]}` |
+| `project_list` | 列出项目（label `com.ghost233.project` 聚合 + toml 发现） | 无 | ✓ | | ✓ | `{projects: [{project, path?, images: [string], containers: int}]}` |
+| `project_get` | 项目详情（成员镜像 + 成员容器 + 使用状态） | `project` 与 `path` 二选一 | ✓ | | ✓ | `{project, path?, images: [{reference, sizeBytes, createdAt, inUse}], containers: [...]}` |
+| `project_init` | 在项目目录生成 ghostcontainer.toml（仅 prefix 单字段） | `path: string`（必）；`prefix?`（默认目录名，须匹配 `[a-z0-9][a-z0-9.-]{0,126}`） | | | ✗（toml 已存在 → CONFLICT） | `{path, prefix}` |
+| `project_build` | 单步构建链：构建 `{prefix}-{name}:latest`（同名默认替换）→ 可选测试（长操作，progress 见 §6；失败落盘见 project-workflow.md §2.3） | `project` 与 `path` 二选一；`name: string`（镜像自定义名，必）；`dockerfile?`、`context?`、`buildArgs?: object`、`skipTests?: bool`（默认 false）、`noCache?: bool` | | | ✗（同名替换旧 tag，语义非幂等） | `{project, image, testsPassed?, exitCode?, durationMs}` |
+| `project_test` | 对指定镜像跑测试容器（--rm 一次性，退出码透传；exitCode≠0 不算工具错误） | `project` 与 `path` 二选一；`name`（镜像自定义名，必）；`command: string[]`（必） | | | ✗ | `{project, image, exitCode, stdout, stderr, truncated, durationMs}` |
+| `project_reclaim` | 项目回收：停删成员容器 + 释放未被任何容器引用的项目镜像。**默认 force，返回销毁清单**；外部引用跳过并列名 | `project` 与 `path` 二选一；`dryRun?: bool`（默认 false，只算不删） | | ✓ | ✓ | 回收报告（销毁清单 schema 见 project-workflow.md §4） |
+| `project_publish` | 推送项目镜像到本地 registry（tag 成 loopback 引用后 push，长操作） | `project` 与 `path` 二选一；`name`（镜像自定义名，必）；`deleteLocal?: bool`（默认 false，推送后删本地镜像释放磁盘） | | | ✓ | `{project, pushed: [{source, target, sizeBytes}]}` |
+| `project_restore` | 从本地 registry 拉回镜像并 tag 回项目规约名（按前缀归入项目） | `project` 与 `path` 二选一；`name`（镜像自定义名，必） | | | ✓ | `{project, restored: [{reference}]}` |
 
 ### 3.7 Registry（3）
 
-本地 registry 最小形态的管理工具（单例 app 托管容器 `gcm-registry`，plain HTTP loopback，语义见 project-workflow.md §5）。域归属独立于此处是待确认项（project-workflow.md 遗留问题 L1）。
+本地 registry 最小形态的管理工具（单例 app 托管容器 `gcm-registry`，plain HTTP loopback，语义见 project-workflow.md §5）。域归属已定（终轮拍板 #7）：独立 `registry_` 域，不并入 `project_`。
 
 | 工具 | 描述要点 | 关键参数 | RO | D | I | 输出结构 |
 |---|---|---|---|---|---|---|
@@ -121,7 +121,7 @@
 **有界性规则**（对齐 agent-experience 原则：bounded outputs + 检索路径）：
 
 - `container_exec` 与 `project_test`：stdout/stderr 各上限 64 KiB，超出截断 + `truncated: true`。
-- `project_build`：结果内嵌构建输出末尾 50 行（错误时）或不内嵌（成功时）；全程输出只经 progress notification 流式推送，不落盘（v1 无构建历史）。
+- `project_build`：结果内嵌构建输出末尾 50 行（错误时）或不内嵌（成功时）；全程输出只经 progress notification 流式推送；**失败构建（含取消/中断）落盘日志尾部 1000 行、保留最近 20 条、成功不落盘**（详见 project-workflow.md §2.3）。
 - `container_list`：v1 不分页（本机容器量级百以内）；若未来需要，加 `cursor` 而非页码。
 
 ## 5. 错误模型
@@ -191,7 +191,7 @@ server 的 `instructions` 字段（MCP 初始化握手）**要做**：一段简�
 - **Q4 工具描述语言**：英文（推荐，agent 通用性）还是中文？name/title 不受影响（英文标识符）。
 - **Q5 `container_stats` 是否进 v1**：当前清单未列（地图范围未含 stats），但 XPC 快照成本低、对 agent 价值高。➡️ 推荐补一个 `container_stats`（readOnly，单次快照；流式由 agent 轮询），工具数 34 → 35。
 - **Q6 `compose_list` 的实现归属**：推荐由 Service layer 按 label 聚合实现（插件无此命令）。若认为 v1 不必，可砍掉（工具数 34 → 33）。
-- **Q7 registry 工具域归属**：独立 `registry_` 域（当前方案）vs 并入 `project_`。➡️ 对应 project-workflow.md 遗留问题 L1，推荐独立域。
+- **Q7 registry 工具域归属**：~~独立 `registry_` 域 vs 并入 `project_`~~ **已定（终轮拍板）**：独立 `registry_` 域。
 
 ## 9. GLOSSARY 新增术语建议
 

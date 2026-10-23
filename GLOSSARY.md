@@ -15,10 +15,13 @@ GhostContainerManager 的领域术语。只含领域概念，不含实现细节�
 - **Network（网络）**：容器网络，附带 DNS 域；容器有 IP 与 hostname。
 - **Compose 项目**：由 compose 文件定义的一组容器，通过 orchard 作者的 compose 插件（andrew-waters/compose）执行 up/down 等生命周期操作。与「项目」是两个独立概念：Compose 项目来自 compose 文件，项目来自本产品的组合管理。
 - **App 创建的资源**：由 GhostContainerManager 创建、带有应用标识 label 的资源；与用户已有的同名类型资源相区分，但默认可同等查看和管理。
-- **项目（Project）**：本产品的组合管理单元——一组带 `com.ghost233.project=<name>` label 的镜像与容器，遵循镜像命名规约（`{lang}-{project}-base` / `{lang}-{project}-v{n}`），可选由项目根的 `ghostcontainer.toml` 描述工作流参数（base 镜像、构建步骤、测试命令、保留策略）。
-- **项目工作流（Project workflow）**：围绕项目的标准操作链：拉基础镜像 → 构建项目 base 镜像 → 构建版本镜像 → 跑测试容器 → 清理旧版本 → 推送本地 registry。
-- **项目回收（Project reclaim）**：按项目粒度停止并删除成员容器、释放无人使用的旧版本镜像的组合操作。释放判定：同项目操作在内存中维护引用快照、由操作触发重估，**事实以 CLI 查询结果为准**；被项目外资源引用的镜像跳过并在报告中列出。与 MacLauncher 的 `recycle` 回调（语义=重启单个容器）无关，二者不要混用。
-- **本地 registry**：由本应用一键起停的本地镜像仓库容器，用于推送项目镜像以释放本地磁盘，并可从中拉回恢复。
+- **项目（Project）**：本产品的组合管理单元——一组带 `com.ghost233.project=<name>` label 的镜像与容器，镜像按 `{前缀}-{自定义名}` 命名（如 `myapp-go1`）。项目内同名镜像唯一，同名构建默认替换（旧镜像变 dangling 由 GC 兜底）；「项目内唯一」是管理层约定，runtime 的镜像名是全局的。
+- **项目前缀（prefix）**：`ghostcontainer.toml` 唯一的字段，声明「这个目录属于哪个项目」。不假定语言、不假定镜像数量、不解释名字含义。
+- **ghostcontainer.toml**：项目根目录的可选配置文件，只存 `prefix` 一个字段。构建/测试参数（dockerfile、context、buildArgs、command）一律由调用方传入，不落配置文件。
+- **项目工作流（Project workflow）**：围绕项目的标准操作链：构建镜像（`project_build`）→ 跑测试容器（`project_test`）→ 清理未被引用的镜像 → 推送本地 registry。构建/测试参数由调用方给出。
+- **项目回收（Project reclaim）**：按项目粒度停止并删除成员容器、释放未被任何容器引用的项目镜像的组合操作。释放判定：凡未被任何容器引用的项目镜像都可释放，被本项目引用的保留，被项目外资源引用的跳过并在报告中列出；同项目操作在内存中维护引用快照、由操作触发重估，**事实以 CLI 查询结果为准**。与 MacLauncher 的 `recycle` 回调（语义=重启单个容器）无关，二者不要混用。
+- **本地 registry**：由本应用一键起停的全局唯一本地镜像仓库容器，用于归档项目镜像以释放本地磁盘，并可从中拉回恢复。它是普通容器，无特殊管理地位。
+- **归档（archive）**：把项目镜像推送到本地 registry 的动作；「归档并删除」= 推送后删除本地副本（可从 registry 拉回）。
 
 ## 产品
 
