@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GhostContainerManager UI 原型 — 信息架构方案对比</title>
+<style>
+  :root {
+    --label: #1d1d1f;
+    --secondary: #6e6e73;
+    --placeholder: #aeaeb2;
+    --accent: #0a84ff;
+    --success: #30d158;
+    --warning: #ffd60a;
+    --error: #ff453a;
+    --bg: #f5f5f7;
+    --panel: #ffffff;
+    --sidebar: #ececee;
+    --separator: #d9d9de;
+    --radius-ctl: 8px;
+    --radius-box: 12px;
+    --mono: "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    font-size: 13px; color: var(--label); background: #3a3a3e;
+    display: flex; flex-direction: column; align-items: center; padding: 24px 16px 96px;
+  }
+  .proto-note { color: #c7c7cc; font-size: 12px; margin-bottom: 12px; max-width: 1240px; }
+  .proto-note b { color: #fff; }
+
+  /* ===== 窗口外框 ===== */
+  .window {
+    width: 1240px; height: 800px; background: var(--bg); border-radius: 12px;
+    overflow: hidden; display: flex; flex-direction: column;
+    box-shadow: 0 24px 64px rgba(0,0,0,.5);
+  }
+  .titlebar {
+    height: 38px; background: var(--panel); border-bottom: 1px solid var(--separator);
+    display: flex; align-items: center; padding: 0 12px; gap: 8px; flex: none;
+  }
+  .traffic { display: flex; gap: 8px; }
+  .traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .traffic i:nth-child(1){background:#ff5f57} .traffic i:nth-child(2){background:#febc2e} .traffic i:nth-child(3){background:#28c840}
+  .titlebar .wt { font-size: 15px; font-weight: 600; margin-left: 8px; }
+  .titlebar .spacer { flex: 1; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px;
+    border-radius: 12px; background: #e8f7ec; color: #1d7a34; font-size: 12px; font-weight: 500;
+  }
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
+  .pill.warn { background: #fdf3d7; color: #8a6d00; } .pill.warn .dot { background: var(--warning); }
+  .pill.err { background: #fde8e7; color: #a11f16; } .pill.err .dot { background: var(--error); }
+
+  .btn {
+    height: 28px; padding: 0 12px; border-radius: var(--radius-ctl); border: 1px solid var(--separator);
+    background: var(--panel); font-size: 13px; color: var(--label); cursor: default;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.destructive { color: var(--error); }
+  .btn.sm { height: 24px; font-size: 12px; padding: 0 8px; }
+  .search {
+    height: 26px; width: 180px; border: 1px solid var(--separator); border-radius: var(--radius-ctl);
+    background: var(--bg); padding: 0 8px 0 26px; font-size: 13px; color: var(--label);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%236e6e73' viewBox='0 0 16 16'%3E%3Cpath d='M11.7 10.3 15 13.6 13.6 15 10.3 11.7a6 6 0 1 1 1.4-1.4zM6.5 11a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: 8px center;
+  }
+
+  .wb { flex: 1; display: flex; min-height: 0; }
+
+  /* ===== 通用侧栏（方案 A） ===== */
+  .sidebar {
+    width: 224px; background: var(--sidebar); border-right: 1px solid var(--separator);
+    padding: 12px 8px; display: flex; flex-direction: column; gap: 2px; flex: none;
+  }
+  .sb-group { font-size: 11px; font-weight: 600; color: var(--secondary); padding: 10px 10px 4px; }
+  .sb-item {
+    display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px;
+    border-radius: 6px; color: var(--label); font-size: 13px;
+  }
+  .sb-item .ic { width: 16px; text-align: center; }
+  .sb-item.active { background: rgba(10,132,255,.14); color: var(--accent); font-weight: 500; }
+  .sb-item .count { margin-left: auto; font-size: 11px; color: var(--secondary); }
+  .sb-foot { margin-top: auto; border-top: 1px solid var(--separator); padding-top: 8px; }
+
+  /* ===== 内容区 ===== */
+  .content { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--panel); }
+  .toolbar {
+    height: 44px; border-bottom: 1px solid var(--separator); display: flex; align-items: center;
+    padding: 0 16px; gap: 10px; flex: none;
+  }
+  .toolbar h1 { font-size: 17px; font-weight: 600; }
+  .pagehead { padding: 20px 24px 0; display: flex; align-items: baseline; gap: 12px; }
+  .pagehead h2 { font-size: 22px; font-weight: 700; }
+  .pagehead .sub { color: var(--secondary); font-size: 13px; }
+
+  .banner {
+    margin: 12px 24px 0; padding: 10px 14px; border-radius: var(--radius-ctl);
+    background: #fdf3d7; border: 1px solid #f0dfae; color: #6b5600;
+    display: flex; align-items: center; gap: 10px; font-size: 13px;
+  }
+  .banner .btn { margin-left: auto; }
+  .banner.error { background: #fde8e7; border-color: #f3c1bd; color: #7a1d15; }
+
+  table.list { width: 100%; border-collapse: collapse; }
+  table.list th {
+    text-align: left; font-size: 11px; font-weight: 600; color: var(--secondary);
+    padding: 8px 12px; border-bottom: 1px solid var(--separator); height: 32px; white-space: nowrap;
+  }
+  table.list td { padding: 8px 12px; border-bottom: 1px solid #eeeef0; height: 40px; vertical-align: middle; }
+  table.list tr.sel td { background: rgba(10,132,255,.10); }
+  table.list tr:hover:not(.sel) td { background: #f7f7f9; }
+  .cname { font-weight: 500; }
+  .cmeta { font-size: 11px; color: var(--secondary); }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .statusdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .statusdot.run { background: var(--success); } .statusdot.stop { background: #c7c7cc; }
+  .tag {
+    display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px;
+    background: #ececff; color: #4b3fa8; margin-left: 6px; vertical-align: 1px;
+  }
+  .tag.compose { background: #e5f4ff; color: #0a5a9e; }
+  .row-actions { display: flex; gap: 6px; justify-content: flex-end; opacity: .85; }
+  .tablewrap { padding: 8px 24px 24px; overflow: auto; }
+
+  /* ===== 检查器（方案 A） ===== */
+  .inspector {
+    width: 280px; border-left: 1px solid var(--separator); background: #fafafc;
+    padding: 16px; overflow: auto; flex: none;
+  }
+  .inspector h3 { font-size: 15px; font-weight: 600; margin-bottom: 2px; }
+  .inspector .isub { color: var(--secondary); font-size: 12px; margin-bottom: 14px; }
+  .ikv { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; font-size: 12px; border-bottom: 1px solid #eeeef0; }
+  .ikv .k { color: var(--secondary); flex: none; }
+  .ikv .v { text-align: right; word-break: break-all; }
+  .isec { font-size: 11px; font-weight: 600; color: var(--secondary); margin: 14px 0 4px; }
+  .iact { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+
+  /* ===== 详情页（方案 A 覆盖层） ===== */
+  .detail-overlay {
+    position: absolute; inset: 0; background: var(--panel); display: none; flex-direction: column; z-index: 20;
+  }
+  body[data-detail="open"] .detail-overlay { display: flex; }
+  .detail-tabs { display: flex; gap: 2px; padding: 0 16px; border-bottom: 1px solid var(--separator); }
+  .detail-tabs .tab {
+    height: 34px; padding: 0 14px; display: inline-flex; align-items: center; font-size: 13px;
+    color: var(--secondary); border-bottom: 2px solid transparent; cursor: default;
+  }
+  .detail-tabs .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 500; }
+  .dpane { flex: 1; overflow: auto; padding: 20px 24px; display: none; }
+  .dpane.active { display: block; }
+  .propgrid { max-width: 640px; }
+  .logview {
+    background: #1e1e22; color: #d6d6da; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+    border-radius: var(--radius-ctl); padding: 12px 14px; height: 100%; overflow: auto; white-space: pre-wrap;
+  }
+  .logview .t { color: #8e8e93; } .logview .err { color: #ff6961; }
+  .termview {
+    background: #000; color: #33d17a; font-family: var(--mono); font-size: 12px; line-height: 1.5;
+    border-radius: var(--radius-ctl); padding: 12px 14px; height: 100%;
+  }
+  .dpane.full { padding: 16px 24px; display: none; flex-direction: column; }
+  .dpane.full.active { display: flex; }
+  .pane-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex: none; }
+  .pane-toolbar .grow { flex: 1; }
+
+  /* ===== 方案 B：图标栏 + 统一资源列表 ===== */
+  .rail {
+    width: 56px; background: var(--sidebar); border-right: 1px solid var(--separator);
+    display: flex; flex-direction: column; align-items: center; padding-top: 10px; gap: 4px; flex: none;
+  }
+  .rail .ri {
+    width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+    font-size: 17px; color: var(--secondary);
+  }
+  .rail .ri.active { background: rgba(10,132,255,.14); color: var(--accent); }
+  .chips { display: flex; gap: 6px; padding: 12px 24px 0; flex-wrap: wrap; }
+  .chip {
+    height: 26px; padding: 0 12px; border-radius: 13px; border: 1px solid var(--separator);
+    background: var(--panel); font-size: 12px; color: var(--secondary); display: inline-flex; align-items: center; gap: 6px;
+  }
+  .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .typebadge { font-size: 10px; padding: 1px 7px; border-radius: 4px; background: #efeff2; color: var(--secondary); }
+
+  /* ===== 方案 C：顶部导航 + 仪表盘 ===== */
+  .segbar { display: flex; justify-content: center; padding: 10px 0 0; background: var(--panel); }
+  .seg { display: inline-flex; border: 1px solid var(--separator); border-radius: var(--radius-ctl); overflow: hidden; }
+  .seg span { padding: 5px 18px; font-size: 13px; color: var(--secondary); background: var(--panel); }
+  .seg span.on { background: var(--accent); color: #fff; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 20px 24px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--separator); border-radius: var(--radius-box); padding: 16px;
+  }
+  .card h4 { font-size: 13px; font-weight: 600; color: var(--secondary); margin-bottom: 10px; }
+  .bignum { font-size: 28px; font-weight: 700; }
+  .card .rows { font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .card .rows .r { display: flex; justify-content: space-between; }
+  .sheet-mask { position: absolute; inset: 0; background: rgba(0,0,0,.25); display: none; z-index: 15; }
+  body[data-detail="open"] .sheet-mask { display: block; }
+  .sheet {
+    position: absolute; left: 50%; top: 8%; transform: translateX(-50%); width: 720px; height: 78%;
+    background: var(--panel); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.35);
+    display: none; flex-direction: column; overflow: hidden; z-index: 16;
+  }
+  body[data-detail="open"] .sheet { display: flex; }
+  .sheet-head { padding: 14px 20px; border-bottom: 1px solid var(--separator); display: flex; align-items: center; gap: 10px; }
+
+  /* ===== 空态 / 错误态 ===== */
+  .emptybox { padding: 64px 24px; text-align: center; display: none; }
+  .emptybox .eic { font-size: 40px; margin-bottom: 12px; }
+  .emptybox h3 { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
+  .emptybox p { color: var(--secondary); margin-bottom: 16px; }
+  body[data-state="empty"] .state-content, body[data-state="error"] .state-content { display: none; }
+  body[data-state="empty"] .state-empty { display: block; }
+  body[data-state="error"] .state-error { display: block; }
+  .state-empty, .state-error { display: none; }
+
+  /* ===== 菜单栏常驻项预览 ===== */
+  .mb-wrap { width: 1240px; margin-top: 20px; display: flex; justify-content: flex-end; }
+  .mb-mock { position: relative; }
+  .mb-bar {
+    height: 26px; background: rgba(245,245,247,.92); border-radius: 8px; padding: 0 14px;
+    display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--label);
+  }
+  .mb-drop {
+    position: absolute; right: 0; top: 32px; width: 300px; background: rgba(250,250,252,.97);
+    border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,.35); padding: 6px; font-size: 13px; z-index: 30;
+  }
+  .mb-drop .mi { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 5px; }
+  .mb-drop .mi:hover { background: var(--accent); color: #fff; }
+  .mb-drop .mi .r { margin-left: auto; font-size: 11px; color: var(--secondary); }
+  .mb-drop .mi:hover .r { color: rgba(255,255,255,.8); }
+  .mb-drop .sep { height: 1px; background: var(--separator); margin: 5px 10px; }
+  .mb-drop .head { font-size: 11px; color: var(--secondary); padding: 6px 10px 2px; font-weight: 600; }
+  .mb-drop .mi .kbd { margin-left: auto; font-size: 11px; color: var(--placeholder); }
+
+  /* ===== 悬浮切换栏 ===== */
+  .switcher {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    background: rgba(30,30,34,.95); color: #f5f5f7; border-radius: 14px;
+    display: flex; align-items: center; gap: 12px; padding: 10px 14px; z-index: 100;
+    box-shadow: 0 8px 30px rgba(0,0,0,.45); font-size: 13px;
+  }
+  .switcher button {
+    width: 30px; height: 30px; border-radius: 8px; border: 1px solid #55555a; background: #3a3a3e;
+    color: #f5f5f7; font-size: 15px; cursor: pointer;
+  }
+  .switcher button:hover { background: #4a4a4f; }
+  .switcher .vname { font-weight: 600; min-width: 190px; text-align: center; }
+  .switcher .vkey { color: #8e8e93; font-size: 11px; }
+  .switcher .stateseg { display: inline-flex; border: 1px solid #55555a; border-radius: 8px; overflow: hidden; }
+  .switcher .stateseg span { padding: 5px 10px; font-size: 12px; color: #aeaeb2; cursor: pointer; }
+  .switcher .stateseg span.on { background: var(--accent); color: #fff; }
+  .switcher .hint { color: #8e8e93; font-size: 11px; }
+
+  body[data-variant="b"] .v-a, body[data-variant="b"] .v-c,
+  body[data-variant="a"] .v-b, body[data-variant="a"] .v-c,
+  body[data-variant="c"] .v-a, body[data-variant="c"] .v-b { display: none !important; }
+</style>
+</head>
+<body data-variant="a" data-state="content" data-detail="closed">
+
+<p class="proto-note"><b>PROTOTYPE — 一次性原型。</b>对比 v1 主窗口信息架构的三个结构方案（A 三列工作台 / B 资源总列表 / C 顶部导航+仪表盘），用 ← → 或底部栏切换；「数据态」分段切换空态与「运行时未启动」错误态；A 方案点「打开详情」、C 方案点行可看容器详情形态差异。数据全部虚构。</p>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <span class="wt">GhostContainerManager</span>
+    <div class="spacer"></div>
+    <span class="pill"><span class="dot"></span>运行时运行中 · container 1.6.0</span>
+  </div>
+
+  <!-- ==================== 方案 A：三列工作台 ==================== -->
+  <div class="wb v-a">
+    <nav class="sidebar">
+      <div class="sb-group">管理</div>
+      <div class="sb-item active"><span class="ic">▣</span>容器<span class="count">5</span></div>
+      <div class="sb-item"><span class="ic">◧</span>Compose 项目<span class="count">1</span></div>
+      <div class="sb-item"><span class="ic">◈</span>镜像<span class="count">8</span></div>
+      <div class="sb-item"><span class="ic">⛁</span>挂载</div>
+      <div class="sb-item"><span class="ic">⌘</span>网络<span class="count">2</span></div>
+      <div class="sb-group">系统</div>
+      <div class="sb-item"><span class="ic">⏻</span>运行时</div>
+      <div class="sb-foot">
+        <div class="sb-item"><span class="ic">⚙</span>设置</div>
+        <div class="sb-item"><span class="ic">✦</span>MCP 服务<span class="count" style="color:#1d7a34">已启用</span></div>
+      </div>
+    </nav>
+
+    <main class="content">
+      <div class="toolbar">
+        <h1>容器</h1>
+        <div class="spacer" style="flex:1"></div>
+        <input class="search" placeholder="搜索名称 / 镜像 / 项目">
+        <button class="btn">按项目分组</button>
+        <button class="btn primary">＋ 新建容器</button>
+      </div>
+      <div class="banner error" style="display:none">占位</div>
+
+      <div class="tablewrap state-content" style="flex:1">
+        <table class="list">
+          <thead><tr>
+            <th style="width:22px"></th><th>名称</th><th>镜像</th><th>IP 地址</th><th>端口</th><th>CPU / 内存</th><th>运行时长</th><th></th>
+          </tr></thead>
+          <tbody>
+            <tr class="sel">
+              <td><span class="statusdot run"></span></td>
+              <td><span class="cname">web-frontend</span><span class="tag compose">mysite</span><span class="tag">本应用创建</span><div class="cmeta">ghcr.io/acme/web · 4 核 · 4 GB</div></td>
+              <td class="mono">nginx:1.27</td><td class="mono">192.168.64.2</td><td class="mono">8080→80</td>
+              <td class="mono">12% · 412 MB</td><td>3 天 4 小时</td>
+              <td><div class="row-actions"><button class="btn sm">停止</button><button class="btn sm">日志</button></div></td>
+            </tr>
+            <tr>
+              <td><span class="statusdot run"></span></td>
+              <td><span class="cname">api-server</span><span class="tag compose">mysite</span><div class="cmeta">4 核 · 8 GB</div></td>
+              <td class="mono">ghcr.io/acme/api:1.4.2</td><td class="mono">192.168.64.3</td><td class="mono">9000→9000</td>
+              <td class="mono">31% · 1.2 GB</td><td>3 天 4 小时</td>
+              <td><div class="row-actions"><button class="btn sm">停止</button><button class="btn sm">日志</button></div></td>
+            </tr>
+            <tr>
+              <td><span class="statusdot stop"></span></td>
+              <td><span class="cname">postgres-16</span><span class="tag compose">mysite</span><div class="cmeta">挂载 ~/data/pg → /var/lib/postgresql</div></td>
+              <td class="mono">postgres:16</td><td class="mono">—</td><td class="mono">5432→5432</td>
+              <td class="mono">—</td><td>已停止 2 小时</td>
+              <td><div class="row-actions"><button class="btn sm">启动</button><button class="btn sm destructive">删除</button></div></td>
+            </tr>
+            <tr>
+              <td><span class="statusdot stop"></span></td>
+              <td><span class="cname">build-cache</span><div class="cmeta">2 核 · 2 GB</div></td>
+              <td class="mono">redis:7</td><td class="mono">—</td><td class="mono">6379→6379</td>
+              <td class="mono">—</td><td>已退出（0）</td>
+              <td><div class="row-actions"><button class="btn sm">启动</button><button class="btn sm destructive">删除</button></div></td>
+            </tr>
+            <tr>
+              <td><span class="statusdot stop"></span></td>
+              <td><span class="cname">test-env</span><div class="cmeta">手动创建 · 无限制</div></td>
+              <td class="mono">ubuntu:24.04</td><td class="mono">—</td><td class="mono">—</td>
+              <td class="mono">—</td><td>已停止 6 天</td>
+              <td><div class="row-actions"><button class="btn sm">启动</button><button class="btn sm destructive">删除</button></div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="emptybox state-empty">
+        <div class="eic">▣</div>
+        <h3>还没有容器</h3>
+        <p>从一个镜像创建你的第一个容器，或让 AI agent 通过 MCP 代为创建。</p>
+        <button class="btn primary">＋ 新建容器</button>&nbsp;&nbsp;<button class="btn">拉取镜像…</button>
+      </div>
+
+      <div class="emptybox state-error">
+        <div class="eic">⏻</div>
+        <h3>container 运行时未启动</h3>
+        <p>所有管理操作暂不可用。启动运行时后即可继续。</p>
+        <button class="btn primary">启动运行时</button>&nbsp;&nbsp;<button class="btn">打开引导检查</button>
+      </div>
+    </main>
+
+    <aside class="inspector state-content">
+      <h3>web-frontend</h3>
+      <div class="isub"><span class="statusdot run"></span>运行中 · 3 天 4 小时</div>
+      <div class="isec">操作</div>
+      <div class="iact">
+        <button class="btn sm">停止</button><button class="btn sm">重启</button>
+        <button class="btn sm">日志</button><button class="btn sm">终端</button>
+        <button class="btn sm destructive">删除</button>
+      </div>
+      <div class="isec">概要</div>
+      <div class="ikv"><span class="k">镜像</span><span class="v mono">nginx:1.27</span></div>
+      <div class="ikv"><span class="k">IP</span><span class="v mono">192.168.64.2</span></div>
+      <div class="ikv"><span class="k">端口</span><span class="v mono">8080→80</span></div>
+      <div class="ikv"><span class="k">资源</span><span class="v">4 核 · 4 GB</span></div>
+      <div class="ikv"><span class="k">Compose</span><span class="v">mysite / web</span></div>
+      <div class="ikv"><span class="k">标签</span><span class="v mono" style="font-size:11px">com.ghost233.managed<br>com.compose.project</span></div>
+      <div class="isec">资源占用（2s 刷新）</div>
+      <div class="ikv"><span class="k">CPU</span><span class="v mono">12%</span></div>
+      <div class="ikv"><span class="k">内存</span><span class="v mono">412 MB / 4 GB</span></div>
+      <div class="ikv"><span class="k">网络</span><span class="v mono">↓ 1.2 MB/s · ↑ 84 KB/s</span></div>
+      <div class="iact"><button class="btn primary" style="width:100%;justify-content:center" onclick="document.body.dataset.detail='open'">打开完整详情</button></div>
+    </aside>
+
+    <!-- 详情页覆盖层：标签页形态 -->
+    <div class="detail-overlay">
+      <div class="toolbar">
+        <button class="btn" onclick="document.body.dataset.detail='closed'">‹ 返回列表</button>
+        <h1 style="margin-left:6px">web-frontend</h1>
+        <span class="pill"><span class="dot"></span>运行中</span>
+        <div style="flex:1"></div>
+        <button class="btn">停止</button><button class="btn">重启</button><button class="btn destructive">删除</button>
+      </div>
+      <div class="detail-tabs">
+        <span class="tab active" data-t="ov">概览</span>
+        <span class="tab" data-t="log">日志</span>
+        <span class="tab" data-t="term">终端</span>
+      </div>
+      <div class="dpane active" data-p="ov">
+        <div class="propgrid">
+          <div class="isec">配置</div>
+          <div class="ikv"><span class="k">镜像</span><span class="v mono">nginx:1.27（sha256:9fcb…）</span></div>
+          <div class="ikv"><span class="k">启动命令</span><span class="v mono">nginx -g 'daemon off;'</span></div>
+          <div class="ikv"><span class="k">CPU / 内存</span><span class="v">4 核 · 4 GB</span></div>
+          <div class="isec">网络</div>
+          <div class="ikv"><span class="k">IP / 主机名</span><span class="v mono">192.168.64.2 · web-frontend</span></div>
+          <div class="ikv"><span class="k">端口发布</span><span class="v mono">8080→80/tcp</span></div>
+          <div class="isec">挂载</div>
+          <div class="ikv"><span class="k">~/Sites/mysite</span><span class="v mono">→ /usr/share/nginx/html（只读）</span></div>
+          <div class="isec">标签</div>
+          <div class="ikv"><span class="k">com.ghost233.managed</span><span class="v mono">true</span></div>
+          <div class="ikv"><span class="k">com.compose.project</span><span class="v mono">mysite</span></div>
+        </div>
+      </div>
+      <div class="dpane full" data-p="log">
+        <div class="pane-toolbar">
+          <input class="search" placeholder="筛选日志…">
+          <button class="btn sm">跟随中 ⏸</button>
+          <button class="btn sm">导出…</button>
+          <span class="grow"></span>
+          <span class="cmeta">stdio 流 · XPC</span>
+        </div>
+        <div class="logview"><span class="t">2026-10-23T11:58:02Z</span> 10.0.0.4 - - "GET / HTTP/1.1" 200 612
+<span class="t">2026-10-23T11:58:07Z</span> 10.0.0.4 - - "GET /assets/app.css HTTP/1.1" 200 8310
+<span class="t">2026-10-23T11:59:41Z</span> <span class="err">[warn] upstream timed out while reading response header</span>
+<span class="t">2026-10-23T12:00:03Z</span> 10.0.0.9 - - "GET /healthz HTTP/1.1" 200 2</div>
+      </div>
+      <div class="dpane full" data-p="term">
+        <div class="termview">root@web-frontend:/# nginx -t
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+root@web-frontend:/# ▊</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 方案 B：统一资源总列表 ==================== -->
+  <div class="wb v-b">
+    <nav class="rail">
+      <div class="ri active" title="资源">▦</div>
+      <div class="ri" title="运行时">⏻</div>
+      <div class="ri" title="MCP 服务">✦</div>
+      <div class="ri" style="margin-top:auto" title="设置">⚙</div>
+    </nav>
+    <main class="content">
+      <div class="toolbar">
+        <h1>资源</h1>
+        <div style="flex:1"></div>
+        <input class="search" placeholder="搜索所有资源…">
+        <button class="btn primary">＋ 新建</button>
+      </div>
+      <div class="chips state-content">
+        <span class="chip active">全部 <b>15</b></span>
+        <span class="chip">容器 5</span><span class="chip">镜像 8</span>
+        <span class="chip">Compose 项目 1</span><span class="chip">挂载 3</span><span class="chip">网络 2</span>
+      </div>
+      <div class="tablewrap state-content" style="flex:1">
+        <table class="list">
+          <thead><tr><th>类型</th><th>名称</th><th>状态 / 摘要</th><th>归属</th><th></th></tr></thead>
+          <tbody>
+            <tr><td><span class="typebadge">容器</span></td><td><span class="cname">web-frontend</span></td><td><span class="statusdot run"></span>运行中 · 12% CPU</td><td class="cmeta">compose: mysite</td><td><div class="row-actions"><button class="btn sm">停止</button></div></td></tr>
+            <tr><td><span class="typebadge">容器</span></td><td><span class="cname">api-server</span></td><td><span class="statusdot run"></span>运行中 · 31% CPU</td><td class="cmeta">compose: mysite</td><td><div class="row-actions"><button class="btn sm">停止</button></div></td></tr>
+            <tr><td><span class="typebadge">容器</span></td><td><span class="cname">postgres-16</span></td><td><span class="statusdot stop"></span>已停止</td><td class="cmeta">compose: mysite</td><td><div class="row-actions"><button class="btn sm">启动</button></div></td></tr>
+            <tr><td><span class="typebadge">Compose</span></td><td><span class="cname">mysite</span></td><td>3 个服务 · 2 个运行中</td><td class="cmeta">~/Sites/mysite/compose.yml</td><td><div class="row-actions"><button class="btn sm">down</button></div></td></tr>
+            <tr><td><span class="typebadge">镜像</span></td><td class="mono">nginx:1.27</td><td>78 MB · arm64 · 使用中</td><td></td><td><div class="row-actions"><button class="btn sm destructive">删除</button></div></td></tr>
+            <tr><td><span class="typebadge">镜像</span></td><td class="mono">postgres:16</td><td>238 MB · arm64 · 未使用</td><td></td><td><div class="row-actions"><button class="btn sm destructive">删除</button></div></td></tr>
+            <tr><td><span class="typebadge">挂载</span></td><td class="mono">~/data/pg</td><td class="mono">→ postgres-16:/var/lib/postgresql</td><td class="cmeta">读写</td><td></td></tr>
+            <tr><td><span class="typebadge">网络</span></td><td class="mono">default</td><td class="mono">192.168.64.0/24 · dns: test</td><td class="cmeta">3 个容器</td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="emptybox state-empty">
+        <div class="eic">▦</div>
+        <h3>没有任何资源</h3>
+        <p>运行时里还没有容器、镜像或 Compose 项目。</p>
+        <button class="btn primary">拉取第一个镜像…</button>
+      </div>
+      <div class="emptybox state-error">
+        <div class="eic">⏻</div>
+        <h3>container 运行时未启动</h3>
+        <p>启动运行时后资源列表自动恢复。</p>
+        <button class="btn primary">启动运行时</button>
+      </div>
+    </main>
+  </div>
+
+  <!-- ==================== 方案 C：顶部导航 + 仪表盘 ==================== -->
+  <div class="wb v-c" style="flex-direction:column">
+    <div class="segbar">
+      <div class="seg"><span class="on">概览</span><span>容器</span><span>镜像</span><span>Compose</span><span>更多 ▾</span></div>
+    </div>
+    <main class="content" style="background:var(--bg)">
+      <div class="cards state-content">
+        <div class="card">
+          <h4>运行时</h4>
+          <div class="bignum" style="color:#1d7a34">运行中</div>
+          <div class="rows" style="margin-top:8px">
+            <div class="r"><span>container 版本</span><span class="mono">1.6.0 ✓</span></div>
+            <div class="r"><span>内核</span><span class="mono">default.kernel-arm64 ✓</span></div>
+            <div class="r"><span>MCP 服务</span><span>stdio + 127.0.0.1:8810</span></div>
+          </div>
+          <div style="margin-top:12px"><button class="btn sm">停止运行时</button> <button class="btn sm">打开引导检查</button></div>
+        </div>
+        <div class="card">
+          <h4>容器</h4>
+          <div class="bignum">2 <span style="font-size:13px;font-weight:400;color:var(--secondary)">运行中 / 共 5</span></div>
+          <div class="rows" style="margin-top:8px">
+            <div class="r"><span><span class="statusdot run"></span>web-frontend</span><span class="mono">12%</span></div>
+            <div class="r"><span><span class="statusdot run"></span>api-server</span><span class="mono">31%</span></div>
+            <div class="r"><span><span class="statusdot stop"></span>postgres-16 等 3 个已停止</span><span>—</span></div>
+          </div>
+          <div style="margin-top:12px"><button class="btn sm primary">＋ 新建容器</button></div>
+        </div>
+        <div class="card">
+          <h4>Compose 项目</h4>
+          <div class="bignum">1</div>
+          <div class="rows" style="margin-top:8px">
+            <div class="r"><span>mysite</span><span class="cmeta">3 服务 · 2 运行中</span></div>
+          </div>
+          <div style="margin-top:12px"><button class="btn sm">up</button> <button class="btn sm">down</button> <button class="btn sm">打开 compose.yml</button></div>
+        </div>
+        <div class="card">
+          <h4>镜像</h4>
+          <div class="bignum">8 <span style="font-size:13px;font-weight:400;color:var(--secondary)">· 1.4 GB</span></div>
+          <div class="rows" style="margin-top:8px">
+            <div class="r"><span class="mono">nginx:1.27</span><span>使用中</span></div>
+            <div class="r"><span class="mono">postgres:16</span><span style="color:var(--warning)">未使用</span></div>
+          </div>
+          <div style="margin-top:12px"><button class="btn sm">拉取镜像…</button></div>
+        </div>
+        <div class="card">
+          <h4>挂载与网络（只读）</h4>
+          <div class="rows">
+            <div class="r"><span class="mono">~/data/pg → postgres-16</span><span>读写</span></div>
+            <div class="r"><span class="mono">default</span><span class="mono">192.168.64.0/24</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <h4>最近活动</h4>
+          <div class="rows">
+            <div class="r"><span>拉取 ghcr.io/acme/api:1.4.2</span><span class="cmeta">2 小时前</span></div>
+            <div class="r"><span>compose up mysite</span><span class="cmeta">3 天前</span></div>
+            <div class="r"><span>MCP：agent 停止 test-env</span><span class="cmeta">6 天前</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="emptybox state-empty">
+        <div class="eic">✦</div>
+        <h3>欢迎使用 GhostContainerManager</h3>
+        <p>运行时已就绪。创建第一个容器，或把 MCP 配置交给你的 AI agent。</p>
+        <button class="btn primary">＋ 新建容器</button>&nbsp;&nbsp;<button class="btn">复制 MCP 配置</button>
+      </div>
+      <div class="emptybox state-error">
+        <div class="eic">⏻</div>
+        <h3>container 运行时未启动</h3>
+        <p>概览数据不可用。</p>
+        <button class="btn primary">启动运行时</button>&nbsp;&nbsp;<button class="btn">打开引导检查</button>
+      </div>
+    </main>
+    <div class="sheet-mask" onclick="document.body.dataset.detail='closed'"></div>
+    <div class="sheet">
+      <div class="sheet-head">
+        <b style="font-size:15px">web-frontend</b>
+        <span class="pill"><span class="dot"></span>运行中</span>
+        <div style="flex:1"></div>
+        <button class="btn sm">停止</button><button class="btn sm">重启</button>
+        <button class="btn sm" onclick="document.body.dataset.detail='closed'">关闭</button>
+      </div>
+      <div class="detail-tabs"><span class="tab active">概览</span><span class="tab">日志</span><span class="tab">终端</span></div>
+      <div class="dpane active"><p class="cmeta">（sheet 形态详情：标签页同上，内容从略——结构差异在于详情是模态浮层而非独立页面。）</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 菜单栏常驻项预览 ===== -->
+<div class="mb-wrap">
+  <div class="mb-mock">
+    <div class="mb-bar"> &nbsp;访达 &nbsp;… &nbsp; <b>▣2</b> &nbsp; 🔋 &nbsp; 20:58</div>
+    <div class="mb-drop">
+      <div class="mi"><span class="statusdot run"></span><b>运行时运行中</b><span class="r">container 1.6.0</span></div>
+      <div class="sep"></div>
+      <div class="head">运行中的容器（2）</div>
+      <div class="mi"><span class="statusdot run"></span>web-frontend<span class="r">停止 ▸</span></div>
+      <div class="mi"><span class="statusdot run"></span>api-server<span class="r">停止 ▸</span></div>
+      <div class="mi" style="color:var(--secondary)">查看全部 5 个容器…</div>
+      <div class="sep"></div>
+      <div class="mi">停止运行时</div>
+      <div class="mi">打开 GhostContainerManager<span class="kbd">⌘⇧O</span></div>
+      <div class="mi">MCP 配置<span class="r">已启用 ▸</span></div>
+      <div class="sep"></div>
+      <div class="mi">设置…<span class="kbd">⌘,</span></div>
+      <div class="mi">退出<span class="kbd">⌘Q</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 悬浮切换栏 ===== -->
+<div class="switcher">
+  <button id="prev" title="上一方案">‹</button>
+  <div>
+    <div class="vname" id="vname">方案 A · 三列工作台</div>
+    <div class="vkey" style="text-align:center" id="vkey">variant=a · 侧栏分节 + 列表 + 检查器 + 标签页详情</div>
+  </div>
+  <button id="next" title="下一方案">›</button>
+  <div class="stateseg" id="stateseg">
+    <span data-s="content" class="on">有数据</span><span data-s="empty">空态</span><span data-s="error">运行时未启动</span>
+  </div>
+  <span class="hint">← → 切换方案 · ?variant=a|b|c</span>
+</div>
+
+<script>
+(function () {
+  var variants = [
+    { key: 'a', name: '方案 A · 三列工作台', desc: 'variant=a · 侧栏分节 + 列表 + 检查器 + 标签页详情' },
+    { key: 'b', name: '方案 B · 资源总列表', desc: 'variant=b · 图标栏 + 全类型混合列表 + 全屏详情' },
+    { key: 'c', name: '方案 C · 顶部导航 + 仪表盘', desc: 'variant=c · 分段导航 + 概览首页 + sheet 详情' }
+  ];
+  var idx = 0;
+  var qs = new URLSearchParams(location.search);
+  var v = (qs.get('variant') || 'a').toLowerCase();
+  var found = variants.findIndex(function (x) { return x.key === v; });
+  if (found >= 0) idx = found;
+
+  function apply() {
+    document.body.dataset.variant = variants[idx].key;
+    document.getElementById('vname').textContent = variants[idx].name;
+    document.getElementById('vkey').textContent = variants[idx].desc;
+    var q = new URLSearchParams(location.search);
+    q.set('variant', variants[idx].key);
+    history.replaceState(null, '', '?' + q.toString());
+  }
+  function step(d) { idx = (idx + d + variants.length) % variants.length; apply(); }
+
+  document.getElementById('prev').addEventListener('click', function () { step(-1); });
+  document.getElementById('next').addEventListener('click', function () { step(1); });
+  document.addEventListener('keydown', function (e) {
+    if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+    if (e.key === 'ArrowLeft') step(-1);
+    if (e.key === 'ArrowRight') step(1);
+  });
+
+  document.getElementById('stateseg').addEventListener('click', function (e) {
+    var s = e.target.dataset && e.target.dataset.s;
+    if (!s) return;
+    document.body.dataset.state = s;
+    this.querySelectorAll('span').forEach(function (el) { el.classList.toggle('on', el.dataset.s === s); });
+  });
+
+  document.querySelectorAll('.detail-tabs .tab').forEach(function (t) {
+    t.addEventListener('click', function () {
+      var bar = t.parentElement;
+      bar.querySelectorAll('.tab').forEach(function (x) { x.classList.toggle('active', x === t); });
+      var root = bar.parentElement;
+      var key = t.dataset.t;
+      root.querySelectorAll('.dpane').forEach(function (p) {
+        p.classList.toggle('active', p.dataset.p === key);
+      });
+    });
+  });
+
+  // 方案 A 行选中
+  document.querySelectorAll('.v-a tbody tr').forEach(function (tr) {
+    tr.addEventListener('click', function () {
+      document.querySelectorAll('.v-a tbody tr').forEach(function (x) { x.classList.remove('sel'); });
+      tr.classList.add('sel');
+    });
+  });
+  // 方案 C 行/卡片打开 sheet
+  document.querySelectorAll('.v-c .card').forEach(function (c) {
+    c.addEventListener('dblclick', function () { document.body.dataset.detail = 'open'; });
+  });
+
+  apply();
+})();
+</script>
+</body>
+</html>
