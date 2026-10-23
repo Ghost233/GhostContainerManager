@@ -104,7 +104,7 @@ class ComposeService {
   final ContainerBridge _bridge;
   final ContainerService _containerService;
 
-  /// Same 64 KiB cap as container_exec (#13 shell/pty analogy).
+  /// Same 64 KiB cap as container_exec (#19 shell/pty analogy).
   static const int defaultMaxOutputBytes = 64 * 1024;
   final int maxOutputBytes;
 
@@ -248,6 +248,7 @@ class ComposeService {
         GcmErrorCode.internal,
         'compose ${arguments.first} failed (exit ${result.exitCode}).',
         hint: _truncate(output).value,
+        source: 'cli',
       );
     }
     final truncated = _truncate(output);

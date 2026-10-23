@@ -156,8 +156,10 @@ class BridgeCallException implements Exception {
   String toString() => 'BridgeCallException($message)';
 }
 
-/// Native runtime operations needed by the Service layer (system domain
-/// first; container/image/project domains extend this seam later).
+/// Native runtime operations needed by the Service layer. The seam covers
+/// system, container, image, network and compose domains; container writes
+/// use ContainerAPIClient directly while network/compose retain their
+/// documented CLI routes.
 abstract interface class ContainerBridge {
   /// Absolute path of the `container` CLI, or null when not installed.
   ///
@@ -212,6 +214,33 @@ abstract interface class ContainerBridge {
   ///
   /// Throws [BridgeCallException] on XPC failure.
   Future<Map<String, Object?>> containerStats(String id);
+
+  /// `ContainerClient.create(configuration:options:kernel:)` using a local
+  /// image. [command], [env] and [ports] retain Apple container's CLI-shaped
+  /// values; validation happens before this boundary.
+  Future<void> containerCreate({
+    required String id,
+    required String image,
+    List<String> command = const [],
+    List<String> env = const [],
+    List<String> ports = const [],
+    String? network,
+  });
+
+  /// `ContainerClient.bootstrap` + `ClientProcess.start`; already-running
+  /// containers are an upstream idempotent no-op.
+  Future<void> containerStart(String id);
+
+  /// `ContainerClient.stop` with [timeoutSeconds] of grace (default five),
+  /// after which Apple container sends SIGKILL.
+  Future<void> containerStop(String id, {int timeoutSeconds = 5});
+
+  /// `ContainerClient.delete(id:force:)`. Running containers require force;
+  /// native stopping containers are rejected regardless of force.
+  Future<void> containerDelete(String id, {bool force = false});
+
+  /// `ContainerClient.kill(id:signal:)`; [signal] defaults to KILL.
+  Future<void> containerKill(String id, {String signal = 'KILL'});
 
   /// Log byte stream for [id] (XPC fd handover: stdio + boot handles).
   /// UI-only surface — MCP deliberately has no logs tool (#13 decision).

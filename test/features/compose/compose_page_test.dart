@@ -6,6 +6,7 @@ import 'package:ghost_container_manager/features/compose/compose_page.dart';
 import 'package:ghost_container_manager/features/system/readiness_controller.dart';
 import 'package:ghost_container_manager/services/compose_service.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
+import 'package:ghost_container_manager/services/errors.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
 
 import '../../services/container_service_test.dart' show snapshotPayload;
@@ -46,6 +47,48 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  test('refresh wraps non-GcmException failures', () async {
+    fake.containers = [
+      <String, Object?>{
+        'configuration': <String, Object?>{'id': 7},
+      },
+    ];
+    final controller = ComposeController(service: composeService);
+    addTearDown(controller.dispose);
+
+    await controller.refresh();
+
+    expect(controller.loading, isFalse);
+    expect(
+      controller.lastError,
+      isA<GcmException>()
+          .having((e) => e.code, 'code', GcmErrorCode.internal)
+          .having((e) => e.message, 'message', '未预期的错误')
+          .having((e) => e.cause, 'cause', isNotNull),
+    );
+  });
+
+  test('run wraps non-GcmException failures', () async {
+    fake.containers = [
+      <String, Object?>{
+        'configuration': <String, Object?>{'id': 7},
+      },
+    ];
+    final controller = ComposeController(service: composeService);
+    addTearDown(controller.dispose);
+
+    await controller.up(file: '/tmp/compose.yaml');
+
+    expect(controller.running, isFalse);
+    expect(
+      controller.lastError,
+      isA<GcmException>()
+          .having((e) => e.code, 'code', GcmErrorCode.internal)
+          .having((e) => e.message, 'message', '未预期的错误')
+          .having((e) => e.cause, 'cause', isNotNull),
+    );
+  });
 
   testWidgets('插件已装：项目列表 + up/down 表单，dry-run 透传计划输出', (tester) async {
     fake.containers = [

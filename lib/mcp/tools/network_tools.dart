@@ -20,7 +20,7 @@ const _readOnly = ToolAnnotations(
 void registerNetworkTools(McpServer server, NetworkService networkService) {
   server.registerTool(
     'network_list',
-    title: '网络列表',
+    title: 'List Networks',
     description: '列出所有 container 网络（名称、子网、模式、是否内建、当前接入的容器数）。',
     inputSchema: const JsonObject(properties: {}, additionalProperties: false),
     outputSchema: JsonObject(
@@ -41,7 +41,7 @@ void registerNetworkTools(McpServer server, NetworkService networkService) {
 
   server.registerTool(
     'network_get',
-    title: '网络详情',
+    title: 'Get Network',
     description:
         '查看单个网络的详情与接入的容器（id、IP、hostname）。'
         '参数 name 为 network_list 返回的网络名。',

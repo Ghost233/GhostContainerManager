@@ -1,7 +1,8 @@
 /// Native bridge plugin for Apple container operations.
 ///
 /// This package carries the Swift implementation (ContainerAPIClient over
-/// XPC + a CLI process wrapper) and the Dart channel wrapper used by the
+/// XPC for system/container/image work, plus the CLI process wrapper used by
+/// network and compose operations) and the Dart channel wrapper used by the
 /// app's `lib/bridge/method_channel_container_bridge.dart`. The abstract
 /// seam (`ContainerBridge`) lives in the app's `lib/bridge/`.
 /// See docs/spec/architecture.md §2/§3.
@@ -31,6 +32,11 @@ abstract final class ContainerBridgeMethods {
   static const String containerList = 'container.list';
   static const String containerGet = 'container.get';
   static const String containerStats = 'container.stats';
+  static const String containerCreate = 'container.create';
+  static const String containerStart = 'container.start';
+  static const String containerStop = 'container.stop';
+  static const String containerDelete = 'container.delete';
+  static const String containerKill = 'container.kill';
   static const String networkList = 'network.list';
   static const String networkInspect = 'network.inspect';
   static const String composeHelp = 'compose.help';
@@ -59,7 +65,8 @@ abstract final class ContainerBridgeStreams {
 /// in the app's adapter (keeps this package free of app types).
 class ContainerBridgeChannel {
   ContainerBridgeChannel({MethodChannel? channel})
-    : _channel = channel ?? const MethodChannel(ContainerBridgeChannels.methods);
+    : _channel =
+          channel ?? const MethodChannel(ContainerBridgeChannels.methods);
 
   final MethodChannel _channel;
 
@@ -99,10 +106,10 @@ class ContainerBridgeChannel {
       _invoke(ContainerBridgeMethods.systemStop);
 
   /// `container system kernel set --recommended` (+ `--force`).
-  Future<Map<String, Object?>> systemKernelSet({bool force = false}) =>
-      _invoke(ContainerBridgeMethods.systemKernelSet, <String, Object?>{
-        'force': force,
-      });
+  Future<Map<String, Object?>> systemKernelSet({bool force = false}) => _invoke(
+    ContainerBridgeMethods.systemKernelSet,
+    <String, Object?>{'force': force},
+  );
 
   /// XPC health-check ping (`ClientHealthCheck.ping()`).
   Future<Map<String, Object?>> systemPing() =>
@@ -120,26 +127,74 @@ class ContainerBridgeChannel {
 
   /// `ContainerClient.get(id:)` — full snapshot incl. configuration.
   Future<Map<String, Object?>> containerGet(String id) =>
-      _invoke(ContainerBridgeMethods.containerGet, <String, Object?>{
-        'id': id,
-      });
+      _invoke(ContainerBridgeMethods.containerGet, <String, Object?>{'id': id});
 
   /// `ContainerClient.stats(id:)` — single snapshot (fails for stopped
   /// containers; classification is the Service layer's job).
-  Future<Map<String, Object?>> containerStats(String id) =>
-      _invoke(ContainerBridgeMethods.containerStats, <String, Object?>{
-        'id': id,
-      });
+  Future<Map<String, Object?>> containerStats(String id) => _invoke(
+    ContainerBridgeMethods.containerStats,
+    <String, Object?>{'id': id},
+  );
+
+  /// `ContainerClient.create` with an existing local image.
+  Future<Map<String, Object?>> containerCreate({
+    required String id,
+    required String image,
+    List<String> command = const [],
+    List<String> env = const [],
+    List<String> ports = const [],
+    String? network,
+  }) => _invoke(ContainerBridgeMethods.containerCreate, <String, Object?>{
+    'id': id,
+    'image': image,
+    'command': command,
+    'env': env,
+    'ports': ports,
+    'network': ?network,
+  });
+
+  /// `ContainerClient.bootstrap` + process start (idempotent upstream).
+  Future<Map<String, Object?>> containerStart(String id) => _invoke(
+    ContainerBridgeMethods.containerStart,
+    <String, Object?>{'id': id},
+  );
+
+  /// Stop with [timeoutSeconds] of grace (default five), then SIGKILL.
+  Future<Map<String, Object?>> containerStop(
+    String id, {
+    int timeoutSeconds = 5,
+  }) => _invoke(ContainerBridgeMethods.containerStop, <String, Object?>{
+    'id': id,
+    'timeoutSeconds': timeoutSeconds,
+  });
+
+  /// Delete; [force] is required for a running container.
+  Future<Map<String, Object?>> containerDelete(
+    String id, {
+    bool force = false,
+  }) => _invoke(ContainerBridgeMethods.containerDelete, <String, Object?>{
+    'id': id,
+    'force': force,
+  });
+
+  /// Send [signal] to the container's init process.
+  Future<Map<String, Object?>> containerKill(
+    String id, {
+    String signal = 'KILL',
+  }) => _invoke(ContainerBridgeMethods.containerKill, <String, Object?>{
+    'id': id,
+    'signal': signal,
+  });
 
   /// `container network ls --format json`.
   Future<Map<String, Object?>> networkList() =>
       _invoke(ContainerBridgeMethods.networkList);
 
   /// `container network inspect <id>`.
-  Future<Map<String, Object?>> networkInspect(String id) =>
-      _invoke(ContainerBridgeMethods.networkInspect, <String, Object?>{
-        'id': id,
-      });
+  Future<Map<String, Object?>> networkInspect(String id) => _invoke(
+    ContainerBridgeMethods.networkInspect,
+    <String, Object?>{'id': id},
+  );
 
   /// `container compose --help` (plugin-presence probe).
   Future<Map<String, Object?>> composeHelp() =>
@@ -166,16 +221,16 @@ class ContainerBridgeChannel {
   }
 
   /// `ClientImage.get()` + index/manifest/config rebuild.
-  Future<Map<String, Object?>> imageInspect(String reference) =>
-      _invoke(ContainerBridgeMethods.imageInspect, <String, Object?>{
-        'reference': reference,
-      });
+  Future<Map<String, Object?>> imageInspect(String reference) => _invoke(
+    ContainerBridgeMethods.imageInspect,
+    <String, Object?>{'reference': reference},
+  );
 
   /// `ClientImage.delete(reference:, garbageCollect: false)`.
-  Future<Map<String, Object?>> imageDelete(String reference) =>
-      _invoke(ContainerBridgeMethods.imageDelete, <String, Object?>{
-        'reference': reference,
-      });
+  Future<Map<String, Object?>> imageDelete(String reference) => _invoke(
+    ContainerBridgeMethods.imageDelete,
+    <String, Object?>{'reference': reference},
+  );
 
   /// `ClientImage.pull(...)`; progress flows on the `image.pull` event
   /// stream tagged with [pullId]. Resolves with the pulled description or
@@ -191,17 +246,16 @@ class ContainerBridgeChannel {
   });
 
   /// Cancels the local wait for [pullId] (unknown ids are ignored).
-  Future<Map<String, Object?>> imagePullCancel(String pullId) =>
-      _invoke(ContainerBridgeMethods.imagePullCancel, <String, Object?>{
-        'pullId': pullId,
-      });
+  Future<Map<String, Object?>> imagePullCancel(String pullId) => _invoke(
+    ContainerBridgeMethods.imagePullCancel,
+    <String, Object?>{'pullId': pullId},
+  );
 }
 
 /// Typed wrapper over the event channel (log streams, pull progress, …).
 class ContainerBridgeEvents {
   ContainerBridgeEvents({EventChannel? channel})
-    : _channel =
-          channel ?? const EventChannel(ContainerBridgeChannels.events);
+    : _channel = channel ?? const EventChannel(ContainerBridgeChannels.events);
 
   final EventChannel _channel;
 

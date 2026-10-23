@@ -124,6 +124,34 @@ void main() {
       containsAll(['container_list', 'container_inspect', 'container_stats']),
     );
     expect(names, isNot(contains('container_logs'))); // #13: UI 专属
+
+    const writeTitles = <String, String>{
+      'container_create': 'Create Container',
+      'container_start': 'Start Container',
+      'container_stop': 'Stop Container',
+      'container_restart': 'Restart Container',
+      'container_kill': 'Kill Container',
+      'container_delete': 'Delete Container',
+    };
+    expect(names, containsAll(writeTitles.keys));
+    for (final entry in writeTitles.entries) {
+      final tool = tools.cast<Map>().singleWhere((t) => t['name'] == entry.key);
+      expect(tool['title'], entry.value);
+      final annotations = tool['annotations'] as Map;
+      expect(annotations['title'], entry.value);
+      expect(annotations['readOnlyHint'], isFalse, reason: entry.key);
+      expect(annotations['openWorldHint'], isTrue, reason: entry.key);
+      expect(
+        annotations['destructiveHint'],
+        entry.key == 'container_kill' || entry.key == 'container_delete',
+        reason: entry.key,
+      );
+      expect(
+        annotations['idempotentHint'],
+        entry.key != 'container_create',
+        reason: entry.key,
+      );
+    }
   });
 
   test('container_list 返回 structuredContent + 文本摘要', () async {
@@ -213,5 +241,101 @@ void main() {
     expect(result['isError'], isTrue);
     final structured = result['structuredContent'] as Map<String, dynamic>;
     expect((structured['error'] as Map)['code'], 'CONFLICT');
+  });
+
+  test('container_create 转换 MCP 参数并可创建后启动', () async {
+    await initialize();
+    final result = await callTool('container_create', <String, dynamic>{
+      'name': 'api',
+      'image': 'nginx:latest',
+      'command': <String>['nginx', '-g', 'daemon off;'],
+      'env': <String, String>{'MODE': 'production'},
+      'ports': <Map<String, Object>>[
+        <String, Object>{'host': 8080, 'container': 80},
+      ],
+      'network': 'default',
+      'start': true,
+    });
+
+    expect(result['isError'], isNot(true));
+    expect(bridge.createRequests.single, <String, Object?>{
+      'id': 'api',
+      'image': 'nginx:latest',
+      'command': <String>['nginx', '-g', 'daemon off;'],
+      'env': <String>['MODE=production'],
+      'ports': <String>['8080:80/tcp'],
+      'network': 'default',
+    });
+    expect(bridge.startCalls, 1);
+    expect(result['structuredContent'], <String, Object?>{
+      'id': 'api',
+      'name': 'api',
+      'status': 'running',
+      'warnings': <Object?>[],
+    });
+  });
+
+  test('六个写工具经过 Service 并返回权威 structuredContent', () async {
+    await initialize();
+
+    final stopped = await callTool('container_stop', <String, dynamic>{
+      'id': 'web',
+      'timeoutSeconds': 7,
+    });
+    expect(stopped['structuredContent'], <String, Object?>{
+      'id': 'web',
+      'status': 'stopped',
+    });
+    expect(bridge.calls, contains('containerStop:web timeout=7'));
+
+    final started = await callTool('container_start', <String, dynamic>{
+      'id': 'web',
+    });
+    expect(started['structuredContent'], <String, Object?>{
+      'id': 'web',
+      'status': 'running',
+    });
+
+    final restarted = await callTool('container_restart', <String, dynamic>{
+      'id': 'web',
+    });
+    expect(restarted['structuredContent'], <String, Object?>{
+      'id': 'web',
+      'status': 'running',
+    });
+    expect(bridge.calls, contains('containerStop:web timeout=5'));
+
+    final killed = await callTool('container_kill', <String, dynamic>{
+      'id': 'web',
+    });
+    expect(killed['structuredContent'], <String, Object?>{
+      'id': 'web',
+      'signal': 'KILL',
+    });
+
+    final deleted = await callTool('container_delete', <String, dynamic>{
+      'id': 'web',
+      'force': true,
+    });
+    expect(deleted['structuredContent'], <String, Object?>{
+      'id': 'web',
+      'deleted': true,
+    });
+    expect(bridge.deleteCalls, 1);
+  });
+
+  test('写工具业务错误沿用统一 guard 和 CONFLICT', () async {
+    await initialize();
+    final result = await callTool('container_delete', <String, dynamic>{
+      'id': 'web',
+    });
+    expect(result['isError'], isTrue);
+    expect(
+      (result['structuredContent'] as Map)['error'],
+      isA<Map>().having((e) => e['code'], 'code', 'CONFLICT'),
+    );
+    final content = result['content'] as List;
+    expect((content.single as Map)['text'], contains('"code":"CONFLICT"'));
+    expect(bridge.deleteCalls, 0);
   });
 }

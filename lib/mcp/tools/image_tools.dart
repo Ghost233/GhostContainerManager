@@ -7,46 +7,13 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:mcp_dart/mcp_dart.dart';
 
 import '../../services/errors.dart';
 import '../../services/image_models.dart';
 import '../../services/image_service.dart';
-
-/// Same two-layer error model as container_tools.dart: success carries
-/// structuredContent + a Chinese text summary; failures come back as
-/// CallToolResult(isError: true) with the {error:{code,message,hint?}} wire.
-Future<CallToolResult> _guardImageCall(
-  Future<({Map<String, Object?> data, String summary})> Function() body,
-) async {
-  try {
-    final result = await body();
-    return CallToolResult(
-      content: [TextContent(text: result.summary)],
-      structuredContent: result.data,
-    );
-  } on GcmException catch (e) {
-    final wire = e.toWire();
-    return CallToolResult(
-      content: [TextContent(text: jsonEncode(wire))],
-      isError: true,
-      structuredContent: wire,
-    );
-  } catch (e) {
-    final wire = GcmException(
-      GcmErrorCode.internal,
-      '未预期的内部错误',
-      cause: e,
-    ).toWire();
-    return CallToolResult(
-      content: [TextContent(text: jsonEncode(wire))],
-      isError: true,
-      structuredContent: wire,
-    );
-  }
-}
+import 'system_tools.dart';
 
 /// Image tools read/write an external runtime — open world per the spec's
 /// annotation contract.
@@ -79,7 +46,7 @@ const _referenceDescription =
 void registerImageTools(McpServer server, ImageService service) {
   server.registerTool(
     'image_list',
-    title: '列出镜像',
+    title: 'List Images',
     description:
         '列出全部镜像（reference/digest/大小/创建时间）。tag 为 null 且 '
         'dangling=true 的是未被引用的悬空镜像（同名替换构建后的旧镜像）。',
@@ -107,7 +74,7 @@ void registerImageTools(McpServer server, ImageService service) {
       required: ['images'],
     ),
     annotations: _readOnlyOpenWorld,
-    callback: (args, extra) => _guardImageCall(() async {
+    callback: (args, extra) => guardToolCall(() async {
       final images = await service.listImages();
       final dangling = images.where((i) => i.isDangling).length;
       return (
@@ -123,7 +90,7 @@ void registerImageTools(McpServer server, ImageService service) {
 
   server.registerTool(
     'image_inspect',
-    title: '镜像配置摘要',
+    title: 'Inspect Image',
     description:
         '返回镜像的配置摘要：环境变量、入口命令、暴露端口、标签、层数、'
         '支持的平台与完整磁盘大小（非 descriptor 大小）。',
@@ -151,7 +118,7 @@ void registerImageTools(McpServer server, ImageService service) {
       required: ['image'],
     ),
     annotations: _readOnlyOpenWorld,
-    callback: (args, extra) => _guardImageCall(() async {
+    callback: (args, extra) => guardToolCall(() async {
       final inspection = await service.inspect(args['reference'] as String);
       return (
         data: <String, Object?>{'image': inspection.toJson()},
@@ -166,7 +133,7 @@ void registerImageTools(McpServer server, ImageService service) {
 
   server.registerTool(
     'image_delete',
-    title: '删除镜像',
+    title: 'Delete Image',
     description:
         '删除镜像（移除 tag；未被引用的层由运行时 GC 回收）。正被容器引用的'
         '镜像会被拒绝并列出引用它的容器（CONFLICT）。',
@@ -185,7 +152,7 @@ void registerImageTools(McpServer server, ImageService service) {
       required: ['reference', 'deleted'],
     ),
     annotations: _deleteOpenWorld,
-    callback: (args, extra) => _guardImageCall(() async {
+    callback: (args, extra) => guardToolCall(() async {
       final reference = args['reference'] as String;
       await service.delete(reference);
       final normalized = validateImageReference(reference).reference;
@@ -198,7 +165,7 @@ void registerImageTools(McpServer server, ImageService service) {
 
   server.registerTool(
     'image_pull',
-    title: '拉取镜像',
+    title: 'Pull Image',
     description:
         '拉取镜像到本地。长任务：通过 progress notification 汇报百分比/字节'
         '（桥接侧已折叠到 ~10Hz）；客户端取消会停止本地等待（上游无服务端'
@@ -222,7 +189,7 @@ void registerImageTools(McpServer server, ImageService service) {
       required: ['reference'],
     ),
     annotations: _writeOpenWorld,
-    callback: (args, extra) => _guardImageCall(() async {
+    callback: (args, extra) => guardToolCall(() async {
       final pullId = service.newPullId();
       final abortSub = extra.signal.onAbort.listen((_) {
         unawaited(service.cancelPull(pullId));

@@ -4,6 +4,8 @@ library;
 
 // ignore_for_file: prefer_initializing_formals
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../services/errors.dart';
@@ -36,6 +38,9 @@ class NetworksController extends ChangeNotifier {
     } on GcmException catch (error) {
       lastError = error;
       networks = const [];
+    } catch (error) {
+      lastError = GcmException(GcmErrorCode.internal, '未预期的错误', cause: error);
+      networks = const [];
     } finally {
       loading = false;
       notifyListeners();
@@ -50,6 +55,8 @@ class NetworksController extends ChangeNotifier {
       members[id] = detail.containers;
     } on GcmException catch (error) {
       lastError = error;
+    } catch (error) {
+      lastError = GcmException(GcmErrorCode.internal, '未预期的错误', cause: error);
     }
     notifyListeners();
   }
@@ -79,7 +86,7 @@ class _NetworksPageState extends State<NetworksPage> {
     super.initState();
     _networks = NetworksController(service: widget.service);
     if (widget.controller.readiness?.ready ?? false) {
-      _networks.refresh();
+      unawaited(_networks.refresh());
     }
   }
 
@@ -127,7 +134,8 @@ class _NetworksPageState extends State<NetworksPage> {
                           _NetworkTile(
                             network: network,
                             members: _networks.members[network.id],
-                            onExpand: () => _networks.expand(network.id),
+                            onExpand: () =>
+                                unawaited(_networks.expand(network.id)),
                           ),
                       ],
                     ),

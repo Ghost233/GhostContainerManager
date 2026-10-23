@@ -153,19 +153,22 @@ void main() {
       'method': 'tools/list',
     });
     final tools = (body['result'] as Map<String, dynamic>)['tools'] as List;
-    final names = tools.map((t) => (t as Map)['name']).toSet();
-    expect(
-      names,
-      containsAll([
-        'mount_list',
-        'mount_inspect',
-        'network_list',
-        'network_get',
-        'compose_list',
-        'compose_up',
-        'compose_down',
-      ]),
-    );
+    final byName = <String, Map<String, dynamic>>{
+      for (final t in tools) (t as Map)['name'] as String: t.cast(),
+    };
+    const expectedTitles = <String, String>{
+      'mount_list': 'List Mounts',
+      'mount_inspect': 'Inspect Mount',
+      'network_list': 'List Networks',
+      'network_get': 'Get Network',
+      'compose_list': 'List Compose Projects',
+      'compose_up': 'Compose Up',
+      'compose_down': 'Compose Down',
+    };
+    expect(byName.keys, containsAll(expectedTitles.keys));
+    for (final entry in expectedTitles.entries) {
+      expect(byName[entry.key]?['title'], entry.value, reason: entry.key);
+    }
   });
 
   test('mount_list returns structuredContent plus a Chinese summary', () async {

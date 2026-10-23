@@ -1,9 +1,8 @@
-/// 容器页（#17 / ui-ia.md D1 方案 A + D2 A1）：列表 + 检查器标签页。
+/// 容器页（#17/#18）：列表 + 检查器标签页 + 生命周期写操作。
 ///
-/// 数据源 = ContainerService（T2a）：snapshots broadcast + 自适应轮询
-/// （页可见时前台节奏，由 service 的 interval 参数决定）。运行时未就绪
-/// 遵循 D8 全局态，复用统一占位页。写操作（启动/停止/删除）归 #18，
-/// 本页只读。
+/// 数据源 = ContainerService：snapshots 与 activityChanges broadcast。
+/// 原生四态和创建/启动/停止/重启/删除合成态都在列表即时呈现；
+/// UI 只收集确认和表单输入，状态分叉与 per-resource 锁归 Service。
 library;
 
 import 'dart:async';
@@ -13,8 +12,10 @@ import 'package:flutter/material.dart';
 import '../../app/placeholders.dart';
 import '../../services/container_models.dart';
 import '../../services/container_service.dart';
+import '../../services/errors.dart';
 import '../system/readiness_controller.dart';
 import 'container_detail.dart';
+import 'container_dialogs.dart';
 
 /// 容器列表页：工具栏（搜索/计数/刷新）+ 表头 + 行列表。
 class ContainersPage extends StatefulWidget {
@@ -42,6 +43,8 @@ class _ContainersPageState extends State<ContainersPage> {
   String _search = '';
   String? _selectedId;
   StreamSubscription<List<ContainerSnapshotInfo>>? _sub;
+  StreamSubscription<Map<String, ContainerActivity>>? _activitySub;
+  Map<String, ContainerActivity> _activities = const {};
 
   bool get _ready => widget.controller.readiness?.ready ?? false;
 
@@ -62,6 +65,8 @@ class _ContainersPageState extends State<ContainersPage> {
   /// 就绪状态变化时接/断数据流（D8：未就绪是全局态）。
   void _syncWithReadiness() {
     if (_ready && _sub == null) {
+      _activities = widget.service.currentActivities;
+      _activitySub = widget.service.activityChanges.listen(_onActivities);
       _sub = widget.service.snapshots.listen(_onSnapshot);
       widget.service.startPolling(foreground: true);
       _refresh();
@@ -74,7 +79,15 @@ class _ContainersPageState extends State<ContainersPage> {
   void _teardown() {
     _sub?.cancel();
     _sub = null;
+    _activitySub?.cancel();
+    _activitySub = null;
+    _activities = const {};
     widget.service.stopPolling();
+  }
+
+  void _onActivities(Map<String, ContainerActivity> activities) {
+    if (!mounted) return;
+    setState(() => _activities = activities);
   }
 
   void _onSnapshot(List<ContainerSnapshotInfo> snapshot) {
@@ -101,6 +114,101 @@ class _ContainersPageState extends State<ContainersPage> {
         });
       }
     }
+  }
+
+  Future<void> _createContainer() async {
+    final draft = await showContainerCreateDialog(context);
+    if (draft == null) return;
+    try {
+      await widget.service.create(
+        id: draft.id,
+        image: draft.image,
+        command: draft.command,
+        env: draft.env,
+        ports: draft.ports,
+        network: draft.network,
+        start: draft.start,
+      );
+    } catch (error) {
+      _showActionError(error);
+    }
+  }
+
+  Future<void> _handleContainerAction(
+    ContainerSnapshotInfo container,
+    String action,
+  ) async {
+    if (action == 'delete') {
+      final force = await showContainerDeleteConfirmation(context, container);
+      if (force == null) return;
+      await _runAction(() => widget.service.delete(container.id, force: force));
+      return;
+    }
+    final (title, message, confirmText) = switch (action) {
+      'start' => ('启动容器', '确定启动容器「${container.id}」吗？', '启动'),
+      'stop' => (
+        '停止容器',
+        '将先优雅停止「${container.id}」，5 秒后仍未退出会由 runtime 发送 SIGKILL。',
+        '停止',
+      ),
+      'restart' => ('重启容器', '将先停止再启动「${container.id}」，该合成操作不是原子操作。', '重启'),
+      _ => ('', '', ''),
+    };
+    if (title.isEmpty) return;
+    final confirmed = await showContainerConfirmation(
+      context,
+      title: title,
+      message: message,
+      confirmText: confirmText,
+    );
+    if (!confirmed) return;
+    await _runAction(
+      () => switch (action) {
+        'start' => widget.service.start(container.id),
+        'stop' => _stopContainer(container.id),
+        'restart' => widget.service.restart(container.id),
+        _ => Future<void>.value(),
+      },
+    );
+  }
+
+  Future<void> _stopContainer(String id) {
+    return widget.service
+        .stop(id)
+        .timeout(
+          const Duration(seconds: 15),
+          onTimeout: () {
+            throw const GcmException(
+              GcmErrorCode.timeout,
+              '停止容器等待超过 15 秒。',
+              hint: '后台停止操作仍会继续，请稍后刷新状态。',
+            );
+          },
+        );
+  }
+
+  Future<void> _runAction(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (error) {
+      _showActionError(error);
+    }
+  }
+
+  void _showActionError(Object error) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          error is GcmException
+              ? '${error.code.name}: ${error.message}'
+                    '${error.hint == null ? '' : '\n${error.hint}'}'
+              : '$error',
+        ),
+      ),
+    );
   }
 
   List<ContainerSnapshotInfo> get _filtered {
@@ -149,37 +257,59 @@ class _ContainersPageState extends State<ContainersPage> {
         .length;
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 8),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 280,
-            height: 32,
-            child: TextField(
-              decoration: const InputDecoration(
-                hintText: '搜索名称或镜像',
-                prefixIcon: Icon(Icons.search, size: 18),
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(vertical: 8),
-                border: OutlineInputBorder(),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 640;
+          return Row(
+            children: [
+              Flexible(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 280),
+                  child: SizedBox(
+                    height: 32,
+                    child: TextField(
+                      decoration: const InputDecoration(
+                        hintText: '搜索名称或镜像',
+                        prefixIcon: Icon(Icons.search, size: 18),
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(vertical: 8),
+                        border: OutlineInputBorder(),
+                      ),
+                      style: theme.textTheme.bodySmall,
+                      onChanged: (value) => setState(() => _search = value),
+                    ),
+                  ),
+                ),
               ),
-              style: theme.textTheme.bodySmall,
-              onChanged: (value) => setState(() => _search = value),
-            ),
-          ),
-          const SizedBox(width: 16),
-          Text(
-            '$running 运行中 / 共 ${_snapshot.length}',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.outline,
-            ),
-          ),
-          const Spacer(),
-          IconButton(
-            tooltip: '刷新',
-            icon: const Icon(Icons.refresh, size: 18),
-            onPressed: _refresh,
-          ),
-        ],
+              if (!compact) ...[
+                const SizedBox(width: 16),
+                Text(
+                  '$running 运行中 / 共 ${_snapshot.length}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.outline,
+                  ),
+                ),
+              ],
+              const Spacer(),
+              FilledButton.icon(
+                key: const Key('create-container-button'),
+                onPressed: _createContainer,
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('新建容器'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 32),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                tooltip: '刷新',
+                icon: const Icon(Icons.refresh, size: 18),
+                onPressed: _refresh,
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -194,7 +324,7 @@ class _ContainersPageState extends State<ContainersPage> {
     final rows = _filtered;
     if (rows.isEmpty) {
       return _search.isEmpty
-          ? const _EmptyState()
+          ? _EmptyState(onCreate: _createContainer)
           : Center(
               child: Text(
                 '没有匹配「$_search」的容器',
@@ -210,7 +340,9 @@ class _ContainersPageState extends State<ContainersPage> {
             itemCount: rows.length,
             itemBuilder: (context, index) => _ContainerRow(
               container: rows[index],
+              activity: _activities[rows[index].id],
               onTap: () => setState(() => _selectedId = rows[index].id),
+              onAction: (action) => _handleContainerAction(rows[index], action),
             ),
           ),
         ),
@@ -239,9 +371,11 @@ class _ListHeader extends StatelessWidget {
         children: [
           SizedBox(width: 22, child: Text('', style: style)),
           Expanded(flex: 3, child: Text('名称', style: style)),
-          Expanded(flex: 4, child: Text('镜像', style: style)),
+          SizedBox(width: 76, child: Text('状态', style: style)),
+          Expanded(flex: 3, child: Text('镜像', style: style)),
           Expanded(flex: 2, child: Text('端口', style: style)),
           SizedBox(width: 90, child: Text('运行时长', style: style)),
+          SizedBox(width: 40, child: Text('操作', style: style)),
         ],
       ),
     );
@@ -250,13 +384,25 @@ class _ListHeader extends StatelessWidget {
 
 /// 单行数据行（≥40；状态点 + 名称[本应用创建标记] + 镜像 + 端口 + 时长）。
 class _ContainerRow extends StatelessWidget {
-  const _ContainerRow({required this.container, required this.onTap});
+  const _ContainerRow({
+    required this.container,
+    required this.activity,
+    required this.onTap,
+    required this.onAction,
+  });
 
   final ContainerSnapshotInfo container;
+  final ContainerActivity? activity;
   final VoidCallback onTap;
+  final ValueChanged<String> onAction;
 
   bool get _ownedByApp =>
       container.labels.keys.any((k) => k.startsWith('com.ghost233.'));
+
+  bool get _busy =>
+      activity != null || container.state == ContainerState.stopping;
+
+  String get _status => activity?.label ?? container.state.label;
 
   String get _ports => container.publishedPorts.isEmpty
       ? '—'
@@ -304,8 +450,21 @@ class _ContainerRow extends StatelessWidget {
                 ],
               ),
             ),
+            SizedBox(
+              width: 76,
+              child: Text(
+                _status,
+                key: Key('container-status-${container.id}'),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: activity == null
+                      ? theme.colorScheme.onSurfaceVariant
+                      : theme.colorScheme.primary,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
             Expanded(
-              flex: 4,
+              flex: 3,
               child: Text(
                 container.image,
                 style: monoTextStyle(context),
@@ -324,11 +483,57 @@ class _ContainerRow extends StatelessWidget {
               width: 90,
               child: Text(_uptime, style: theme.textTheme.bodySmall),
             ),
+            SizedBox(
+              width: 40,
+              child: PopupMenuButton<String>(
+                key: Key('container-actions-${container.id}'),
+                tooltip: '容器操作',
+                enabled: !_busy,
+                onSelected: onAction,
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'start',
+                    enabled:
+                        container.state == ContainerState.stopped ||
+                        container.state == ContainerState.unknown,
+                    child: const Text('启动'),
+                  ),
+                  PopupMenuItem(
+                    value: 'stop',
+                    enabled:
+                        container.state == ContainerState.running ||
+                        container.state == ContainerState.unknown,
+                    child: const Text('停止'),
+                  ),
+                  const PopupMenuItem(value: 'restart', child: Text('重启')),
+                  const PopupMenuItem(value: 'delete', child: Text('删除')),
+                ],
+              ),
+            ),
           ],
         ),
       ),
     );
   }
+}
+
+extension ContainerStateLabel on ContainerState {
+  String get label => switch (this) {
+    ContainerState.unknown => '未知',
+    ContainerState.stopped => '已停止',
+    ContainerState.running => '运行中',
+    ContainerState.stopping => '停止中',
+  };
+}
+
+extension ContainerActivityLabel on ContainerActivity {
+  String get label => switch (this) {
+    ContainerActivity.creating => '创建中',
+    ContainerActivity.starting => '启动中',
+    ContainerActivity.stopping => '停止中',
+    ContainerActivity.restarting => '重启中',
+    ContainerActivity.deleting => '删除中',
+  };
 }
 
 /// 生命周期状态点（运行绿 / 停止灰 / 停止中琥珀 / 未知灰轮廓）。
@@ -376,7 +581,9 @@ class AppOwnedTag extends StatelessWidget {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+  const _EmptyState({required this.onCreate});
+
+  final VoidCallback onCreate;
 
   @override
   Widget build(BuildContext context) {
@@ -394,10 +601,17 @@ class _EmptyState extends StatelessWidget {
           Text('暂无容器', style: theme.textTheme.bodyMedium),
           const SizedBox(height: 4),
           Text(
-            '新建容器能力将在后续版本提供',
+            '从本地镜像创建第一个容器',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.outline,
             ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            key: const Key('empty-create-container-button'),
+            onPressed: onCreate,
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('新建容器'),
           ),
         ],
       ),

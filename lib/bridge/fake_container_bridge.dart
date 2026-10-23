@@ -175,6 +175,139 @@ class FakeContainerBridge implements ContainerBridge {
     return Stream.fromIterable(events);
   }
 
+  /// Scripted write failures keyed as `operation:id` (for example
+  /// `start:web`). Optional gates hold a write after recording its call.
+  final Map<String, String> writeFailures = <String, String>{};
+  Completer<void>? createGate;
+  Completer<void>? startGate;
+  Completer<void>? stopGate;
+  Completer<void>? deleteGate;
+  Completer<void>? killGate;
+
+  final List<Map<String, Object?>> createRequests = <Map<String, Object?>>[];
+  final List<Map<String, Object?>> killRequests = <Map<String, Object?>>[];
+  int startCalls = 0;
+  int stopCalls = 0;
+  int deleteCalls = 0;
+
+  @override
+  Future<void> containerCreate({
+    required String id,
+    required String image,
+    List<String> command = const [],
+    List<String> env = const [],
+    List<String> ports = const [],
+    String? network,
+  }) async {
+    calls.add('containerCreate:$id');
+    createRequests.add(<String, Object?>{
+      'id': id,
+      'image': image,
+      'command': command,
+      'env': env,
+      'ports': ports,
+      'network': network,
+    });
+    _throwWriteFailure('create', id);
+    if (createGate != null) await createGate!.future;
+    if (_indexOf(id) >= 0) {
+      throw BridgeCallException('container "$id" already exists');
+    }
+    containers.add(<String, Object?>{
+      'status': 'stopped',
+      'configuration': <String, Object?>{
+        'id': id,
+        'image': <String, Object?>{'reference': image},
+        'labels': <String, Object?>{},
+        'initProcess': <String, Object?>{
+          'arguments': command,
+          'environment': env,
+        },
+      },
+      'networks': network == null
+          ? <Object?>[]
+          : <Object?>[
+              <String, Object?>{'network': network},
+            ],
+      'ports': <Object?>[],
+    });
+  }
+
+  @override
+  Future<void> containerStart(String id) async {
+    calls.add('containerStart:$id');
+    startCalls++;
+    _throwWriteFailure('start', id);
+    if (startGate != null) await startGate!.future;
+    _setContainerState(id, 'running');
+  }
+
+  @override
+  Future<void> containerStop(String id, {int timeoutSeconds = 5}) async {
+    calls.add('containerStop:$id timeout=$timeoutSeconds');
+    stopCalls++;
+    _throwWriteFailure('stop', id);
+    if (stopGate != null) await stopGate!.future;
+    _setContainerState(id, 'stopped');
+  }
+
+  @override
+  Future<void> containerDelete(String id, {bool force = false}) async {
+    calls.add('containerDelete:$id force=$force');
+    deleteCalls++;
+    _throwWriteFailure('delete', id);
+    if (deleteGate != null) await deleteGate!.future;
+    final index = _indexOf(id);
+    if (index < 0) {
+      throw BridgeCallException('container "$id" not found');
+    }
+    final status = containers[index]['status'] as String? ?? 'unknown';
+    if (status == 'stopping') {
+      throw BridgeCallException('container "$id" is stopping');
+    }
+    if (status == 'running' && !force) {
+      throw BridgeCallException('container "$id" is running');
+    }
+    containers.removeAt(index);
+  }
+
+  @override
+  Future<void> containerKill(String id, {String signal = 'KILL'}) async {
+    calls.add('containerKill:$id signal=$signal');
+    killRequests.add(<String, Object?>{'id': id, 'signal': signal});
+    _throwWriteFailure('kill', id);
+    if (killGate != null) await killGate!.future;
+    if (_indexOf(id) < 0) {
+      throw BridgeCallException('container "$id" not found');
+    }
+    if (signal == 'KILL' || signal == 'SIGKILL' || signal == '9') {
+      _setContainerState(id, 'stopped');
+    }
+  }
+
+  void _throwWriteFailure(String operation, String id) {
+    final failure = writeFailures['$operation:$id'];
+    if (failure != null) throw BridgeCallException(failure);
+  }
+
+  int _indexOf(String id) {
+    return containers.indexWhere((snapshot) => _snapshotId(snapshot) == id);
+  }
+
+  void _setContainerState(String id, String state) {
+    final index = _indexOf(id);
+    if (index < 0) {
+      throw BridgeCallException('container "$id" not found');
+    }
+    final previous = containers[index];
+    if (previous['status'] == state) return;
+    containers[index] = <String, Object?>{
+      ...previous,
+      'status': state,
+      'startedAt': state == 'running' ? DateTime.now().toIso8601String() : null,
+    };
+  }
+
   // -- network domain (T6) ---------------------------------------------------
 
   /// Scripted `container network ls --format json` result.

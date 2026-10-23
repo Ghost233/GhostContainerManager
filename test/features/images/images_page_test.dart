@@ -222,6 +222,33 @@ void main() {
       expect(find.text('alpine:3.19'), findsOneWidget);
     });
 
+    testWidgets('拉取失败显示错误并返回可重试状态', (tester) async {
+      final fake = FakeContainerBridge()..pullFailure = 'connection invalid';
+      await _pumpPage(tester, fake);
+
+      await tester.tap(find.text('拉取镜像').first);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, '镜像引用').first,
+        'alpine:3.19',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '拉取'));
+      await tester.pump();
+      // 失败后的进度订阅取消也走真实事件循环，再泵回可重试状态。
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(fake.pullCalls, hasLength(1));
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.textContaining('容器运行时不可达'), findsOneWidget);
+      expect(find.widgetWithText(TextField, '镜像引用'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, '拉取'), findsOneWidget);
+      expect(find.text('取消拉取'), findsNothing);
+    });
+
     testWidgets('取消拉取关闭对话框且调用 imagePullCancel', (tester) async {
       final fake = FakeContainerBridge()..pullHangs = true;
       await _pumpPage(tester, fake);

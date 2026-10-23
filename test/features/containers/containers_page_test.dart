@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -107,6 +108,8 @@ void main() {
     expect(find.text('8080→80'), findsWidgets); // 两个容器同一映射
     expect(find.text('本应用创建'), findsOneWidget); // 仅 web-frontend
     expect(find.text('1 运行中 / 共 2'), findsOneWidget);
+    expect(find.text('运行中'), findsOneWidget);
+    expect(find.text('已停止'), findsOneWidget);
   });
 
   testWidgets('搜索过滤列表', (tester) async {
@@ -239,5 +242,155 @@ void main() {
     expect(find.text('返回容器列表'), findsNothing);
     expect(find.text('web-frontend'), findsNothing);
     expect(find.text('cache'), findsOneWidget);
+  });
+
+  testWidgets('空态主操作打开创建表单并创建容器', (tester) async {
+    final (fake, _) = await _pumpPage(tester, FakeContainerBridge());
+
+    expect(find.text('暂无容器'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('empty-create-container-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('新建容器'), findsWidgets);
+
+    await tester.tap(find.widgetWithText(FilledButton, '创建'));
+    await tester.pumpAndSettle();
+    expect(find.text('请输入本地镜像引用'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('create-name-field')),
+      'new-api',
+    );
+    await tester.enterText(
+      find.byKey(const Key('create-image-field')),
+      'nginx:latest',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, '创建'));
+    await tester.pumpAndSettle();
+
+    expect(fake.createRequests.single['id'], 'new-api');
+    expect(fake.createRequests.single['image'], 'nginx:latest');
+    expect(find.text('new-api'), findsOneWidget);
+    expect(find.text('已停止'), findsOneWidget);
+  });
+
+  testWidgets('启动和重启均有确认弹窗并经过 Service', (tester) async {
+    final (fake, _) = await _pumpPage(tester, _twoContainers());
+
+    await tester.tap(find.byKey(const Key('container-actions-cache')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('启动'));
+    await tester.pumpAndSettle();
+    expect(find.text('启动容器'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '启动'));
+    await tester.pumpAndSettle();
+    expect(fake.startCalls, 1);
+
+    await tester.tap(find.byKey(const Key('container-actions-web-frontend')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('重启'));
+    await tester.pumpAndSettle();
+    expect(find.text('重启容器'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '重启'));
+    await tester.pumpAndSettle();
+    expect(fake.stopCalls, 1);
+    expect(fake.startCalls, 2);
+  });
+
+  testWidgets('停止确认后立即呈现合成态，完成后回到原生停止态', (tester) async {
+    final fake = _twoContainers()..stopGate = Completer<void>();
+    await _pumpPage(tester, fake);
+
+    await tester.tap(find.byKey(const Key('container-actions-web-frontend')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('停止'));
+    await tester.pumpAndSettle();
+    expect(find.text('停止容器'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '停止'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('停止中'), findsOneWidget);
+    final menu = tester.widget<PopupMenuButton<String>>(
+      find.byKey(const Key('container-actions-web-frontend')),
+    );
+    expect(menu.enabled, isFalse);
+
+    fake.stopGate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('停止中'), findsNothing);
+    expect(find.text('已停止'), findsWidgets);
+  });
+
+  testWidgets('停止等待超时只提示，后台操作仍继续', (tester) async {
+    final fake = _twoContainers()..stopGate = Completer<void>();
+    await _pumpPage(tester, fake);
+
+    await tester.tap(find.byKey(const Key('container-actions-web-frontend')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('停止'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '停止'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 16));
+
+    expect(find.textContaining('后台停止操作仍会继续'), findsOneWidget);
+    expect(find.text('停止中'), findsOneWidget);
+    expect(fake.stopCalls, 1);
+
+    fake.stopGate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('停止中'), findsNothing);
+    expect(find.text('已停止'), findsWidgets);
+  });
+
+  testWidgets('删除运行中容器：force 默认不勾，勾选确认后才执行', (tester) async {
+    final (fake, _) = await _pumpPage(tester, _twoContainers());
+
+    await tester.tap(find.byKey(const Key('container-actions-web-frontend')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('删除容器'), findsOneWidget);
+    final checkbox = tester.widget<CheckboxListTile>(
+      find.byType(CheckboxListTile),
+    );
+    expect(checkbox.value, isFalse);
+    final disabledDelete = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '删除'),
+    );
+    expect(disabledDelete.onPressed, isNull);
+    expect(fake.deleteCalls, 0);
+
+    await tester.tap(find.text('强制停止并删除'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pumpAndSettle();
+
+    expect(fake.deleteCalls, 1);
+    expect(find.text('web-frontend'), findsNothing);
+  });
+
+  testWidgets('日志视图只保留尾部 5000 行', (tester) async {
+    final fake = _twoContainers()
+      ..logResponses['web-frontend'] = [
+        BridgeLogEvent.data(
+          source: 'stdio',
+          bytes: utf8.encode(
+            List.generate(5005, (index) => 'line-$index').join('\n'),
+          ),
+        ),
+      ];
+    await _pumpPage(tester, fake);
+    await tester.tap(find.text('web-frontend'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('日志'));
+    await tester.pumpAndSettle();
+
+    final list = tester.widget<ListView>(find.byType(ListView));
+    final delegate = list.childrenDelegate as SliverChildListDelegate;
+    expect(delegate.estimatedChildCount, 5000);
+    expect(delegate.children, hasLength(5000));
+    expect((delegate.children.first as Text).data, 'line-5');
+    expect((delegate.children.last as Text).data, 'line-5004');
   });
 }

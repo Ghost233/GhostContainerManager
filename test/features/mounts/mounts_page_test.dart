@@ -4,6 +4,7 @@ import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
 import 'package:ghost_container_manager/features/mounts/mounts_page.dart';
 import 'package:ghost_container_manager/features/system/readiness_controller.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
+import 'package:ghost_container_manager/services/errors.dart';
 import 'package:ghost_container_manager/services/mount_service.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
 
@@ -43,6 +44,30 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  test('refresh wraps non-GcmException failures', () async {
+    fake.containers = [
+      <String, Object?>{
+        'configuration': <String, Object?>{'id': 7},
+      },
+    ];
+    final controller = MountsController(
+      service: MountService(containerService: ContainerService(bridge: fake)),
+    );
+    addTearDown(controller.dispose);
+
+    await controller.refresh();
+
+    expect(controller.loading, isFalse);
+    expect(controller.mounts, isEmpty);
+    expect(
+      controller.lastError,
+      isA<GcmException>()
+          .having((e) => e.code, 'code', GcmErrorCode.internal)
+          .having((e) => e.message, 'message', '未预期的错误')
+          .having((e) => e.cause, 'cause', isNotNull),
+    );
+  });
 
   testWidgets('ready：聚合表列出来源与使用方，无任何写入口', (tester) async {
     fake.containers = [

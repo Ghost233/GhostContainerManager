@@ -6,10 +6,10 @@ import FlutterMacOS
 /// Native bridge for Apple container operations (system domain first).
 ///
 /// Routing (docs/spec/architecture.md §2/§3, research report):
-/// - XPC (ContainerAPIClient): health ping. XPC is unusable while the
-///   apiserver is down, so ping doubles as the service liveness probe.
-/// - CLI (`CliRunner`): everything else — XPC exposes no routes for
-///   system start/stop or the recommended kernel install.
+/// - XPC (ContainerAPIClient): health, container lifecycle, and images.
+///   Ping doubles as the apiserver liveness probe.
+/// - CLI (`CliRunner`): system start/stop/kernel installation plus network
+///   and compose operations that are outside the XPC API.
 ///
 /// The Dart side (lib/services/) owns all decisions; this layer only
 /// executes and returns raw payloads. Bridge-API probes (binary lookup,
@@ -99,6 +99,89 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
         return
       }
       containerStats(id: id, result: result)
+    case "container.create":
+      guard let id = args?["id"] as? String,
+        let image = args?["image"] as? String
+      else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "container.create requires 'id' and 'image' string arguments.",
+            details: nil
+          )
+        )
+        return
+      }
+      let command = args?["command"] as? [String] ?? []
+      let env = args?["env"] as? [String] ?? []
+      let ports = args?["ports"] as? [String] ?? []
+      containerWrite(result: result) {
+        try await ContainerOps.create(
+          id: id,
+          image: image,
+          command: command,
+          env: env,
+          ports: ports,
+          network: args?["network"] as? String
+        )
+      }
+    case "container.start":
+      guard let id = args?["id"] as? String else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "container.start requires an 'id' string argument.",
+            details: nil
+          )
+        )
+        return
+      }
+      containerWrite(result: result) { try await ContainerOps.start(id: id) }
+    case "container.stop":
+      guard let id = args?["id"] as? String else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "container.stop requires an 'id' string argument.",
+            details: nil
+          )
+        )
+        return
+      }
+      let timeoutSeconds = args?["timeoutSeconds"] as? Int ?? 5
+      containerWrite(result: result) {
+        try await ContainerOps.stop(id: id, timeoutSeconds: Int32(timeoutSeconds))
+      }
+    case "container.delete":
+      guard let id = args?["id"] as? String else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "container.delete requires an 'id' string argument.",
+            details: nil
+          )
+        )
+        return
+      }
+      let force = args?["force"] as? Bool ?? false
+      containerWrite(result: result) {
+        try await ContainerOps.delete(id: id, force: force)
+      }
+    case "container.kill":
+      guard let id = args?["id"] as? String else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "container.kill requires an 'id' string argument.",
+            details: nil
+          )
+        )
+        return
+      }
+      let signal = args?["signal"] as? String ?? "KILL"
+      containerWrite(result: result) {
+        try await ContainerOps.kill(id: id, signal: signal)
+      }
     case "image.list":
       imageList(result: result)
     case "image.inspect":
@@ -194,6 +277,26 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
       )
     default:
       result(FlutterMethodNotImplemented)
+    }
+  }
+
+  /// Shared XPC write forwarding. Raw runtime errors stay intact for the
+  /// Dart Service's feature-fingerprint mapper.
+  private func containerWrite(
+    result: @escaping FlutterResult,
+    operation: @escaping () async throws -> [String: Any]
+  ) {
+    Task {
+      do {
+        let payload = try await operation()
+        await MainActor.run { result(payload) }
+      } catch {
+        await MainActor.run {
+          result(
+            FlutterError(code: "xpcError", message: error.localizedDescription, details: nil)
+          )
+        }
+      }
     }
   }
 

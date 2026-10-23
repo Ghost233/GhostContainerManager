@@ -4,6 +4,8 @@ library;
 
 // ignore_for_file: prefer_initializing_formals
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../services/errors.dart';
@@ -31,6 +33,9 @@ class MountsController extends ChangeNotifier {
       mounts = await _service.listMounts();
     } on GcmException catch (error) {
       lastError = error;
+      mounts = const [];
+    } catch (error) {
+      lastError = GcmException(GcmErrorCode.internal, '未预期的错误', cause: error);
       mounts = const [];
     } finally {
       loading = false;
@@ -63,7 +68,7 @@ class _MountsPageState extends State<MountsPage> {
     super.initState();
     _mounts = MountsController(service: widget.service);
     if (widget.controller.readiness?.ready ?? false) {
-      _mounts.refresh();
+      unawaited(_mounts.refresh());
     }
   }
 

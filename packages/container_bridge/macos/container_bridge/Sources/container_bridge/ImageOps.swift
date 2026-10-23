@@ -1,7 +1,9 @@
 import ContainerAPIClient
+import ContainerResource
 import ContainerizationOCI
 import FlutterMacOS
 import Foundation
+import TerminalProgress
 
 /// Image-domain XPC operations (`ClientImage` over the dedicated
 /// `com.apple.container.core.container-core-images` XPC service — NOT routed

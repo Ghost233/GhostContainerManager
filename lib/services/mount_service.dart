@@ -71,6 +71,9 @@ class MountInfo {
 
 /// Aggregates container mounts into per-source views. Purely read-only —
 /// mount creation/removal is container-config territory and out of v1 scope.
+///
+/// Mount reads cover every container regardless of state (default
+/// [ContainerQuery] includes stopped containers).
 class MountService {
   MountService({required ContainerService containerService})
     : _containerService = containerService;
@@ -163,9 +166,6 @@ class MountService {
     return result;
   }
 }
-
-/// Mount reads cover every container regardless of state (default
-/// [ContainerQuery] includes stopped containers).
 
 class _ParsedMount {
   const _ParsedMount({

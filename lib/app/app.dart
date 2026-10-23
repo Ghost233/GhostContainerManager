@@ -66,7 +66,10 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
       debugBypassEnabled: widget.debugBypass,
     );
     _containerService = ContainerService(bridge: bridge);
-    _imageService = ImageService(bridge: bridge);
+    _imageService = ImageService(
+      bridge: bridge,
+      containerService: _containerService,
+    );
     _mountService = MountService(containerService: _containerService);
     _networkService = NetworkService(
       bridge: bridge,

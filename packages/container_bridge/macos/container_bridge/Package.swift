@@ -27,6 +27,17 @@ let package = Package(
             dependencies: [
                 .product(name: "FlutterFramework", package: "FlutterFramework"),
                 .product(name: "ContainerAPIClient", package: "container"),
+                // ImageDescription lives in ContainerResource; the pull
+                // progress types (ProgressUpdateHandler/Event) live in
+                // TerminalProgress — both ship in apple/container.
+                .product(name: "ContainerResource", package: "container"),
+                .product(name: "TerminalProgress", package: "container"),
+                // ContainerSystemConfig (loadContainerSystemConfig → vminit
+                // image) lives in ContainerPersistence; IPAddress (publish
+                // ports) lives in ContainerizationExtras. Both are needed by
+                // the T3 container-create path.
+                .product(name: "ContainerPersistence", package: "container"),
+                .product(name: "ContainerizationExtras", package: "containerization"),
                 .product(name: "ContainerizationOCI", package: "containerization")
             ],
             resources: [

@@ -258,6 +258,260 @@ void main() {
     });
   });
 
+  group('write lifecycle', () {
+    test(
+      'create forwards configuration and exposes creating immediately',
+      () async {
+        final gate = Completer<void>();
+        bridge.createGate = gate;
+        final future = service.create(
+          id: 'web',
+          image: 'nginx:latest',
+          command: const ['nginx', '-g', 'daemon off;'],
+          env: const ['MODE=production'],
+          ports: const ['127.0.0.1:8080:80/tcp'],
+          network: 'frontend',
+        );
+
+        expect(service.activityFor('web'), ContainerActivity.creating);
+        expect(
+          service.currentContainers.single.id,
+          'web',
+          reason: 'a newly created resource must not wait for the next poll',
+        );
+        expect(bridge.createRequests.single, <String, Object?>{
+          'id': 'web',
+          'image': 'nginx:latest',
+          'command': const ['nginx', '-g', 'daemon off;'],
+          'env': const ['MODE=production'],
+          'ports': const ['127.0.0.1:8080:80/tcp'],
+          'network': 'frontend',
+        });
+        gate.complete();
+        expect(await future, 'web');
+        expect(service.activityFor('web'), isNull);
+        expect(service.currentContainers.single.state, ContainerState.stopped);
+      },
+    );
+
+    test(
+      'refresh retains an optimistic create in the broadcast snapshot',
+      () async {
+        final events = <List<ContainerSnapshotInfo>>[];
+        final subscription = service.snapshots.listen(events.add);
+        addTearDown(subscription.cancel);
+        final gate = Completer<void>();
+        bridge.createGate = gate;
+        final creating = service.create(id: 'web', image: 'nginx:latest');
+        events.clear();
+
+        await service.refresh();
+        await Future<void>.delayed(Duration.zero);
+
+        expect(events, isNotEmpty);
+        expect(events.last.map((container) => container.id), ['web']);
+        expect(events.last.single.state, ContainerState.stopped);
+        gate.complete();
+        await creating;
+      },
+    );
+
+    test('stop and restart reject timeouts outside the runtime range', () {
+      for (final timeout in <int>[-1, 2147483648]) {
+        expect(
+          () => service.stop('web', timeoutSeconds: timeout),
+          throwsA(
+            isA<GcmException>().having(
+              (error) => error.code,
+              'code',
+              GcmErrorCode.invalidArgument,
+            ),
+          ),
+        );
+        expect(
+          () => service.restart('web', timeoutSeconds: timeout),
+          throwsA(
+            isA<GcmException>().having(
+              (error) => error.code,
+              'code',
+              GcmErrorCode.invalidArgument,
+            ),
+          ),
+        );
+      }
+      expect(bridge.stopCalls, 0);
+      expect(bridge.startCalls, 0);
+    });
+
+    test('same start joins one call and different operations queue', () async {
+      bridge.containers = [snapshotPayload(id: 'web', status: 'stopped')];
+      bridge.startGate = Completer<void>();
+      final first = service.start('web');
+      final duplicate = service.start('web');
+      final queuedStop = service.stop('web');
+      final duplicateStop = service.stop('web');
+
+      expect(bridge.startCalls, 1);
+      expect(bridge.stopCalls, 0);
+      expect(service.activityFor('web'), ContainerActivity.starting);
+      bridge.startGate!.complete();
+      await Future.wait([first, duplicate, queuedStop, duplicateStop]);
+
+      expect(bridge.startCalls, 1);
+      expect(bridge.stopCalls, 1);
+      expect(
+        bridge.calls.where((call) => call.startsWith('container')).toList(),
+        <String>['containerStart:web', 'containerStop:web timeout=5'],
+      );
+    });
+
+    test(
+      'restart coalesces and remains restarting across stop and start',
+      () async {
+        bridge.containers = [snapshotPayload(id: 'web')];
+        bridge.stopGate = Completer<void>();
+        final first = service.restart('web');
+        final duplicate = service.restart('web');
+
+        expect(service.activityFor('web'), ContainerActivity.restarting);
+        expect(bridge.stopCalls, 1);
+        expect(bridge.startCalls, 0);
+        bridge.stopGate!.complete();
+        await Future.wait([first, duplicate]);
+
+        expect(bridge.stopCalls, 1);
+        expect(bridge.startCalls, 1);
+        expect(service.activityFor('web'), isNull);
+      },
+    );
+
+    test('delete rejects an in-flight stop even when forced', () async {
+      bridge.containers = [snapshotPayload(id: 'web')];
+      bridge.stopGate = Completer<void>();
+      final stopping = service.stop('web');
+
+      await expectLater(
+        service.delete('web', force: true),
+        throwsA(
+          isA<GcmException>()
+              .having((e) => e.code, 'code', GcmErrorCode.conflict)
+              .having((e) => e.hint, 'hint', contains('停止')),
+        ),
+      );
+      expect(bridge.deleteCalls, 0);
+      bridge.stopGate!.complete();
+      await stopping;
+    });
+
+    test('delete rejects a stop queued behind another write', () async {
+      bridge.containers = [snapshotPayload(id: 'web', status: 'stopped')];
+      bridge.startGate = Completer<void>();
+      final starting = service.start('web');
+      final stopping = service.stop('web');
+      final deleteCheck = expectLater(
+        service.delete('web', force: true),
+        throwsA(
+          isA<GcmException>().having(
+            (error) => error.code,
+            'code',
+            GcmErrorCode.conflict,
+          ),
+        ),
+      );
+
+      bridge.startGate!.complete();
+      await Future.wait([starting, stopping]);
+      await deleteCheck;
+      expect(bridge.deleteCalls, 0);
+    });
+
+    test(
+      'delete requires force for running and ignores a repeated not found',
+      () async {
+        bridge.containers = [snapshotPayload(id: 'web')];
+        await expectLater(
+          service.delete('web'),
+          throwsA(
+            isA<GcmException>().having(
+              (e) => e.code,
+              'code',
+              GcmErrorCode.conflict,
+            ),
+          ),
+        );
+
+        await service.delete('web', force: true);
+        await service.delete('web', force: true);
+        expect(bridge.deleteCalls, 1);
+        expect(service.currentContainers, isEmpty);
+      },
+    );
+
+    test('delete rejects native stopping regardless of force', () async {
+      bridge.containers = [snapshotPayload(id: 'web', status: 'stopping')];
+      await service.refresh();
+
+      await expectLater(
+        service.delete('web', force: true),
+        throwsA(
+          isA<GcmException>().having(
+            (e) => e.code,
+            'code',
+            GcmErrorCode.conflict,
+          ),
+        ),
+      );
+      expect(bridge.deleteCalls, 0);
+    });
+
+    test('duplicate create failure preserves the existing snapshot', () async {
+      bridge.containers = [
+        snapshotPayload(id: 'web', status: 'stopped', startedAt: null),
+      ];
+      await service.refresh();
+
+      await expectLater(
+        service.create(id: 'web', image: 'nginx:latest'),
+        throwsA(
+          isA<GcmException>().having(
+            (e) => e.code,
+            'code',
+            GcmErrorCode.conflict,
+          ),
+        ),
+      );
+      expect(service.currentContainers.single.id, 'web');
+      expect(service.currentContainers.single.state, ContainerState.stopped);
+    });
+
+    test(
+      'kill forwards KILL by default and clears activity on failure',
+      () async {
+        bridge.containers = [snapshotPayload(id: 'web')];
+        await service.kill('web');
+        expect(bridge.killRequests.single, <String, Object?>{
+          'id': 'web',
+          'signal': 'KILL',
+        });
+
+        bridge.writeFailures['start:web'] = 'runtime connection is invalid';
+        final starting = service.start('web');
+        expect(service.activityFor('web'), ContainerActivity.starting);
+        await expectLater(
+          starting,
+          throwsA(
+            isA<GcmException>().having(
+              (e) => e.code,
+              'code',
+              GcmErrorCode.runtimeUnavailable,
+            ),
+          ),
+        );
+        expect(service.activityFor('web'), isNull);
+      },
+    );
+  });
+
   group('inspect & stats', () {
     test('inspect returns full snapshot with configuration', () async {
       bridge.containers = [snapshotPayload(id: 'web')];

@@ -15,7 +15,7 @@ import 'system_tools.dart';
 void registerComposeTools(McpServer server, ComposeService composeService) {
   server.registerTool(
     'compose_list',
-    title: 'Compose 项目列表',
+    title: 'List Compose Projects',
     description:
         '按容器 label（com.compose.project / com.compose.service）聚合当前存在的 '
         'Compose 项目：项目名、服务清单、各服务对应容器与状态。'
@@ -44,7 +44,7 @@ void registerComposeTools(McpServer server, ComposeService composeService) {
 
   server.registerTool(
     'compose_up',
-    title: 'Compose up',
+    title: 'Compose Up',
     description:
         '运行 container compose up（需要本机已安装 compose 插件；未安装时返回'
         ' NOT_FOUND 与安装指引）。file 必须是绝对路径。输出为插件的人类可读文本'
@@ -103,7 +103,7 @@ void registerComposeTools(McpServer server, ComposeService composeService) {
 
   server.registerTool(
     'compose_down',
-    title: 'Compose down',
+    title: 'Compose Down',
     description:
         '运行 container compose down，停止并移除项目的容器与其创建的网络'
         '（keepNetworks 可保留网络）。file 与 projectName 至少提供一项；'

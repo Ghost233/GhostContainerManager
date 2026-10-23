@@ -12,10 +12,10 @@ import '../services/container_service_test.dart' show snapshotPayload;
 
 /// End-to-end evidence for issue #20 acceptance 4: an MCP client speaking
 /// Streamable HTTP calls image_list / image_inspect / image_delete /
-/// image_pull; digest addressing is rejected at the schema boundary with a
-/// hint; annotations mark every image tool open-world. This file builds its
-/// own McpServer (lead wires GcmMcpServer separately), exactly how the
-/// production registration will be called.
+/// image_pull; digest addressing is rejected by Service-layer input
+/// validation with a hint; annotations mark every image tool open-world.
+/// This file builds its own McpServer (lead wires GcmMcpServer separately),
+/// exactly how the production registration will be called.
 void main() {
   late FakeContainerBridge bridge;
   late StreamableMcpServer transport;
@@ -131,15 +131,16 @@ void main() {
     final byName = <String, Map<String, dynamic>>{
       for (final t in tools) (t as Map)['name'] as String: t.cast(),
     };
-    expect(
-      byName.keys,
-      containsAll([
-        'image_list',
-        'image_inspect',
-        'image_delete',
-        'image_pull',
-      ]),
-    );
+    const expectedTitles = <String, String>{
+      'image_list': 'List Images',
+      'image_inspect': 'Inspect Image',
+      'image_delete': 'Delete Image',
+      'image_pull': 'Pull Image',
+    };
+    expect(byName.keys, containsAll(expectedTitles.keys));
+    for (final entry in expectedTitles.entries) {
+      expect(byName[entry.key]?['title'], entry.value, reason: entry.key);
+    }
     for (final name in byName.keys) {
       final annotations = byName[name]!['annotations'] as Map<String, dynamic>;
       expect(annotations['openWorldHint'], isTrue, reason: name);
@@ -149,7 +150,8 @@ void main() {
     expect(delete['readOnlyHint'], isFalse);
     final pull = byName['image_pull']!['annotations'] as Map;
     expect(pull['destructiveHint'], isFalse);
-    // Digest addressing is refused at the schema boundary.
+    // The schema documents the reference contract enforced by Service-layer
+    // input validation.
     final pullSchema =
         (byName['image_pull']!['inputSchema'] as Map)['properties'] as Map;
     expect(
@@ -254,5 +256,6 @@ void main() {
     expect(result['isError'], isTrue);
     final structured = result['structuredContent'] as Map<String, dynamic>;
     expect((structured['error'] as Map)['code'], 'RUNTIME_UNAVAILABLE');
+    expect((structured['error'] as Map)['source'], 'xpc');
   });
 }

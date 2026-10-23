@@ -233,6 +233,7 @@ class NetworkService {
       GcmErrorCode.internal,
       'container $operation failed (exit ${result.exitCode}).',
       hint: result.stderr.trim().isEmpty ? null : result.stderr.trim(),
+      source: 'cli',
     );
   }
 }

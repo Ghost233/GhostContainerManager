@@ -1,49 +1,26 @@
-/// MCP `container_*` read tools (docs/spec/mcp-tools.md 容器域, T2a).
+/// MCP `container_*` read/write tools (docs/spec/mcp-tools.md 容器域).
 ///
 /// Every result carries structuredContent AND a Chinese text summary.
-/// Two-layer error model: tool failures come back as
-/// `CallToolResult(isError: true)` with `{error: {code, message, hint?}}`.
+/// Business failures use the shared two-layer guard in system_tools.dart.
 library;
-
-import 'dart:convert';
 
 import 'package:mcp_dart/mcp_dart.dart';
 
 import '../../services/container_models.dart';
 import '../../services/container_service.dart';
-import '../../services/errors.dart';
+import 'system_tools.dart';
 
-/// Like `guardToolCall` (system_tools.dart) but the success path also
-/// emits a human-readable [summary] as text content.
-Future<CallToolResult> _guardContainerCall(
-  Future<({Map<String, Object?> data, String summary})> Function() body,
-) async {
-  try {
-    final result = await body();
-    return CallToolResult(
-      content: [TextContent(text: result.summary)],
-      structuredContent: result.data,
-    );
-  } on GcmException catch (e) {
-    final wire = e.toWire();
-    return CallToolResult(
-      content: [TextContent(text: jsonEncode(wire))],
-      isError: true,
-      structuredContent: wire,
-    );
-  } catch (e) {
-    final wire = GcmException(
-      GcmErrorCode.internal,
-      '未预期的内部错误',
-      cause: e,
-    ).toWire();
-    return CallToolResult(
-      content: [TextContent(text: jsonEncode(wire))],
-      isError: true,
-      structuredContent: wire,
-    );
-  }
-}
+ToolAnnotations _writeAnnotations(
+  String title, {
+  bool destructive = false,
+  bool idempotent = true,
+}) => ToolAnnotations(
+  title: title,
+  readOnlyHint: false,
+  destructiveHint: destructive,
+  idempotentHint: idempotent,
+  openWorldHint: true,
+);
 
 /// Container tools read an external runtime — open world per the spec's
 /// annotation contract.
@@ -117,7 +94,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
       required: ['containers'],
     ),
     annotations: _readOnlyOpenWorld,
-    callback: (args, extra) => _guardContainerCall(() async {
+    callback: (args, extra) => guardToolCall(() async {
       final statusArg = args['status'] as String?;
       final query = ContainerQuery(
         includeStopped: args['all'] != false,
@@ -156,7 +133,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
       required: ['container'],
     ),
     annotations: _readOnlyOpenWorld,
-    callback: (args, extra) => _guardContainerCall(() async {
+    callback: (args, extra) => guardToolCall(() async {
       final id = args['id'] as String;
       final c = await service.inspect(id);
       final detail = <String, Object?>{
@@ -221,7 +198,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
       required: ['stats'],
     ),
     annotations: _readOnlyOpenWorld,
-    callback: (args, extra) => _guardContainerCall(() async {
+    callback: (args, extra) => guardToolCall(() async {
       final id = args['id'] as String;
       final stats = await service.stats(id);
       final utilization = stats.memoryUtilization;
@@ -249,6 +226,258 @@ void registerContainerTools(McpServer server, ContainerService service) {
             '${_mb(stats.memoryLimitBytes)}'
             '${utilization != null ? '（${(utilization * 100).toStringAsFixed(1)}%）' : ''}，'
             '进程 ${stats.numProcesses ?? '-'} 个',
+      );
+    }),
+  );
+
+  server.registerTool(
+    'container_create',
+    title: 'Create Container',
+    description:
+        '从本地镜像创建容器，默认只创建不启动。镜像不存在时不会自动拉取；'
+        'name 重名会返回 CONFLICT。env 是键值对象，ports 是 host/container 端口对象数组。',
+    inputSchema: JsonObject(
+      properties: <String, JsonSchema>{
+        'name': const JsonString(description: '容器名称；省略时生成名称'),
+        'image': const JsonString(description: '本地镜像引用，必填'),
+        'command': const JsonArray(
+          description: '覆盖镜像入口命令的参数数组',
+          items: JsonString(),
+        ),
+        'env': const JsonObject(
+          description: '环境变量键值对象，值会转换为 KEY=VALUE',
+          additionalProperties: JsonString(),
+        ),
+        'ports': const JsonArray(
+          description: '端口映射；proto 缺省为 tcp',
+          items: JsonObject(
+            properties: <String, JsonSchema>{
+              'host': JsonInteger(minimum: 1, maximum: 65535),
+              'container': JsonInteger(minimum: 1, maximum: 65535),
+              'proto': JsonString(enumValues: ['tcp', 'udp']),
+            },
+            required: ['host', 'container'],
+            additionalProperties: false,
+          ),
+        ),
+        'network': const JsonString(description: '目标网络名称'),
+        'start': const JsonBoolean(description: '创建后立即启动', defaultValue: false),
+      },
+      required: ['image'],
+      additionalProperties: false,
+    ),
+    outputSchema: JsonObject(
+      properties: <String, JsonSchema>{
+        'id': const JsonString(),
+        'name': const JsonString(),
+        'status': const JsonString(),
+        'warnings': const JsonArray(items: JsonString()),
+      },
+      required: ['id', 'name', 'status', 'warnings'],
+    ),
+    annotations: _writeAnnotations('Create Container', idempotent: false),
+    callback: (args, extra) => guardToolCall(() async {
+      final environment = args['env'] == null
+          ? const <String>[]
+          : (args['env'] as Map).entries
+                .map((entry) => '${entry.key}=${entry.value}')
+                .toList(growable: false);
+      final ports = (args['ports'] as List? ?? const <Object?>[])
+          .map((raw) {
+            final port = raw as Map;
+            return '${port['host']}:${port['container']}/${port['proto'] ?? 'tcp'}';
+          })
+          .toList(growable: false);
+      final start = args['start'] == true;
+      final id = await service.create(
+        id: args['name'] as String?,
+        image: args['image'] as String,
+        command: (args['command'] as List?)?.cast<String>() ?? const <String>[],
+        env: environment,
+        ports: ports,
+        network: args['network'] as String?,
+        start: start,
+      );
+      return (
+        data: <String, Object?>{
+          'id': id,
+          'name': id,
+          'status': start ? 'running' : 'stopped',
+          'warnings': const <String>[],
+        },
+        summary: start ? '容器 $id 已创建并启动' : '容器 $id 已创建（未启动）',
+      );
+    }),
+  );
+
+  server.registerTool(
+    'container_start',
+    title: 'Start Container',
+    description: '启动容器；已经处于 running 时幂等成功。',
+    inputSchema: JsonObject(
+      properties: <String, JsonSchema>{
+        'id': const JsonString(description: '容器 id'),
+      },
+      required: ['id'],
+      additionalProperties: false,
+    ),
+    outputSchema: JsonObject(
+      properties: <String, JsonSchema>{
+        'id': const JsonString(),
+        'status': const JsonString(),
+      },
+      required: ['id', 'status'],
+    ),
+    annotations: _writeAnnotations('Start Container'),
+    callback: (args, extra) => guardToolCall(() async {
+      final id = args['id'] as String;
+      await service.start(id);
+      return (
+        data: <String, Object?>{'id': id, 'status': 'running'},
+        summary: '容器 $id 已启动',
+      );
+    }),
+  );
+
+  server.registerTool(
+    'container_stop',
+    title: 'Stop Container',
+    description: '优雅停止容器；默认等待 5 秒，超时由 runtime 发送 SIGKILL。',
+    inputSchema: JsonObject(
+      properties: <String, JsonSchema>{
+        'id': const JsonString(description: '容器 id'),
+        'timeoutSeconds': const JsonInteger(
+          description: '优雅停止等待秒数，0 表示立即升级',
+          defaultValue: 5,
+          minimum: 0,
+          maximum: 2147483647,
+        ),
+      },
+      required: ['id'],
+      additionalProperties: false,
+    ),
+    outputSchema: JsonObject(
+      properties: <String, JsonSchema>{
+        'id': const JsonString(),
+        'status': const JsonString(),
+      },
+      required: ['id', 'status'],
+    ),
+    annotations: _writeAnnotations('Stop Container'),
+    callback: (args, extra) => guardToolCall(() async {
+      final id = args['id'] as String;
+      final timeout = args['timeoutSeconds'] as int? ?? 5;
+      await service.stop(id, timeoutSeconds: timeout);
+      return (
+        data: <String, Object?>{'id': id, 'status': 'stopped'},
+        summary: '容器 $id 已停止',
+      );
+    }),
+  );
+
+  server.registerTool(
+    'container_restart',
+    title: 'Restart Container',
+    description: '按 stop 后 start 合成重启，非原子操作；停止超时时由 runtime 发送 SIGKILL。',
+    inputSchema: JsonObject(
+      properties: <String, JsonSchema>{
+        'id': const JsonString(description: '容器 id'),
+        'timeoutSeconds': const JsonInteger(
+          description: '停止阶段的优雅等待秒数',
+          defaultValue: 5,
+          minimum: 0,
+          maximum: 2147483647,
+        ),
+      },
+      required: ['id'],
+      additionalProperties: false,
+    ),
+    outputSchema: JsonObject(
+      properties: <String, JsonSchema>{
+        'id': const JsonString(),
+        'status': const JsonString(),
+      },
+      required: ['id', 'status'],
+    ),
+    annotations: _writeAnnotations('Restart Container'),
+    callback: (args, extra) => guardToolCall(() async {
+      final id = args['id'] as String;
+      await service.restart(
+        id,
+        timeoutSeconds: args['timeoutSeconds'] as int? ?? 5,
+      );
+      return (
+        data: <String, Object?>{'id': id, 'status': 'running'},
+        summary: '容器 $id 已重启',
+      );
+    }),
+  );
+
+  server.registerTool(
+    'container_kill',
+    title: 'Kill Container',
+    description: '向容器主进程发送信号；signal 默认 KILL，也可为 TERM、INT、HUP 等。',
+    inputSchema: JsonObject(
+      properties: <String, JsonSchema>{
+        'id': const JsonString(description: '容器 id'),
+        'signal': const JsonString(
+          description: 'Unix 信号名称',
+          defaultValue: 'KILL',
+        ),
+      },
+      required: ['id'],
+      additionalProperties: false,
+    ),
+    outputSchema: JsonObject(
+      properties: <String, JsonSchema>{
+        'id': const JsonString(),
+        'signal': const JsonString(),
+      },
+      required: ['id', 'signal'],
+    ),
+    annotations: _writeAnnotations('Kill Container', destructive: true),
+    callback: (args, extra) => guardToolCall(() async {
+      final id = args['id'] as String;
+      final signal = args['signal'] as String? ?? 'KILL';
+      await service.kill(id, signal: signal);
+      return (
+        data: <String, Object?>{'id': id, 'signal': signal},
+        summary: '已向容器 $id 发送 $signal 信号',
+      );
+    }),
+  );
+
+  server.registerTool(
+    'container_delete',
+    title: 'Delete Container',
+    description:
+        '删除容器。running 容器必须显式 force=true；stopping 容器即使 force 也会返回 CONFLICT，'
+        '必须等待停止完成。重复删除不存在的容器按幂等成功处理。',
+    inputSchema: JsonObject(
+      properties: <String, JsonSchema>{
+        'id': const JsonString(description: '容器 id'),
+        'force': const JsonBoolean(
+          description: '允许强制删除 running 容器，不绕过 stopping',
+          defaultValue: false,
+        ),
+      },
+      required: ['id'],
+      additionalProperties: false,
+    ),
+    outputSchema: JsonObject(
+      properties: <String, JsonSchema>{
+        'id': const JsonString(),
+        'deleted': const JsonBoolean(),
+      },
+      required: ['id', 'deleted'],
+    ),
+    annotations: _writeAnnotations('Delete Container', destructive: true),
+    callback: (args, extra) => guardToolCall(() async {
+      final id = args['id'] as String;
+      await service.delete(id, force: args['force'] == true);
+      return (
+        data: <String, Object?>{'id': id, 'deleted': true},
+        summary: '容器 $id 已删除',
       );
     }),
   );

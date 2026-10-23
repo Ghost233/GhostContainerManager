@@ -5,6 +5,7 @@ import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
 import 'package:ghost_container_manager/features/networks/networks_page.dart';
 import 'package:ghost_container_manager/features/system/readiness_controller.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
+import 'package:ghost_container_manager/services/errors.dart';
 import 'package:ghost_container_manager/services/network_service.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
 
@@ -57,6 +58,33 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  test('refresh wraps non-GcmException failures', () async {
+    fake.containers = [
+      <String, Object?>{
+        'configuration': <String, Object?>{'id': 7},
+      },
+    ];
+    final controller = NetworksController(
+      service: NetworkService(
+        bridge: fake,
+        containerService: ContainerService(bridge: fake),
+      ),
+    );
+    addTearDown(controller.dispose);
+
+    await controller.refresh();
+
+    expect(controller.loading, isFalse);
+    expect(controller.networks, isEmpty);
+    expect(
+      controller.lastError,
+      isA<GcmException>()
+          .having((e) => e.code, 'code', GcmErrorCode.internal)
+          .having((e) => e.message, 'message', '未预期的错误')
+          .having((e) => e.cause, 'cause', isNotNull),
+    );
+  });
 
   testWidgets('ready：网络表含子网/模式/容器数，内建标记，无写入口', (tester) async {
     await pump(tester);

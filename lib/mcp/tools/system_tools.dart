@@ -58,7 +58,7 @@ String _versionText(RuntimeVersion? v) => v?.toString() ?? '-';
 void registerSystemTools(McpServer server, SystemService systemService) {
   server.registerTool(
     'system_status',
-    title: '运行时状态',
+    title: 'Runtime Status',
     description:
         '返回 Apple container 运行时状态：五级就绪级别（未安装/版本低/主版本不兼容/'
         '服务未起/内核缺失/就绪）、CLI 与 apiserver 版本、版本是否受支持、'
@@ -109,7 +109,7 @@ void registerSystemTools(McpServer server, SystemService systemService) {
 
   server.registerTool(
     'system_start',
-    title: '启动运行时',
+    title: 'Start Runtime',
     description:
         '启动 Apple container 运行时（container system start，内核安装标志始终显式传递），'
         '随后轮询健康检查直到 apiserver 应答，并返回最新就绪级别。',
@@ -162,7 +162,7 @@ void registerSystemTools(McpServer server, SystemService systemService) {
 
   server.registerTool(
     'system_stop',
-    title: '停止运行时',
+    title: 'Stop Runtime',
     description:
         '停止 Apple container 运行时（container system stop），'
         '运行中的容器随守护进程一并停止。',

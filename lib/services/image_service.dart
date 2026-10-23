@@ -174,6 +174,7 @@ GcmException mapImageFailure(
       GcmErrorCode.runtimeUnavailable,
       '容器运行时不可达，无法$operation镜像。',
       hint: '先在「运行时」页启动服务（system.start）。',
+      source: 'xpc',
       cause: error,
     );
   }
@@ -182,6 +183,7 @@ GcmException mapImageFailure(
       GcmErrorCode.versionMismatch,
       '镜像 $operation 时运行时返回了无法识别的数据格式。',
       hint: '请在设置中核对 container 版本（期望 1.6.x）。',
+      source: 'xpc',
       cause: error,
     );
   }
@@ -189,6 +191,7 @@ GcmException mapImageFailure(
     return GcmException(
       GcmErrorCode.permissionDenied,
       '镜像 $operation 权限不足。',
+      source: 'xpc',
       cause: error,
     );
   }
@@ -197,6 +200,7 @@ GcmException mapImageFailure(
       GcmErrorCode.notFound,
       '镜像 ${reference ?? ''} 不存在。',
       hint: operation == 'pull' ? '核对 name:tag 是否拼写正确。' : '列表可能已过期，请刷新。',
+      source: 'xpc',
       cause: error,
     );
   }
@@ -205,12 +209,14 @@ GcmException mapImageFailure(
       GcmErrorCode.conflict,
       '镜像 ${reference ?? ''} 正被容器引用，无法删除。',
       hint: '先删除引用它的容器。',
+      source: 'xpc',
       cause: error,
     );
   }
   return GcmException(
     GcmErrorCode.internal,
     '镜像 $operation 失败：$message',
+    source: 'xpc',
     cause: error,
   );
 }

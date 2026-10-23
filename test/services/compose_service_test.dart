@@ -162,6 +162,29 @@ void main() {
       );
     });
 
+    test(
+      'CLI failure surfaces as INTERNAL with cli source and output hint',
+      () async {
+        bridge.composeRunScript = [
+          const BridgeCommandResult(
+            exitCode: 2,
+            stdout: '',
+            stderr: 'Error: compose failed',
+          ),
+        ];
+
+        await expectLater(
+          service.up(file: '/tmp/compose.yaml'),
+          throwsA(
+            isA<GcmException>()
+                .having((e) => e.code, 'code', GcmErrorCode.internal)
+                .having((e) => e.source, 'source', 'cli')
+                .having((e) => e.hint, 'hint', 'Error: compose failed'),
+          ),
+        );
+      },
+    );
+
     test('output over maxOutputBytes is tail-truncated', () async {
       service = build(maxOutputBytes: 16);
       bridge.composeRunScript = [

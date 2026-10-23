@@ -116,6 +116,7 @@ void main() {
         throwsA(
           isA<GcmException>()
               .having((e) => e.code, 'code', GcmErrorCode.internal)
+              .having((e) => e.source, 'source', 'cli')
               .having((e) => e.hint, 'hint', 'Error: service unavailable'),
         ),
       );

@@ -553,20 +553,28 @@ class _PullDialogState extends State<_PullDialog> {
       _error = null;
       _pullId = pullId;
     });
-    final outcome = await widget.service.pull(
-      reference: reference,
-      platform: platform.isEmpty ? null : platform,
-      pullId: pullId,
-      onProgress: (progress) {
-        if (mounted) setState(() => _progress = progress);
-      },
-    );
-    if (!mounted) return;
-    switch (outcome) {
-      case ImagePullCompleted():
-        Navigator.of(context).pop(true);
-      case ImagePullCancelled():
-        Navigator.of(context).pop(false);
+    try {
+      final outcome = await widget.service.pull(
+        reference: reference,
+        platform: platform.isEmpty ? null : platform,
+        pullId: pullId,
+        onProgress: (progress) {
+          if (mounted) setState(() => _progress = progress);
+        },
+      );
+      if (!mounted) return;
+      switch (outcome) {
+        case ImagePullCompleted():
+          Navigator.of(context).pop(true);
+        case ImagePullCancelled():
+          Navigator.of(context).pop(false);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _pulling = false;
+        _error = e is GcmException ? e.message : '$e';
+      });
     }
   }
 

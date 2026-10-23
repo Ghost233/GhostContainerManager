@@ -8,6 +8,8 @@ library;
 // Controller constructors assign private fields from named parameters.
 // ignore_for_file: prefer_initializing_formals
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -42,6 +44,8 @@ class ComposeController extends ChangeNotifier {
       projects = await _service.listProjects();
     } on GcmException catch (error) {
       lastError = error;
+    } catch (error) {
+      lastError = GcmException(GcmErrorCode.internal, '未预期的错误', cause: error);
     } finally {
       loading = false;
       notifyListeners();
@@ -71,6 +75,8 @@ class ComposeController extends ChangeNotifier {
       projects = await _service.listProjects();
     } on GcmException catch (error) {
       lastError = error;
+    } catch (error) {
+      lastError = GcmException(GcmErrorCode.internal, '未预期的错误', cause: error);
     } finally {
       running = false;
       notifyListeners();
@@ -105,7 +111,7 @@ class _ComposePageState extends State<ComposePage> {
     super.initState();
     _compose = ComposeController(service: widget.service);
     if (widget.controller.readiness?.ready ?? false) {
-      _compose.refresh();
+      unawaited(_compose.refresh());
     }
   }
 
@@ -219,17 +225,21 @@ class _ComposePageState extends State<ComposePage> {
 
   String get _projectOrEmpty => _projectController.text.trim();
 
-  void _runUp() => _compose.up(
-    file: _fileController.text.trim(),
-    projectName: _projectOrEmpty.isEmpty ? null : _projectOrEmpty,
-    dryRun: _dryRun,
+  void _runUp() => unawaited(
+    _compose.up(
+      file: _fileController.text.trim(),
+      projectName: _projectOrEmpty.isEmpty ? null : _projectOrEmpty,
+      dryRun: _dryRun,
+    ),
   );
 
-  void _runDown() => _compose.down(
-    file: _fileController.text.trim().isEmpty
-        ? null
-        : _fileController.text.trim(),
-    projectName: _projectOrEmpty.isEmpty ? null : _projectOrEmpty,
+  void _runDown() => unawaited(
+    _compose.down(
+      file: _fileController.text.trim().isEmpty
+          ? null
+          : _fileController.text.trim(),
+      projectName: _projectOrEmpty.isEmpty ? null : _projectOrEmpty,
+    ),
   );
 }
 

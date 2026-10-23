@@ -358,6 +358,8 @@ class ContainerLogTab extends StatefulWidget {
 
 class _ContainerLogTabState extends State<ContainerLogTab>
     with AutomaticKeepAliveClientMixin {
+  static const int _maxLogLines = 5000;
+
   final List<Widget> _lines = [];
   final ScrollController _scroll = ScrollController();
   StreamSubscription<ContainerLogEvent>? _sub;
@@ -407,6 +409,9 @@ class _ContainerLogTabState extends State<ContainerLogTab>
                   ?.copyWith(color: Theme.of(context).colorScheme.outline),
             ),
           );
+      }
+      if (_lines.length > _maxLogLines) {
+        _lines.removeRange(0, _lines.length - _maxLogLines);
       }
     });
     if (_follow) {

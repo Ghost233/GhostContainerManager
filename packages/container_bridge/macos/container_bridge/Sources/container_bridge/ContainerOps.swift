@@ -1,4 +1,6 @@
 import ContainerAPIClient
+import ContainerResource
+import ContainerizationOCI
 import FlutterMacOS
 import Foundation
 
@@ -48,6 +50,123 @@ enum ContainerOps {
   /// background, see docs/spec/architecture.md §5).
   static func stats(id: String) async throws -> [String: Any] {
     try await toDictionary(ContainerClient().stats(id: id))
+  }
+
+  /// Create from an image that is already present locally. This deliberately
+  /// uses `ClientImage.get`, not `Utility.containerConfigFromFlags` (which
+  /// fetches missing images), so a write never becomes an implicit pull.
+  static func create(
+    id: String,
+    image reference: String,
+    command: [String],
+    env: [String],
+    ports: [String],
+    network: String?
+  ) async throws -> [String: Any] {
+    let systemConfig = try await ClientHealthCheck.loadContainerSystemConfig()
+    let image = try await ClientImage.get(
+      reference: reference,
+      containerSystemConfig: systemConfig
+    )
+    let imageConfig = try await image.config(for: .current).config
+    var processFlags = Flags.Process()
+    processFlags.env = env
+    var configuration = ContainerConfiguration(
+      id: id,
+      image: image.description,
+      process: try Parser.process(
+        arguments: command,
+        processFlags: processFlags,
+        managementFlags: Flags.Management(),
+        config: imageConfig
+      )
+    )
+    configuration.publishedPorts = try Parser.publishPorts(ports)
+
+    let networkClient = NetworkClient()
+    let attachment: NetworkResource
+    if let network {
+      attachment = try await networkClient.get(id: network)
+    } else if let builtin = try await networkClient.builtin {
+      attachment = builtin
+    } else {
+      throw NSError(
+        domain: "container_bridge",
+        code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "default container network not found"]
+      )
+    }
+    configuration.networks = [
+      AttachmentConfiguration(
+        network: attachment.id,
+        options: AttachmentOptions(hostname: id, macAddress: nil, mtu: 1280)
+      )
+    ]
+    configuration.dns = ContainerConfiguration.DNSConfiguration(
+      domain: systemConfig.dns.domain
+    )
+
+    let kernel = try await ClientKernel.getDefaultKernel(for: .current)
+    try await ContainerClient().create(configuration: configuration, kernel: kernel)
+    return ["id": id]
+  }
+
+  /// Start is idempotent for an already-running container. Detached stdio is
+  /// left to the runtime; logs remain available through container.logs.
+  static func start(id: String) async throws -> [String: Any] {
+    let client = ContainerClient()
+    let snapshot = try await client.get(id: id)
+    if snapshot.status != .running {
+      do {
+        let process = try await client.bootstrap(id: id, stdio: [nil, nil, nil])
+        try await process.start()
+      } catch {
+        try? await client.stop(id: id)
+        throw error
+      }
+    }
+    return ["id": id]
+  }
+
+  /// Apple container enforces this graceful stop and then sends SIGKILL.
+  /// A Dart-side timer would race the runtime and is not used.
+  static func stop(id: String, timeoutSeconds: Int32) async throws -> [String: Any] {
+    try await ContainerClient().stop(
+      id: id,
+      opts: ContainerStopOptions(timeoutInSeconds: timeoutSeconds, signal: nil)
+    )
+    return ["id": id]
+  }
+
+  /// Force deletes running containers, but never bypasses the stopping state.
+  static func delete(id: String, force: Bool) async throws -> [String: Any] {
+    let client = ContainerClient()
+    let snapshot = try await client.get(id: id)
+    if snapshot.status == .stopping {
+      throw NSError(
+        domain: "container_bridge",
+        code: 3,
+        userInfo: [
+          NSLocalizedDescriptionKey: "container \(id) is stopping; wait for it to stop"
+        ]
+      )
+    }
+    if snapshot.status == .running && !force {
+      throw NSError(
+        domain: "container_bridge",
+        code: 4,
+        userInfo: [
+          NSLocalizedDescriptionKey: "container \(id) is running; stop it or use force"
+        ]
+      )
+    }
+    try await client.delete(id: id, force: force)
+    return ["id": id]
+  }
+
+  static func kill(id: String, signal: String) async throws -> [String: Any] {
+    try await ContainerClient().kill(id: id, signal: signal)
+    return ["id": id, "signal": signal]
   }
 }
 

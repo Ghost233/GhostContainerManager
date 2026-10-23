@@ -101,6 +101,28 @@ void main() {
     });
   });
 
+  group('mapImageFailure', () {
+    test('marks every bridge failure branch as XPC-sourced', () {
+      final cases = <(String, GcmErrorCode)>[
+        ('connection invalid', GcmErrorCode.runtimeUnavailable),
+        ('failed to decode response', GcmErrorCode.versionMismatch),
+        ('permission denied', GcmErrorCode.permissionDenied),
+        ('image not found', GcmErrorCode.notFound),
+        ('image is in use', GcmErrorCode.conflict),
+        ('unexpected response', GcmErrorCode.internal),
+      ];
+
+      for (final (message, code) in cases) {
+        final error = mapImageFailure(
+          BridgeCallException(message),
+          operation: 'test',
+        );
+        expect(error.code, code, reason: message);
+        expect(error.source, 'xpc', reason: message);
+      }
+    });
+  });
+
   group('listImages', () {
     test('parses descriptions and flags dangling images', () async {
       bridge.images = [

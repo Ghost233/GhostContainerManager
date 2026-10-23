@@ -20,7 +20,7 @@ const _readOnly = ToolAnnotations(
 void registerMountTools(McpServer server, MountService mountService) {
   server.registerTool(
     'mount_list',
-    title: '挂载列表',
+    title: 'List Mounts',
     description:
         '聚合所有容器（含已停止）的挂载配置，按主机源路径归组。'
         '每个挂载给出类型（virtiofs/tmpfs）、主机路径与使用它的容器及容器内目标路径。',
@@ -44,7 +44,7 @@ void registerMountTools(McpServer server, MountService mountService) {
 
   server.registerTool(
     'mount_inspect',
-    title: '挂载详情',
+    title: 'Inspect Mount',
     description:
         '查看单个挂载的详情（按 mount_list 返回的 name，即主机源路径'
         '或 tmpfs:<目标路径>）。',
