@@ -71,6 +71,7 @@ void registerComposeTools(McpServer server, ComposeService composeService) {
       required: ['file'],
       additionalProperties: false,
     ),
+    outputSchema: _composeRunOutput(),
     annotations: const ToolAnnotations(
       readOnlyHint: false,
       destructiveHint: false,
@@ -119,6 +120,7 @@ void registerComposeTools(McpServer server, ComposeService composeService) {
       },
       additionalProperties: false,
     ),
+    outputSchema: _composeRunOutput(),
     annotations: const ToolAnnotations(
       readOnlyHint: false,
       destructiveHint: true,
@@ -140,3 +142,13 @@ void registerComposeTools(McpServer server, ComposeService composeService) {
     }),
   );
 }
+
+JsonObject _composeRunOutput() => const JsonObject(
+  properties: <String, JsonSchema>{
+    'exitCode': JsonInteger(),
+    'output': JsonString(),
+    'truncated': JsonBoolean(),
+  },
+  required: ['exitCode', 'output', 'truncated'],
+  additionalProperties: false,
+);

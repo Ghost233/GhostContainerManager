@@ -55,6 +55,27 @@ void registerMountTools(McpServer server, MountService mountService) {
       required: ['name'],
       additionalProperties: false,
     ),
+    outputSchema: const JsonObject(
+      properties: <String, JsonSchema>{
+        'name': JsonString(),
+        'type': JsonString(),
+        'source': JsonString(),
+        'readOnly': JsonBoolean(),
+        'usedBy': JsonArray(
+          items: JsonObject(
+            properties: <String, JsonSchema>{
+              'containerId': JsonString(),
+              'destination': JsonString(),
+              'readOnly': JsonBoolean(),
+            },
+            required: ['containerId', 'destination', 'readOnly'],
+            additionalProperties: false,
+          ),
+        ),
+      },
+      required: ['name', 'type', 'readOnly', 'usedBy'],
+      additionalProperties: false,
+    ),
     annotations: _readOnly,
     callback: (args, extra) => guardToolCall(() async {
       final name = args['name'];

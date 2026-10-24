@@ -9,6 +9,7 @@ library;
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -49,18 +50,21 @@ class ProjectSummary {
     required this.images,
     required this.containers,
     this.path,
+    this.lastBuildAt,
   });
 
   final String project;
   final String? path;
   final List<String> images;
   final int containers;
+  final DateTime? lastBuildAt;
 
   Map<String, Object?> toJson() => <String, Object?>{
     'project': project,
     if (path != null) 'path': path,
     'images': images,
     'containers': containers,
+    if (lastBuildAt != null) 'lastBuildAt': lastBuildAt!.toIso8601String(),
   };
 }
 
@@ -70,18 +74,21 @@ class ProjectImageStatus {
     required this.inUse,
     this.sizeBytes,
     this.createdAt,
+    this.pushedToRegistry = false,
   });
 
   final String reference;
   final int? sizeBytes;
   final DateTime? createdAt;
   final bool inUse;
+  final bool pushedToRegistry;
 
   Map<String, Object?> toJson() => <String, Object?>{
     'reference': reference,
     if (sizeBytes != null) 'sizeBytes': sizeBytes,
     if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
     'inUse': inUse,
+    'pushed': pushedToRegistry,
   };
 }
 
@@ -356,6 +363,7 @@ class ProjectService {
     ProjectBuildLogStore? buildLogStore,
     DateTime Function()? clock,
   }) : _projectPaths = <String>{...projectPaths},
+       _clock = clock ?? DateTime.now,
        _buildLogStore =
            buildLogStore ??
            FileProjectBuildLogStore(
@@ -368,7 +376,11 @@ class ProjectService {
   final ImageService _imageService;
   final Set<String> _projectPaths;
   final ProjectBuildLogStore _buildLogStore;
+  final DateTime Function() _clock;
+  final Map<String, DateTime> _lastBuildAt = <String, DateTime>{};
   final Set<String> _lockedProjects = <String>{};
+
+  ProjectBuildLogStore get buildLogStore => _buildLogStore;
 
   static String _defaultBuildLogDirectory() {
     final home = Platform.environment['HOME'] ?? '.';
@@ -428,6 +440,7 @@ class ProjectService {
           containers: containers
               .where((c) => c.labels[projectLabel] == name)
               .length,
+          lastBuildAt: _lastBuildAt[name],
         ),
       );
     }
@@ -453,15 +466,23 @@ class ProjectService {
         hint: '可通过 project_list 查看项目，或用 path 初始化目录。',
       );
     }
+    final pushedRepositories = images
+        .map((image) => splitImageReference(image.info.reference).name)
+        .where((name) => name.startsWith('$localRegistryPrefix/'))
+        .toSet();
     final statuses = projectImages
-        .map(
-          (record) => ProjectImageStatus(
+        .map((record) {
+          final repository = splitImageReference(record.info.reference).name;
+          return ProjectImageStatus(
             reference: record.info.reference,
             sizeBytes: record.info.sizeBytes,
             createdAt: record.info.createdAt,
             inUse: containers.any((c) => c.image == record.info.reference),
-          ),
-        )
+            pushedToRegistry: pushedRepositories.contains(
+              '$localRegistryPrefix/$repository',
+            ),
+          );
+        })
         .toList(growable: false);
     return ProjectDetails(
       project: resolved.project,
@@ -543,6 +564,7 @@ class ProjectService {
             reason: 'exit code ${built.exitCode}',
             lines: outputLines,
           );
+          _lastBuildAt[resolved.project] = _clock();
           return ProjectBuildResult(
             project: resolved.project,
             image: image,
@@ -580,6 +602,7 @@ class ProjectService {
             );
           }
         }
+        _lastBuildAt[resolved.project] = _clock();
         return ProjectBuildResult(
           project: resolved.project,
           image: image,
@@ -659,12 +682,17 @@ class ProjectService {
       final target = '$localRegistryPrefix/$source';
       final inspection = await _imageService.inspect(source);
       await _runCli(<String>['image', 'tag', source, target]);
-      final pushed = await _collectProcess(
-        _cli.start(<String>['image', 'push', '--scheme', 'http', target]),
-        onProgress: onProgress,
-        cancellation: cancellation,
-      );
-      _ensureProcessSucceeded(pushed, '推送项目镜像');
+      try {
+        final pushed = await _collectProcess(
+          _cli.start(<String>['image', 'push', '--scheme', 'http', target]),
+          onProgress: onProgress,
+          cancellation: cancellation,
+        );
+        _ensureProcessSucceeded(pushed, '推送项目镜像');
+      } on Object {
+        unawaited(_cleanupFailedPublishTag(target));
+        rethrow;
+      }
       if (deleteLocal) {
         // Both names are local references. Removing only the project tag would
         // retain the same content through the registry tag and release nothing.
@@ -682,6 +710,19 @@ class ProjectService {
         ],
       );
     });
+  }
+
+  Future<void> _cleanupFailedPublishTag(String target) async {
+    try {
+      await _runCli(<String>['image', 'delete', target]);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to clean project publish tag $target',
+        name: 'ProjectService',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   Future<ProjectRestoreResult> restoreProject({
@@ -719,6 +760,7 @@ class ProjectService {
     String? project,
     String? path,
     bool dryRun = false,
+    bool force = true,
   }) async {
     final resolved = await _resolveProject(project: project, path: path);
     return _withProjectLock(resolved.project, () async {
@@ -743,13 +785,17 @@ class ProjectService {
 
       for (final container in projectContainers) {
         if (dryRun) {
+          if (!force && container.state != ContainerState.stopped) {
+            recordContainerFailure(container.id, 'not stopped (force=false)');
+            continue;
+          }
           if (container.state != ContainerState.stopped) {
             stopped.add(container.id);
           }
           deleted.add(container.id);
           continue;
         }
-        if (container.state != ContainerState.stopped) {
+        if (force && container.state != ContainerState.stopped) {
           try {
             await _containerService.stop(container.id);
             stopped.add(container.id);
@@ -759,7 +805,7 @@ class ProjectService {
           }
         }
         try {
-          await _containerService.delete(container.id, force: true);
+          await _containerService.delete(container.id, force: force);
           deleted.add(container.id);
         } on Object catch (error) {
           recordContainerFailure(container.id, error);
@@ -844,6 +890,15 @@ class ProjectService {
     });
   }
 
+  /// Reads the global disk snapshot without project locks or image inventory.
+  Future<int?> diskUsageBytes() async {
+    try {
+      return await _diskUsageBytes();
+    } on Object {
+      return null;
+    }
+  }
+
   Future<int> _diskUsageBytes() async {
     final result = await _runCli(<String>['system', 'df', '--format', 'json']);
     try {
@@ -874,7 +929,7 @@ class ProjectService {
       return found ? total : null;
     }
     if (node is Map) {
-      for (final key in const <String>['sizeBytes', 'size']) {
+      for (final key in const <String>['sizeInBytes', 'sizeBytes', 'size']) {
         final raw = node[key];
         final value = raw is num ? raw : num.tryParse('$raw');
         if (value != null && value >= 0) return value.toInt();
@@ -1220,7 +1275,7 @@ class ProjectService {
     final result = <_ProjectImageRecord>[];
     for (final image in images) {
       var labels = const <String, String>{};
-      if (!image.isDangling) {
+      if (!image.isDangling && _canInspectImageReference(image.reference)) {
         // Inspecting an untagged image by name would resolve the wrong tag.
         labels = (await _imageService.inspect(image.reference)).labels;
       }
@@ -1234,6 +1289,19 @@ class ProjectService {
       result.add(_ProjectImageRecord(info: image, project: project));
     }
     return result;
+  }
+
+  bool _canInspectImageReference(String reference) {
+    if (reference.contains('@')) return false;
+    try {
+      validateImageReference(reference);
+      return true;
+    } on GcmException catch (error) {
+      // Runtime-only digest/invalid references cannot use the user-input
+      // inspect seam. Treat them as unlabelled instead of failing inventory.
+      if (error.code == GcmErrorCode.invalidArgument) return false;
+      rethrow;
+    }
   }
 
   String? _fallbackProject(String reference, Set<String> knownProjects) {

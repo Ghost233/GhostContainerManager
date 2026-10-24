@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghost_container_manager/mcp/tools/project_tools.dart';
 import 'package:ghost_container_manager/services/errors.dart';
+import 'package:ghost_container_manager/services/project_build_log_store.dart';
 import 'package:ghost_container_manager/services/project_service.dart';
 import 'package:mcp_dart/mcp_dart.dart';
 
@@ -147,12 +148,21 @@ void main() {
     await initialize();
     final listed = await callTool('project_list', <String, dynamic>{});
     expect((listed['structuredContent'] as Map)['projects'], hasLength(1));
+    expect(
+      ((listed['structuredContent'] as Map)['projects'] as List)
+          .single['images'],
+      <String>['myapp-web:latest'],
+    );
     final got = await callTool('project_get', <String, dynamic>{
       'project': 'myapp',
     });
     expect((got['structuredContent'] as Map)['project'], 'myapp');
     expect(
       ((got['structuredContent'] as Map)['images'] as List).single['inUse'],
+      isTrue,
+    );
+    expect(
+      ((got['structuredContent'] as Map)['images'] as List).single['pushed'],
       isTrue,
     );
     final initialized = await callTool('project_init', <String, dynamic>{
@@ -234,20 +244,25 @@ void main() {
     },
   );
 
-  test('reclaim forwards dryRun and returns the shared report shape', () async {
-    await initialize();
-    final result = await callTool('project_reclaim', <String, dynamic>{
-      'project': 'myapp',
-      'dryRun': true,
-    });
-    expect(result['isError'], isNot(true));
-    expect(projects.lastDryRun, isTrue);
-    final data = result['structuredContent'] as Map<String, dynamic>;
-    expect(data['project'], 'myapp');
-    expect(data['containers'], isA<Map<String, dynamic>>());
-    expect(data['images'], isA<Map<String, dynamic>>());
-    expect(data['disk']['reclaimedBytes'], 0);
-  });
+  test(
+    'reclaim forwards dryRun and force and returns the shared report shape',
+    () async {
+      await initialize();
+      final result = await callTool('project_reclaim', <String, dynamic>{
+        'project': 'myapp',
+        'dryRun': true,
+        'force': false,
+      });
+      expect(result['isError'], isNot(true));
+      expect(projects.lastDryRun, isTrue);
+      expect(projects.lastForce, isFalse);
+      final data = result['structuredContent'] as Map<String, dynamic>;
+      expect(data['project'], 'myapp');
+      expect(data['containers'], isA<Map<String, dynamic>>());
+      expect(data['images'], isA<Map<String, dynamic>>());
+      expect(data['disk']['reclaimedBytes'], 0);
+    },
+  );
 
   test(
     'publish and restore expose registry references and deleteLocal',
@@ -304,6 +319,9 @@ void main() {
       isTrue,
     );
     expect(byName['project_reclaim']!['annotations']['idempotentHint'], isTrue);
+    final reclaimProperties =
+        byName['project_reclaim']!['inputSchema']['properties'] as Map;
+    expect(reclaimProperties['force']['default'], isTrue);
     expect(byName['project_build']!['annotations']['idempotentHint'], isFalse);
     expect(byName['project_test']!['annotations']['idempotentHint'], isFalse);
     final build = byName['project_build']!;
@@ -355,11 +373,16 @@ class _FakeProjectService implements ProjectService {
   bool? lastNoCache;
   bool? lastDeleteLocal;
   bool? lastDryRun;
+  bool? lastForce;
   Map<String, String>? lastBuildArgs;
   List<String>? lastCommand;
   bool waitForBuildCancellation = false;
   final buildCancelled = Completer<void>();
   final buildStarted = Completer<void>();
+
+  @override
+  ProjectBuildLogStore get buildLogStore =>
+      throw UnsupportedError('MCP tests do not read build logs');
 
   ProjectBuildResult buildResult = const ProjectBuildResult(
     project: 'myapp',
@@ -402,7 +425,11 @@ class _FakeProjectService implements ProjectService {
       project: 'myapp',
       path: '/tmp/myapp',
       images: <ProjectImageStatus>[
-        ProjectImageStatus(reference: 'myapp-web:latest', inUse: true),
+        ProjectImageStatus(
+          reference: 'myapp-web:latest',
+          inUse: true,
+          pushedToRegistry: true,
+        ),
       ],
       containers: [],
     );
@@ -502,12 +529,20 @@ class _FakeProjectService implements ProjectService {
   }
 
   @override
+  Future<int?> diskUsageBytes() async {
+    _throwError();
+    return 0;
+  }
+
+  @override
   Future<ProjectReclaimReport> reclaimProject({
     String? project,
     String? path,
     bool dryRun = false,
+    bool force = true,
   }) async {
     lastDryRun = dryRun;
+    lastForce = force;
     _throwError();
     return const ProjectReclaimReport(
       project: 'myapp',

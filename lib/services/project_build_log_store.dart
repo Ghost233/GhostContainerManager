@@ -9,6 +9,11 @@ abstract class ProjectBuildLogStore {
     required String reason,
     required String logTail,
   });
+
+  Future<String?> readLatest({
+    required String project,
+    required String imageName,
+  });
 }
 
 class FileProjectBuildLogStore implements ProjectBuildLogStore {
@@ -34,8 +39,9 @@ class FileProjectBuildLogStore implements ProjectBuildLogStore {
     await directory.create(recursive: true);
     final now = _clock().toUtc();
     final sequence = (_sequence++).toString().padLeft(6, '0');
+    final fileImageName = imageName.replaceAll(':', '-');
     final file = File(
-      '${directory.path}/${now.microsecondsSinceEpoch}-$sequence-$project-$imageName.log',
+      '${directory.path}/${now.microsecondsSinceEpoch}-$sequence-$project-$fileImageName.log',
     );
     final content = StringBuffer()
       ..writeln('project: $project')
@@ -57,5 +63,31 @@ class FileProjectBuildLogStore implements ProjectBuildLogStore {
       await logs.removeAt(0).delete();
     }
     return file.path;
+  }
+
+  @override
+  Future<String?> readLatest({
+    required String project,
+    required String imageName,
+  }) async {
+    final fileImageName = imageName.replaceAll(':', '-');
+    final suffix = '-$project-$fileImageName.log';
+    final logs = <File>[];
+    try {
+      await for (final entity in Directory(
+        directory,
+      ).list(followLinks: false)) {
+        if (entity is File && entity.path.endsWith(suffix)) logs.add(entity);
+      }
+    } on FileSystemException {
+      return null;
+    }
+    if (logs.isEmpty) return null;
+    logs.sort((a, b) => a.path.compareTo(b.path));
+    try {
+      return await logs.last.readAsString();
+    } on FileSystemException {
+      return null;
+    }
   }
 }

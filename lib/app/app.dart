@@ -149,6 +149,7 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
     // readiness controller. McpSettingsController keeps its own ownership;
     // the public switch stops the server without reaching into settings.
     unawaited(_mcp.setEnabled(false));
+    _mcp.dispose();
     _menuBar.dispose();
     // 先断开 MacLauncher（取消在飞日志、关闭 SDK），再停容器服务。
     unawaited(_launcher?.dispose());

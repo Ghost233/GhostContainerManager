@@ -44,24 +44,55 @@ void registerNetworkTools(McpServer server, NetworkService networkService) {
     title: 'Get Network',
     description:
         '查看单个网络的详情与接入的容器（id、IP、hostname）。'
-        '参数 name 为 network_list 返回的网络名。',
+        '参数 id 为 network_list 返回的网络 id。',
     inputSchema: const JsonObject(
       properties: <String, JsonSchema>{
-        'name': JsonString(description: '网络名（如 default）'),
+        'id': JsonString(description: '网络 id（如 default）'),
       },
-      required: ['name'],
+      required: ['id'],
+      additionalProperties: false,
+    ),
+    outputSchema: const JsonObject(
+      properties: <String, JsonSchema>{
+        'id': JsonString(),
+        'plugin': JsonString(),
+        'mode': JsonString(),
+        'subnet': JsonString(),
+        'gateway': JsonString(),
+        'builtin': JsonBoolean(),
+        'containerCount': JsonInteger(),
+        'containers': JsonArray(
+          items: JsonObject(
+            properties: <String, JsonSchema>{
+              'id': JsonString(),
+              'hostname': JsonString(),
+              'ip': JsonString(),
+            },
+            required: ['id', 'hostname', 'ip'],
+            additionalProperties: false,
+          ),
+        ),
+      },
+      required: [
+        'id',
+        'plugin',
+        'mode',
+        'builtin',
+        'containerCount',
+        'containers',
+      ],
       additionalProperties: false,
     ),
     annotations: _readOnly,
     callback: (args, extra) => guardToolCall(() async {
-      final name = args['name'];
-      if (name is! String || name.isEmpty) {
+      final id = args['id'];
+      if (id is! String || id.isEmpty) {
         throw const GcmException(
           GcmErrorCode.invalidArgument,
-          'network_get requires a non-empty "name" argument.',
+          'network_get requires a non-empty "id" argument.',
         );
       }
-      final detail = await networkService.getNetwork(name);
+      final detail = await networkService.getNetwork(id);
       return (
         data: detail.toWire(),
         summary: '网络 ${detail.info.id}：${detail.containers.length} 个容器接入。',

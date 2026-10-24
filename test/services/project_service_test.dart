@@ -99,6 +99,14 @@ class _FakeProjectBuildLogStore implements ProjectBuildLogStore {
     if (error != null) throw error;
     return 'memory-log';
   }
+
+  @override
+  Future<String?> readLatest({
+    required String project,
+    required String imageName,
+  }) async {
+    return null;
+  }
 }
 
 void addImage(
@@ -253,6 +261,49 @@ void main() {
     },
   );
 
+  test('list reports the latest in-memory build completion time', () async {
+    var now = DateTime.utc(2026, 1, 2, 3, 4, 5);
+    final clockService = ProjectService(
+      cli: cli,
+      containerService: containers,
+      imageService: ImageService(bridge: bridge, containerService: containers),
+      projectPaths: [temp.path],
+      buildLogStore: _FakeProjectBuildLogStore(),
+      clock: () => now,
+    );
+    final projectDir = Directory('${temp.path}/myapp')..createSync();
+    await File('${projectDir.path}/ghostcontainer.toml')
+        .writeAsString('prefix = "myapp"\n');
+    final dockerfile = await writeDockerfile(projectDir);
+    var exitCode = 0;
+    cli.onStart = (_) {
+      final process = FakeProjectCliProcess();
+      unawaited(process.finish(exitCode));
+      return process;
+    };
+
+    await clockService.buildProject(
+      project: 'myapp',
+      name: 'go1',
+      dockerfile: dockerfile,
+      context: projectDir.path,
+    );
+    expect((await clockService.listProjects()).single.lastBuildAt, now);
+
+    now = now.add(const Duration(minutes: 1));
+    exitCode = 1;
+    final failed = await clockService.buildProject(
+      project: 'myapp',
+      name: 'go1',
+      dockerfile: dockerfile,
+      context: projectDir.path,
+    );
+    expect(failed.exitCode, 1);
+    final summary = (await clockService.listProjects()).single;
+    expect(summary.lastBuildAt, now);
+    expect(summary.toJson()['lastBuildAt'], now.toIso8601String());
+  });
+
   test('get resolves path through toml and reports image use', () async {
     final projectDir = Directory('${temp.path}/myapp')..createSync();
     await File('${projectDir.path}/ghostcontainer.toml')
@@ -282,6 +333,51 @@ void main() {
       (image) => image.reference == 'myapp-db:latest',
     );
     expect(db.inUse, isFalse);
+  });
+
+  test(
+    'get marks only images with a matching registry tag as pushed',
+    () async {
+      addImage(bridge, 'myapp-go1:latest', project: 'myapp');
+      addImage(bridge, 'myapp-go10:latest', project: 'myapp');
+      addImage(bridge, 'myapp-db:latest', project: 'myapp');
+      addImage(bridge, '127.0.0.1:5056/myapp-go1:v1');
+
+      final detail = await service.getProject(project: 'myapp');
+      final byReference = <String, ProjectImageStatus>{
+        for (final image in detail.images) image.reference: image,
+      };
+
+      final pushed = byReference['myapp-go1:latest']!;
+      expect(pushed.pushedToRegistry, isTrue);
+      expect(pushed.toJson()['pushed'], isTrue);
+      expect(byReference['myapp-go10:latest']!.pushedToRegistry, isFalse);
+      expect(byReference['myapp-db:latest']!.pushedToRegistry, isFalse);
+    },
+  );
+
+  test('project inventory skips digest-addressed external images', () async {
+    addImage(bridge, 'myapp-go1:latest', project: 'myapp');
+    final digest = 'sha256:${List<String>.filled(64, 'a').join()}';
+    bridge.images.addAll(<Map<String, Object?>>[
+      <String, Object?>{
+        'reference': '127.0.0.1:15000/foo@$digest',
+        'digest': digest,
+        'sizeBytes': 100,
+      },
+      <String, Object?>{
+        'reference': digest,
+        'digest': digest,
+        'sizeBytes': 100,
+      },
+    ]);
+
+    final projects = await service.listProjects();
+    expect(projects.single.project, 'myapp');
+    expect(projects.single.images, ['myapp-go1:latest']);
+
+    final detail = await service.getProject(project: 'myapp');
+    expect(detail.images.map((image) => image.reference), ['myapp-go1:latest']);
   });
 
   test('get rejects missing projects and invalid toml', () async {
@@ -816,6 +912,84 @@ void main() {
     },
   );
 
+  test('file build log store sanitizes image name colons', () async {
+    final store = FileProjectBuildLogStore(
+      directory: '${temp.path}/sanitized-logs',
+      clock: () => DateTime.utc(2026, 1, 2, 3, 4, 5),
+    );
+
+    final path = await store.write(
+      project: 'myapp',
+      imageName: 'go1:latest',
+      dockerfile: '/tmp/Dockerfile',
+      stage: 'build',
+      reason: 'exit code 1',
+      logTail: 'failure',
+    );
+
+    expect(path, endsWith('-myapp-go1-latest.log'));
+    expect(path, isNot(contains('go1:latest.log')));
+    final content = await File(path).readAsString();
+    expect(content, contains('name: go1:latest'));
+    expect(content, contains('failure'));
+  });
+
+  test('service exposes latest matching build failure log history', () async {
+    var now = DateTime.utc(2026, 1, 2, 3, 4, 5);
+    final store = FileProjectBuildLogStore(
+      directory: '${temp.path}/history-logs',
+      clock: () => now,
+    );
+    final historyService = ProjectService(
+      cli: cli,
+      containerService: containers,
+      imageService: ImageService(bridge: bridge, containerService: containers),
+      buildLogStore: store,
+    );
+
+    expect(
+      await historyService.buildLogStore.readLatest(
+        project: 'myapp',
+        imageName: 'go1:latest',
+      ),
+      isNull,
+    );
+    await store.write(
+      project: 'myapp',
+      imageName: 'go1:latest',
+      dockerfile: '/tmp/Dockerfile',
+      stage: 'build',
+      reason: 'older',
+      logTail: 'old output',
+    );
+    now = now.add(const Duration(seconds: 1));
+    await store.write(
+      project: 'myapp',
+      imageName: 'go2:latest',
+      dockerfile: '/tmp/Dockerfile',
+      stage: 'build',
+      reason: 'other image',
+      logTail: 'other output',
+    );
+    now = now.add(const Duration(seconds: 1));
+    await store.write(
+      project: 'myapp',
+      imageName: 'go1:latest',
+      dockerfile: '/tmp/Dockerfile',
+      stage: 'build',
+      reason: 'newest',
+      logTail: 'new output',
+    );
+
+    final latest = await historyService.buildLogStore.readLatest(
+      project: 'myapp',
+      imageName: 'go1:latest',
+    );
+    expect(latest, contains('reason: newest'));
+    expect(latest, contains('new output'));
+    expect(latest, isNot(contains('old output')));
+  });
+
   test('build failure logs retain only the newest twenty', () async {
     final dockerfile = await writeDockerfile(temp);
     cli.onStart = (_) {
@@ -934,29 +1108,100 @@ void main() {
   });
 
   test(
-    'publish propagates CLI failure without deleting local images',
+    'publish push failure cleans only the target tag and preserves the error',
     () async {
       addImage(bridge, 'myapp-go1:latest', project: 'myapp');
+      const target = '127.0.0.1:5056/myapp-go1:latest';
+      final cleanup = Completer<BridgeCommandResult>();
+      cli.onRun = (args) async {
+        if (args case ['image', 'delete', target]) {
+          return cleanup.future;
+        }
+        return const BridgeCommandResult(exitCode: 0, stdout: '', stderr: '');
+      };
       final push = FakeProjectCliProcess();
       cli.onStart = (_) => push;
       push.stderr.add('denied');
       unawaited(push.finish(1));
 
       await expectLater(
-        service.publishProject(
-          project: 'myapp',
-          name: 'go1',
-          deleteLocal: true,
-        ),
+        service
+            .publishProject(project: 'myapp', name: 'go1', deleteLocal: true)
+            .timeout(const Duration(seconds: 1)),
         throwsA(
           isA<GcmException>()
               .having((e) => e.code, 'code', GcmErrorCode.internal)
-              .having((e) => e.source, 'source', 'cli'),
+              .having((e) => e.source, 'source', 'cli')
+              .having((e) => e.message, 'message', contains('denied')),
         ),
       );
-      expect(cli.runs.where((args) => args.contains('delete')), isEmpty);
+      expect(cli.runs, <List<String>>[
+        ['image', 'tag', 'myapp-go1:latest', target],
+        ['image', 'delete', target],
+      ]);
+
+      cleanup.completeError(StateError('cleanup failed'));
+      await Future<void>.delayed(Duration.zero);
     },
   );
+
+  test(
+    'disk usage snapshot only reads df and returns null when unavailable',
+    () async {
+      final results = <BridgeCommandResult>[
+        diskUsageResult(2048),
+        const BridgeCommandResult(exitCode: 1, stdout: '', stderr: 'df failed'),
+        const BridgeCommandResult(exitCode: 0, stdout: '[]', stderr: ''),
+      ];
+      cli.onRun = (args) async {
+        expect(args, <String>['system', 'df', '--format', 'json']);
+        return results.removeAt(0);
+      };
+
+      expect(await service.diskUsageBytes(), 2048);
+      expect(await service.diskUsageBytes(), isNull);
+      expect(await service.diskUsageBytes(), isNull);
+      expect(results, isEmpty);
+      expect(cli.runs, hasLength(3));
+      expect(bridge.calls, isEmpty);
+    },
+  );
+
+  test('reclaim reads container 1.5 sizeInBytes disk snapshots', () async {
+    cli.onRun = (args) async {
+      expect(args, <String>['system', 'df', '--format', 'json']);
+      return BridgeCommandResult(
+        exitCode: 0,
+        stdout: jsonEncode(<String, Object?>{
+          'containers': <String, Object?>{
+            'active': 19,
+            'reclaimable': 2,
+            'sizeInBytes': 1000,
+            'total': 21,
+          },
+          'images': <String, Object?>{
+            'active': 4,
+            'reclaimable': 1,
+            'sizeInBytes': 2000,
+            'total': 5,
+          },
+          'volumes': <String, Object?>{
+            'active': 3,
+            'reclaimable': 1,
+            'sizeInBytes': 3000,
+            'total': 4,
+          },
+        }),
+        stderr: '',
+      );
+    };
+
+    final report = await service.reclaimProject(project: 'myapp', dryRun: true);
+
+    expect(report.disk.beforeBytes, 6000);
+    expect(report.disk.afterBytes, 6000);
+    expect(report.disk.reclaimedBytes, 0);
+  });
 
   test(
     'reclaim deletes project containers then only unreferenced images',
@@ -1062,4 +1307,52 @@ void main() {
       'errors',
     });
   });
+
+  test(
+    'reclaim without force preserves running containers consistently',
+    () async {
+      bridge.containers = <Map<String, Object?>>[
+        snapshotPayload(
+          id: 'web',
+          image: 'myapp-go1:latest',
+          labels: const {'com.ghost233.project': 'myapp'},
+        ),
+      ];
+      addImage(bridge, 'myapp-go1:latest', project: 'myapp');
+      addImage(bridge, 'myapp-unused:latest', project: 'myapp');
+      cli.onRun = (args) async {
+        if (args.join(' ') == 'system df --format json') {
+          return diskUsageResult(800);
+        }
+        if (args case ['image', 'delete', 'myapp-unused:latest']) {
+          return const BridgeCommandResult(exitCode: 0, stdout: '', stderr: '');
+        }
+        throw StateError('Unexpected CLI: $args');
+      };
+
+      final preview = await service.reclaimProject(
+        project: 'myapp',
+        dryRun: true,
+        force: false,
+      );
+      expect(preview.failedContainers, <String>['web']);
+      expect(preview.stoppedContainers, isEmpty);
+      expect(preview.deletedContainers, isEmpty);
+      expect(preview.retainedImages.single.reference, 'myapp-go1:latest');
+      expect(preview.deletedImages, <String>['myapp-unused:latest']);
+      expect(preview.errors.join('\n'), contains('force=false'));
+
+      final report = await service.reclaimProject(
+        project: 'myapp',
+        force: false,
+      );
+      expect(report.failedContainers, <String>['web']);
+      expect(report.stoppedContainers, isEmpty);
+      expect(report.deletedContainers, isEmpty);
+      expect(report.retainedImages.single.reason, 'inUse.project');
+      expect(report.deletedImages, <String>['myapp-unused:latest']);
+      expect(report.errors.join('\n'), contains('is running'));
+      expect(bridge.stopCalls, 0);
+    },
+  );
 }

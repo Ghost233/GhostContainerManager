@@ -94,7 +94,7 @@ running/stopped(autoRemove) --退出--> 消失
 5. **超时与取消**：
    - stop：UI 侧等待上限 = timeoutInSeconds + 10s 余量（默认即 15s）；超时后操作不取消（服务端仍在执行），转为「后台继续」并继续轮询状态。理由：stop 在上游不可中途取消，假取消只会造成状态不一致。
    - create（拉镜像阶段）：可取消（中止 fetch，容器未落盘无副作用）；落盘阶段不可取消。
-   - exec：MCP 侧默认 30s 超时放弃等待（见矩阵）。
+   - exec：MCP 侧默认 60s 超时放弃等待（见矩阵）。
 6. **stopping 窗口**：上游在 stopping 态拒绝一切 delete；Service layer 在本地「停止中」合成态期间同样前置拒绝 delete（force 也不行），错误信息指明「等待停止完成」。
 
 ### 候选方案对比

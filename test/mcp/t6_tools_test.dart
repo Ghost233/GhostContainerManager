@@ -210,7 +210,7 @@ void main() {
     expect(defaultNetwork['containerCount'], 1);
 
     final detail = await callTool('network_get', <String, dynamic>{
-      'name': 'default',
+      'id': 'default',
     });
     final containers =
         (detail['structuredContent'] as Map<String, dynamic>)['containers']

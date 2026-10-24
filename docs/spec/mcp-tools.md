@@ -31,7 +31,7 @@
 
 注解五字段：RO=readOnlyHint，D=destructiveHint，I=idempotentHint，OW=openWorldHint（所有工具都操作本机运行时，均标 `openWorldHint: true`；下表从略）。title 一律填英文短语，从略。
 
-### 3.1 Containers（9）
+### 3.1 Containers（10）
 
 | 工具 | 描述要点 | 关键参数（schema 要点） | RO | D | I | 输出结构 |
 |---|---|---|---|---|---|---|
@@ -92,7 +92,7 @@
 | `project_init` | 在项目目录生成 ghostcontainer.toml（仅 prefix 单字段） | `path: string`（必）；`prefix?`（默认目录名，须匹配 `[a-z0-9][a-z0-9.-]{0,126}`） | | | ✗（toml 已存在 → CONFLICT） | `{path, prefix}` |
 | `project_build` | 单步构建链：构建 `{prefix}-{name}:latest`（同名默认替换）→ 可选测试（长操作，progress 见 §6；失败落盘见 project-workflow.md §2.3） | `project` 与 `path` 二选一；`name: string`（镜像自定义名，必）；`dockerfile?`、`context?`、`buildArgs?: object`、`skipTests?: bool`（默认 true；`skipTests=false` 需显式 `testCommand`，MCP 建议改用 `project_test`）、`noCache?: bool` | | | ✗（同名替换旧 tag，语义非幂等） | `{project, image, testsPassed?, exitCode?, durationMs}` |
 | `project_test` | 对指定镜像跑测试容器（--rm 一次性，退出码透传；exitCode≠0 不算工具错误） | `project` 与 `path` 二选一；`name`（镜像自定义名，必）；`command: string[]`（必） | | | ✗ | `{project, image, exitCode, stdout, stderr, truncated, durationMs}` |
-| `project_reclaim` | 项目回收：停删成员容器 + 释放未被任何容器引用的项目镜像。**默认 force，返回销毁清单**；外部引用跳过并列名 | `project` 与 `path` 二选一；`dryRun?: bool`（默认 false，只算不删） | | ✓ | ✓ | 回收报告（销毁清单 schema 见 project-workflow.md §4） |
+| `project_reclaim` | 项目回收：停删成员容器 + 释放未被任何容器引用的项目镜像。**默认 force，返回销毁清单**；外部引用跳过并列名 | `project` 与 `path` 二选一；`dryRun?: bool`（默认 false，只算不删）；`force?: bool`（默认 true；false 时运行中容器删除失败进 failed 列表并保留镜像，dryRun 预测同口径） | | ✓ | ✓ | 回收报告（销毁清单 schema 见 project-workflow.md §4） |
 | `project_publish` | 推送项目镜像到本地 registry（tag 成 loopback 引用后 push，长操作） | `project` 与 `path` 二选一；`name`（镜像自定义名，必）；`deleteLocal?: bool`（默认 false，推送后删本地镜像释放磁盘） | | | ✓ | `{project, pushed: [{source, target, sizeBytes}]}` |
 | `project_restore` | 从本地 registry 拉回镜像并 tag 回项目规约名（按前缀归入项目） | `project` 与 `path` 二选一；`name`（镜像自定义名，必） | | | ✓ | `{project, restored: [{reference}]}` |
 

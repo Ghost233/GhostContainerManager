@@ -38,6 +38,18 @@ class _FakeBuildLogStore implements ProjectBuildLogStore {
     file.writeAsStringSync(logTail, flush: true);
     return file.path;
   }
+
+  @override
+  Future<String?> readLatest({
+    required String project,
+    required String imageName,
+  }) async {
+    final dir = _dir;
+    if (dir == null) return null;
+    final file = File('${dir.path}/$project-$imageName.log');
+    if (!file.existsSync()) return null;
+    return file.readAsStringSync();
+  }
 }
 
 Future<

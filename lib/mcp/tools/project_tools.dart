@@ -215,6 +215,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
     inputSchema: _selectorInput(
       properties: <String, JsonSchema>{
         'dryRun': const JsonBoolean(defaultValue: false),
+        'force': const JsonBoolean(defaultValue: true),
       },
     ),
     outputSchema: _projectReclaimOutput(),
@@ -228,6 +229,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
         project: args['project'] as String?,
         path: args['path'] as String?,
         dryRun: args['dryRun'] as bool? ?? false,
+        force: args['force'] as bool? ?? true,
       );
       return (
         data: result.toJson(),

@@ -131,7 +131,7 @@ class McpSettingsController extends ChangeNotifier {
       boundPort = null;
       lastError = 'MCP server 启动失败：$e';
     }
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   Future<void> _stop() async {
@@ -140,7 +140,7 @@ class McpSettingsController extends ChangeNotifier {
     running = false;
     boundPort = null;
     await server?.stop();
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   @override
