@@ -98,14 +98,24 @@ class ContainerService {
       StreamController<List<ContainerSnapshotInfo>>.broadcast();
   final StreamController<Map<String, ContainerActivity>> _activityChanges =
       StreamController<Map<String, ContainerActivity>>.broadcast();
+  final StreamController<List<ContainerStatsSample>> _statsHistoryChanges =
+      StreamController<List<ContainerStatsSample>>.broadcast();
   final Map<String, ContainerActivity> _activities =
       <String, ContainerActivity>{};
   final Map<String, List<_PendingContainerOperation<dynamic>>> _operations =
       <String, List<_PendingContainerOperation<dynamic>>>{};
+  final Map<String, _StatsHistoryRing> _statsHistories =
+      <String, _StatsHistoryRing>{};
 
   Timer? _pollTimer;
   bool _refreshInFlight = false;
+  bool _statsSampleInFlight = false;
   bool _disposed = false;
+  bool _foreground = true;
+  String? _statsTargetId;
+  int _statsGeneration = 0;
+  int? _lastCpuUsageUsec;
+  DateTime? _lastStatsTimestamp;
   List<ContainerSnapshotInfo> _lastSnapshot = const [];
   final Map<String, ContainerSnapshotInfo> _pendingCreates =
       <String, ContainerSnapshotInfo>{};
@@ -134,11 +144,48 @@ class ContainerService {
 
   ContainerActivity? activityFor(String id) => _activities[id];
 
+  /// Selects the single container sampled by foreground polling. Changing the
+  /// target clears all retained history and notifies listeners immediately.
+  void setStatsTarget(String? id) {
+    if (_statsTargetId == id) return;
+    _statsTargetId = id;
+    _clearStatsHistory();
+  }
+
+  void _clearStatsHistory() {
+    _statsGeneration += 1;
+    _statsHistories.clear();
+    _lastCpuUsageUsec = null;
+    _lastStatsTimestamp = null;
+    if (!_statsHistoryChanges.isClosed) {
+      _statsHistoryChanges.add(const []);
+    }
+  }
+
+  /// Read-only chronological samples for the current stats target.
+  List<ContainerStatsSample> statsHistoryFor(String id) {
+    if (_statsTargetId != id) return const [];
+    return _statsHistories[id]?.snapshot() ?? const [];
+  }
+
+  /// Emits the current target's read-only history after each accepted sample,
+  /// and an empty history when target or lifecycle changes clear it.
+  Stream<List<ContainerStatsSample>> get statsHistoryChanges =>
+      _statsHistoryChanges.stream;
+
   /// Starts adaptive polling; [foreground] selects the cadence. Calling
-  /// again re-schedules — use it on app lifecycle transitions.
+  /// again re-schedules — use it on app lifecycle transitions. A foreground
+  /// transition clears stats history and suspends sampling while backgrounded.
   void startPolling({required bool foreground}) {
+    if (_foreground != foreground) {
+      _foreground = foreground;
+      _clearStatsHistory();
+    }
     _pollTimer?.cancel();
-    _schedule(foreground ? foregroundInterval : backgroundInterval);
+    _schedule(
+      foreground ? foregroundInterval : backgroundInterval,
+      foreground: foreground,
+    );
   }
 
   void stopPolling() {
@@ -146,13 +193,21 @@ class ContainerService {
     _pollTimer = null;
   }
 
-  void _schedule(Duration interval) {
-    _pollTimer = Timer(interval, () async {
+  void _schedule(Duration interval, {required bool foreground}) {
+    late final Timer timer;
+    timer = Timer(interval, () async {
+      if (!identical(_pollTimer, timer)) return;
       await refresh();
-      if (_pollTimer != null) {
-        _schedule(interval);
+      if (!identical(_pollTimer, timer)) return;
+      final targetId = _statsTargetId;
+      if (foreground && targetId != null) {
+        await _sampleStats(targetId);
+      }
+      if (identical(_pollTimer, timer)) {
+        _schedule(interval, foreground: foreground);
       }
     });
+    _pollTimer = timer;
   }
 
   /// One-shot unfiltered list from the runtime, parsed and typed.
@@ -241,6 +296,64 @@ class ContainerService {
       return ContainerStatsInfo.fromMap(await _bridge.containerStats(id));
     } on BridgeCallException catch (e) {
       throw mapContainerFailure(e, operation: 'stats', id: id);
+    }
+  }
+
+  Future<void> _sampleStats(String id) async {
+    if (!_foreground || _statsSampleInFlight || _disposed) return;
+    _statsSampleInFlight = true;
+    final generation = _statsGeneration;
+    try {
+      final ContainerStatsInfo snapshot;
+      try {
+        snapshot = await stats(id);
+      } catch (_) {
+        // A failed stats request produces no sample and no fabricated zeros.
+        return;
+      }
+      if (_disposed ||
+          !_foreground ||
+          _statsTargetId != id ||
+          _statsGeneration != generation) {
+        return;
+      }
+
+      final timestamp = DateTime.now();
+      final cpuUsageUsec = snapshot.cpuUsageUsec;
+      final previousCpuUsageUsec = _lastCpuUsageUsec;
+      final previousTimestamp = _lastStatsTimestamp;
+      double? cpuPercent;
+      if (cpuUsageUsec != null &&
+          previousCpuUsageUsec != null &&
+          previousTimestamp != null) {
+        final elapsedMicroseconds = timestamp
+            .difference(previousTimestamp)
+            .inMicroseconds;
+        final delta = cpuUsageUsec - previousCpuUsageUsec;
+        if (elapsedMicroseconds > 0 && delta >= 0) {
+          cpuPercent = delta * 100 / elapsedMicroseconds;
+        }
+      }
+      _lastCpuUsageUsec = cpuUsageUsec;
+      _lastStatsTimestamp = timestamp;
+
+      final history = _statsHistories.putIfAbsent(id, _StatsHistoryRing.new);
+      history.add(
+        ContainerStatsSample(
+          timestamp: timestamp,
+          cpuPercent: cpuPercent,
+          memoryBytes: snapshot.memoryUsageBytes,
+          networkRxBytes: snapshot.networkRxBytes,
+          networkTxBytes: snapshot.networkTxBytes,
+          diskReadBytes: snapshot.blockReadBytes,
+          diskWriteBytes: snapshot.blockWriteBytes,
+        ),
+      );
+      if (!_statsHistoryChanges.isClosed) {
+        _statsHistoryChanges.add(statsHistoryFor(id));
+      }
+    } finally {
+      _statsSampleInFlight = false;
     }
   }
 
@@ -936,6 +1049,37 @@ class ContainerService {
     }
     await _snapshots.close();
     await _activityChanges.close();
+    await _statsHistoryChanges.close();
+  }
+}
+
+/// Fixed-size chronological ring: newest 450 samples (15 minutes at 2s).
+class _StatsHistoryRing {
+  static const int _capacity = 450;
+
+  final List<ContainerStatsSample?> _samples =
+      List<ContainerStatsSample?>.filled(_capacity, null);
+  int _start = 0;
+  int _length = 0;
+
+  void add(ContainerStatsSample sample) {
+    if (_length < _capacity) {
+      _samples[(_start + _length) % _capacity] = sample;
+      _length += 1;
+      return;
+    }
+    _samples[_start] = sample;
+    _start = (_start + 1) % _capacity;
+  }
+
+  List<ContainerStatsSample> snapshot() {
+    return List<ContainerStatsSample>.unmodifiable(
+      List<ContainerStatsSample>.generate(
+        _length,
+        (index) => _samples[(_start + index) % _capacity]!,
+        growable: false,
+      ),
+    );
   }
 }
 

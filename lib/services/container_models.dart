@@ -257,6 +257,30 @@ class ContainerStatsInfo {
   }
 }
 
+/// One timestamped sample in the foreground container-stats history.
+///
+/// Network and disk values are cumulative counters. CPU percent is derived
+/// between two samples and is null until two usable CPU counters are available.
+class ContainerStatsSample {
+  const ContainerStatsSample({
+    required this.timestamp,
+    this.cpuPercent,
+    this.memoryBytes,
+    this.networkRxBytes,
+    this.networkTxBytes,
+    this.diskReadBytes,
+    this.diskWriteBytes,
+  });
+
+  final DateTime timestamp;
+  final double? cpuPercent;
+  final int? memoryBytes;
+  final int? networkRxBytes;
+  final int? networkTxBytes;
+  final int? diskReadBytes;
+  final int? diskWriteBytes;
+}
+
 Map<String, String> _stringMap(Object? value) {
   if (value is! Map) return const {};
   return value.map((k, v) => MapEntry(k.toString(), v.toString()));

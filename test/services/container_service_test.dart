@@ -769,6 +769,197 @@ void main() {
     });
   });
 
+  group('stats history', () {
+    test(
+      'foreground polling records counters and emits read-only snapshots',
+      () async {
+        final statsBridge = _StatsSequenceBridge(maximumSamples: 2)
+          ..containers = [snapshotPayload(id: 'web')];
+        final historyService = ContainerService(
+          bridge: statsBridge,
+          foregroundInterval: const Duration(milliseconds: 5),
+          backgroundInterval: const Duration(milliseconds: 50),
+        );
+        addTearDown(historyService.dispose);
+        historyService.setStatsTarget('web');
+        final sampled = Completer<void>();
+        var notifications = 0;
+        final subscription = historyService.statsHistoryChanges.listen((_) {
+          notifications++;
+          if (historyService.statsHistoryFor('web').length >= 2 &&
+              !sampled.isCompleted) {
+            sampled.complete();
+          }
+        });
+        addTearDown(subscription.cancel);
+
+        historyService.startPolling(foreground: true);
+        await sampled.future.timeout(const Duration(seconds: 5));
+
+        final history = historyService.statsHistoryFor('web');
+        expect(history, hasLength(2));
+        expect(history.first.cpuPercent, isNull);
+        expect(history.last.cpuPercent, isNotNull);
+        expect(history.last.cpuPercent!, greaterThan(0));
+        expect(history.map((sample) => sample.memoryBytes), [1, 2]);
+        expect(history.map((sample) => sample.networkRxBytes), [10, 20]);
+        expect(history.map((sample) => sample.networkTxBytes), [20, 40]);
+        expect(history.map((sample) => sample.diskReadBytes), [100, 200]);
+        expect(history.map((sample) => sample.diskWriteBytes), [200, 400]);
+        expect(
+          history.last.timestamp.isBefore(history.first.timestamp),
+          isFalse,
+        );
+        expect(notifications, greaterThanOrEqualTo(2));
+        expect(historyService.statsHistoryFor('db'), isEmpty);
+        expect(() => history.add(history.first), throwsUnsupportedError);
+      },
+    );
+
+    test('keeps the newest 450 samples in chronological order', () async {
+      final statsBridge = _StatsSequenceBridge(maximumSamples: 451)
+        ..containers = [snapshotPayload(id: 'web')];
+      final historyService = ContainerService(
+        bridge: statsBridge,
+        foregroundInterval: const Duration(milliseconds: 1),
+        backgroundInterval: const Duration(milliseconds: 50),
+      );
+      addTearDown(historyService.dispose);
+      historyService.setStatsTarget('web');
+      final sampled = Completer<void>();
+      final subscription = historyService.statsHistoryChanges.listen((_) {
+        if (statsBridge.statsCalls >= 451 && !sampled.isCompleted) {
+          sampled.complete();
+        }
+      });
+      addTearDown(subscription.cancel);
+
+      historyService.startPolling(foreground: true);
+      await sampled.future.timeout(const Duration(seconds: 5));
+
+      final history = historyService.statsHistoryFor('web');
+      expect(history, hasLength(450));
+      expect(history.first.memoryBytes, 2);
+      expect(history.last.memoryBytes, 451);
+      for (var index = 1; index < history.length; index++) {
+        expect(
+          history[index].timestamp.isBefore(history[index - 1].timestamp),
+          isFalse,
+        );
+      }
+    });
+
+    test(
+      'changing target clears histories and restarts the CPU baseline',
+      () async {
+        final statsBridge = _StatsSequenceBridge(
+          maximumSamples: 4,
+        )..containers = [snapshotPayload(id: 'web'), snapshotPayload(id: 'db')];
+        final historyService = ContainerService(
+          bridge: statsBridge,
+          foregroundInterval: const Duration(milliseconds: 5),
+          backgroundInterval: const Duration(milliseconds: 50),
+        );
+        addTearDown(historyService.dispose);
+        final webSampled = Completer<void>();
+        final dbSampled = Completer<void>();
+        final notifications = <List<ContainerStatsSample>>[];
+        final subscription = historyService.statsHistoryChanges.listen((
+          history,
+        ) {
+          notifications.add(history);
+          if (historyService.statsHistoryFor('web').length >= 2 &&
+              !webSampled.isCompleted) {
+            webSampled.complete();
+          }
+          if (historyService.statsHistoryFor('db').length >= 2 &&
+              !dbSampled.isCompleted) {
+            dbSampled.complete();
+          }
+        });
+        addTearDown(subscription.cancel);
+
+        historyService.setStatsTarget('web');
+        historyService.startPolling(foreground: true);
+        await webSampled.future.timeout(const Duration(seconds: 5));
+        historyService.stopPolling();
+        expect(historyService.statsHistoryFor('web'), hasLength(2));
+
+        notifications.clear();
+        historyService.setStatsTarget('db');
+        expect(historyService.statsHistoryFor('web'), isEmpty);
+        expect(historyService.statsHistoryFor('db'), isEmpty);
+        await Future<void>.delayed(Duration.zero);
+        expect(notifications, isNotEmpty);
+        expect(notifications.last, isEmpty);
+
+        historyService.startPolling(foreground: true);
+        await dbSampled.future.timeout(const Duration(seconds: 5));
+        historyService.stopPolling();
+        final dbHistory = historyService.statsHistoryFor('db');
+        expect(dbHistory.map((sample) => sample.memoryBytes), [3, 4]);
+        expect(dbHistory.first.cpuPercent, isNull);
+        expect(dbHistory.last.cpuPercent, isNotNull);
+
+        historyService.setStatsTarget(null);
+        expect(historyService.statsHistoryFor('db'), isEmpty);
+        await Future<void>.delayed(Duration.zero);
+        expect(notifications.last, isEmpty);
+
+        historyService.setStatsTarget('web');
+        expect(historyService.statsHistoryFor('web'), isEmpty);
+      },
+    );
+
+    test(
+      'foreground transitions clear history and suspend stats sampling',
+      () async {
+        final statsBridge = _StatsSequenceBridge(maximumSamples: 3)
+          ..containers = [snapshotPayload(id: 'web')];
+        final historyService = ContainerService(
+          bridge: statsBridge,
+          foregroundInterval: const Duration(milliseconds: 5),
+          backgroundInterval: const Duration(milliseconds: 20),
+        );
+        addTearDown(historyService.dispose);
+        historyService.setStatsTarget('web');
+        final sampled = Completer<void>();
+        final resumed = Completer<void>();
+        final notifications = <List<ContainerStatsSample>>[];
+        final subscription = historyService.statsHistoryChanges.listen((
+          history,
+        ) {
+          notifications.add(history);
+          if (statsBridge.statsCalls >= 2 && !sampled.isCompleted) {
+            sampled.complete();
+          }
+          if (statsBridge.statsCalls >= 3 &&
+              history.isNotEmpty &&
+              !resumed.isCompleted) {
+            resumed.complete();
+          }
+        });
+        addTearDown(subscription.cancel);
+
+        historyService.startPolling(foreground: true);
+        await sampled.future.timeout(const Duration(seconds: 5));
+        historyService.startPolling(foreground: false);
+        expect(historyService.statsHistoryFor('web'), isEmpty);
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        expect(statsBridge.statsCalls, 2);
+        expect(notifications.last, isEmpty);
+
+        historyService.startPolling(foreground: true);
+        await resumed.future.timeout(const Duration(seconds: 5));
+        historyService.stopPolling();
+        final history = historyService.statsHistoryFor('web');
+        expect(history, hasLength(1));
+        expect(history.single.memoryBytes, 3);
+        expect(history.single.cpuPercent, isNull);
+      },
+    );
+  });
+
   group('adaptive polling', () {
     test('timer fires at foreground cadence and emits snapshots', () async {
       bridge.containers = [snapshotPayload(id: 'web')];
@@ -797,6 +988,36 @@ void main() {
       // Background cadence is 200ms: no poll should have fired within 80ms.
       expect(bridge.calls.where((c) => c == 'containerList'), isEmpty);
     });
+
+    test(
+      'an in-flight foreground tick cannot revive after a background switch',
+      () async {
+        final gate = Completer<List<Map<String, Object?>>>();
+        final blocking = _BlockingListBridge(gate);
+        final blockingService = ContainerService(
+          bridge: blocking,
+          foregroundInterval: const Duration(milliseconds: 5),
+          backgroundInterval: const Duration(seconds: 1),
+        );
+        addTearDown(blockingService.dispose);
+        blockingService.startPolling(foreground: true);
+        for (
+          var attempt = 0;
+          attempt < 100 && blocking.listCalls == 0;
+          attempt++
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 1));
+        }
+        expect(blocking.listCalls, 1);
+
+        blockingService.startPolling(foreground: false);
+        gate.complete(<Map<String, Object?>>[]);
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        blockingService.stopPolling();
+
+        expect(blocking.listCalls, 1);
+      },
+    );
 
     test(
       'concurrent refresh returns last snapshot without stacking calls',
@@ -911,5 +1132,32 @@ class _BlockingListBridge extends FakeContainerBridge {
   Future<List<Map<String, Object?>>> containerList() {
     listCalls++;
     return _gate.future;
+  }
+}
+
+/// Deterministic cumulative stats for public ContainerService history tests.
+class _StatsSequenceBridge extends FakeContainerBridge {
+  _StatsSequenceBridge({required this.maximumSamples});
+
+  final int maximumSamples;
+  int statsCalls = 0;
+
+  @override
+  Future<Map<String, Object?>> containerStats(String id) async {
+    if (statsCalls >= maximumSamples) {
+      throw const BridgeCallException('stats sequence exhausted');
+    }
+    statsCalls += 1;
+    final sequence = statsCalls;
+    return <String, Object?>{
+      'cpuUsageUsec': sequence * 1000000,
+      'memoryUsageBytes': sequence,
+      'memoryLimitBytes': 1024,
+      'networkRxBytes': sequence * 10,
+      'networkTxBytes': sequence * 20,
+      'blockReadBytes': sequence * 100,
+      'blockWriteBytes': sequence * 200,
+      'numProcesses': 1,
+    };
   }
 }
