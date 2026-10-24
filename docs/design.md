@@ -1,6 +1,6 @@
 # GhostContainerManager 设计基线
 
-版本：2026-10-24（P0，issue #26）。适用范围：全部 9 页与 `lib/ui/` 共享组件。
+版本：2026-10-24（P0–P2，issue #26）。适用范围：全部 9 页与 `lib/ui/` 共享组件。
 本文是本项目的**单一设计事实来源**：语义色、间距、字体、组件与页面模板在此定义，
 页面实现引用而非各自重定义。通用 macOS 原则见
 `~/.agents/skills/macos-ui-standards/references/standard.md`；本文只记录**项目自定度量**
@@ -116,6 +116,19 @@ P0 交付的共享组件，API 小而稳（P1 详情页重做复用）：
   └─ 底部日志/终端面板（可关闭）
 ```
 卡片化组织，卡片间距 `sectionGap`，卡片内 `cardPadding`。
+
+### 设置页与容器双行列表（P2）
+
+- 设置页按「通用」「MCP 服务」「最近调用」「关于」分为独立 `SectionCard`；
+  通用卡内再分外观/行为，MCP 卡内放开关、端口与运行端点。运行端点使用
+  `CopyValue`，最近调用简表使用 32 高行，工具名用等宽字体，耗时用
+  `textSecondary`，成败色分别取 `success`/`stateFailed`。
+- 容器列表使用双行（`rowHeightDouble` ≥56，实现默认 64）：主行为名称与可选
+  「本应用创建」标记，次行为「镜像 · 端口」；次行用等宽字体、`bodySmall` 与
+  `textSecondary`，省略时 tooltip 保留全文。
+- 状态列使用共享 `StateDot` 与文字标签；原生/合成状态分别映射到同一
+  `stateColorOf`，不得用主色代替运行/过渡状态。选中背景取
+  `colorScheme.secondaryContainer`（透明叠加），同时保留 hover/pressed 的语义反馈。
 
 ### 属性/运行弹窗
 ```

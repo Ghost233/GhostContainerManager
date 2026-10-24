@@ -9,6 +9,8 @@ import 'package:ghost_container_manager/features/containers/containers_page.dart
 import 'package:ghost_container_manager/features/system/readiness_controller.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
+import 'package:ghost_container_manager/ui/colors.dart';
+import 'package:ghost_container_manager/ui/components.dart';
 
 /// 与 test/services/container_service_test.dart 相同的 1.6.0 快照形态。
 Map<String, Object?> snapshotPayload({
@@ -123,13 +125,33 @@ void main() {
 
     expect(find.text('web-frontend'), findsOneWidget);
     expect(find.text('cache'), findsOneWidget);
-    expect(find.text('docker.io/library/nginx:latest'), findsOneWidget);
-    expect(find.text('docker.io/library/redis:7'), findsOneWidget);
-    expect(find.text('8080→80'), findsWidgets); // 两个容器同一映射
+    const runningSecondary = 'docker.io/library/nginx:latest · 端口 8080→80';
+    expect(find.text(runningSecondary), findsOneWidget);
+    expect(find.text('docker.io/library/redis:7 · 端口 8080→80'), findsOneWidget);
+    expect(find.byType(StateDot), findsNWidgets(2));
     expect(find.text('本应用创建'), findsOneWidget); // 仅 web-frontend
     expect(find.text('1 运行中 / 共 2'), findsOneWidget);
     expect(find.text('运行中'), findsOneWidget);
     expect(find.text('已停止'), findsOneWidget);
+
+    final rowContext = tester.element(find.text(runningSecondary));
+    final secondaryStyle = tester
+        .widget<Text>(find.text(runningSecondary))
+        .style;
+    expect(
+      secondaryStyle?.fontSize,
+      Theme.of(rowContext).textTheme.bodySmall?.fontSize,
+    );
+    expect(secondaryStyle?.color, GcmColors.textSecondary(rowContext));
+    final statusStyle = tester
+        .widget<Text>(find.byKey(const Key('container-status-web-frontend')))
+        .style;
+    expect(statusStyle?.color, GcmColors.stateColorOf(rowContext, 'running'));
+    final row = find.ancestor(
+      of: find.text('web-frontend'),
+      matching: find.byType(InkWell),
+    );
+    expect(tester.getSize(row.first).height, greaterThanOrEqualTo(56));
   });
 
   testWidgets('搜索过滤列表', (tester) async {
@@ -436,6 +458,17 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('停止中'), findsOneWidget);
+    final stoppingContext = tester.element(find.text('停止中'));
+    expect(
+      tester.widget<Text>(find.text('停止中')).style?.color,
+      GcmColors.stateColorOf(stoppingContext, 'stopping'),
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is StateDot && widget.state == 'stopping',
+      ),
+      findsOneWidget,
+    );
     final menu = tester.widget<PopupMenuButton<String>>(
       find.byKey(const Key('container-actions-web-frontend')),
     );

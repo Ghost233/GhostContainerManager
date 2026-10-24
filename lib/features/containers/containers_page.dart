@@ -14,6 +14,7 @@ import '../../services/container_models.dart';
 import '../../services/container_service.dart';
 import '../../services/errors.dart';
 import '../../ui/colors.dart';
+import '../../ui/components.dart';
 import '../../ui/text.dart';
 import '../system/readiness_controller.dart';
 import 'container_detail.dart';
@@ -348,6 +349,7 @@ class _ContainersPageState extends State<ContainersPage> {
             itemBuilder: (context, index) => _ContainerRow(
               container: rows[index],
               activity: _activities[rows[index].id],
+              selected: _selectedId == rows[index].id,
               onTap: () => setState(() => _selectedId = rows[index].id),
               onAction: (action) => _handleContainerAction(rows[index], action),
             ),
@@ -377,10 +379,8 @@ class _ListHeader extends StatelessWidget {
       child: Row(
         children: [
           SizedBox(width: 22, child: Text('', style: style)),
-          Expanded(flex: 3, child: Text('名称', style: style)),
+          Expanded(flex: 8, child: Text('名称 / 镜像 / 端口', style: style)),
           SizedBox(width: 76, child: Text('状态', style: style)),
-          Expanded(flex: 3, child: Text('镜像', style: style)),
-          Expanded(flex: 2, child: Text('端口', style: style)),
           SizedBox(width: 90, child: Text('运行时长', style: style)),
           SizedBox(width: 40, child: Text('操作', style: style)),
         ],
@@ -389,17 +389,21 @@ class _ListHeader extends StatelessWidget {
   }
 }
 
-/// 单行数据行（≥40；状态点 + 名称[本应用创建标记] + 镜像 + 端口 + 时长）。
+/// 双行数据行（≥56；状态点 + 名称[本应用创建标记]）。
+///
+/// 次行展示镜像与端口，状态、运行时长与操作保持独立列。
 class _ContainerRow extends StatelessWidget {
   const _ContainerRow({
     required this.container,
     required this.activity,
     required this.onTap,
     required this.onAction,
+    this.selected = false,
   });
 
   final ContainerSnapshotInfo container;
   final ContainerActivity? activity;
+  final bool selected;
   final VoidCallback onTap;
   final ValueChanged<String> onAction;
 
@@ -410,6 +414,17 @@ class _ContainerRow extends StatelessWidget {
       activity != null || container.state == ContainerState.stopping;
 
   String get _status => activity?.label ?? container.state.label;
+
+  String get _stateName {
+    final current = activity;
+    if (current == null) return container.state.wireName;
+    return switch (current) {
+      ContainerActivity.creating || ContainerActivity.starting => 'starting',
+      ContainerActivity.stopping => 'stopping',
+      ContainerActivity.restarting => 'restarting',
+      ContainerActivity.deleting => 'deleting',
+    };
+  }
 
   String get _ports => container.publishedPorts.isEmpty
       ? '—'
@@ -428,32 +443,65 @@ class _ContainerRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final stateName = _stateName;
+    final stateColor = GcmColors.stateColorOf(context, stateName);
+    final secondaryStyle = monoTextStyle(context)?.copyWith(
+      color: GcmColors.textSecondary(context),
+      fontSize: theme.textTheme.bodySmall?.fontSize,
+    );
+    final secondaryText = '${container.image} · 端口 $_ports';
     return InkWell(
       onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      highlightColor: scheme.secondaryContainer.withValues(alpha: 0.35),
+      splashColor: scheme.secondaryContainer.withValues(alpha: 0.5),
       child: Container(
-        height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: 24),
+        constraints: const BoxConstraints(minHeight: 64),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected
+              ? scheme.secondaryContainer.withValues(alpha: 0.45)
+              : null,
+          borderRadius: BorderRadius.circular(6),
+        ),
         child: Row(
           children: [
-            SizedBox(
-              width: 22,
-              child: ContainerStateDot(state: container.state),
-            ),
+            SizedBox(width: 22, child: StateDot(state: stateName, size: 8)),
             Expanded(
-              flex: 3,
-              child: Row(
+              flex: 8,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Flexible(
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          container.id,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: selected
+                                ? scheme.onSecondaryContainer
+                                : null,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (_ownedByApp) ...[
+                        const SizedBox(width: 6),
+                        const AppOwnedTag(),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Tooltip(
+                    message: secondaryText,
                     child: Text(
-                      container.id,
-                      style: theme.textTheme.bodyMedium,
+                      secondaryText,
+                      style: secondaryStyle,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  if (_ownedByApp) ...[
-                    const SizedBox(width: 6),
-                    const AppOwnedTag(),
-                  ],
                 ],
               ),
             ),
@@ -462,33 +510,18 @@ class _ContainerRow extends StatelessWidget {
               child: Text(
                 _status,
                 key: Key('container-status-${container.id}'),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: activity == null
-                      ? theme.colorScheme.onSurfaceVariant
-                      : theme.colorScheme.primary,
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            Expanded(
-              flex: 3,
-              child: Text(
-                container.image,
-                style: monoTextStyle(context),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            Expanded(
-              flex: 2,
-              child: Text(
-                _ports,
-                style: monoTextStyle(context),
+                style: theme.textTheme.bodySmall?.copyWith(color: stateColor),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
             SizedBox(
               width: 90,
-              child: Text(_uptime, style: theme.textTheme.bodySmall),
+              child: Text(
+                _uptime,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: GcmColors.textSecondary(context),
+                ),
+              ),
             ),
             SizedBox(
               width: 40,

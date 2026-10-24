@@ -8,6 +8,8 @@ import 'package:ghost_container_manager/features/settings/settings_page.dart';
 import 'package:ghost_container_manager/mcp/tool_audit.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
+import 'package:ghost_container_manager/ui/colors.dart';
+import 'package:ghost_container_manager/ui/components.dart';
 
 McpSettingsController _controller() {
   final bridge = FakeContainerBridge();
@@ -43,6 +45,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('MCP 服务'), findsOneWidget);
+    expect(find.byType(SectionCard, skipOffstage: false), findsNWidgets(4));
+    for (final title in ['通用', 'MCP 服务', '最近调用', '关于']) {
+      expect(
+        find.widgetWithText(SectionCard, title, skipOffstage: false),
+        findsOneWidget,
+      );
+    }
     expect(find.text('启用内置 MCP server'), findsOneWidget);
     final switchWidget = tester.widget<SwitchListTile>(
       find.widgetWithText(SwitchListTile, '启用内置 MCP server'),
@@ -79,6 +88,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(mcp.running, isTrue, reason: mcp.lastError ?? 'no error recorded');
     expect(find.textContaining('运行中：http://127.0.0.1:'), findsOneWidget);
+    expect(find.byKey(Key('copy-value-${mcp.endpoint}')), findsOneWidget);
 
     await tester.tap(find.widgetWithText(SwitchListTile, '启用内置 MCP server'));
     await tester.runAsync(
@@ -121,6 +131,20 @@ void main() {
     expect(find.text('通用'), findsOneWidget);
     expect(find.text('外观'), findsOneWidget);
     expect(find.text('行为'), findsOneWidget);
+    final titleStyle = tester.widget<Text>(find.text('设置')).style;
+    expect(
+      titleStyle?.fontSize,
+      Theme.of(tester.element(find.text('设置'))).textTheme.titleLarge?.fontSize,
+    );
+    for (final label in ['外观', '行为']) {
+      final labelContext = tester.element(find.text(label));
+      final labelStyle = tester.widget<Text>(find.text(label)).style;
+      expect(
+        labelStyle?.fontSize,
+        Theme.of(labelContext).textTheme.bodySmall?.fontSize,
+      );
+      expect(labelStyle?.color, GcmColors.textSecondary(labelContext));
+    }
     expect(find.text('显示菜单栏图标'), findsOneWidget);
     expect(find.text('默认启动页'), findsOneWidget);
     expect(find.text('语言'), findsOneWidget);
@@ -194,5 +218,7 @@ void main() {
     expect(find.text('09:09:10'), findsOneWidget);
     expect(find.text('42ms'), findsOneWidget);
     expect(find.text('5ms'), findsOneWidget);
+    final successIcon = find.byIcon(Icons.check_circle_outline);
+    expect(tester.widget<Icon>(successIcon).color, GcmColors.success);
   });
 }
