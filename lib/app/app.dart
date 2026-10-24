@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 
 import '../bridge/container_bridge.dart';
 import '../bridge/method_channel_container_bridge.dart';
+import '../bridge/project_cli_adapter.dart';
 import '../features/settings/mcp_settings_controller.dart';
 import '../features/system/onboarding_page.dart';
 import '../features/system/readiness_controller.dart';
@@ -20,6 +21,8 @@ import '../services/container_service.dart';
 import '../services/image_service.dart';
 import '../services/mount_service.dart';
 import '../services/network_service.dart';
+import '../services/project_service.dart';
+import '../services/registry_service.dart';
 import '../services/system_service.dart';
 import 'app_shell.dart';
 import 'menu_bar_controller.dart';
@@ -96,6 +99,16 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
       systemService: _systemService,
       bridge: bridge,
     );
+    final projectService = ProjectService(
+      cli: BridgeProjectCli(bridge),
+      containerService: _containerService,
+      imageService: _imageService,
+    );
+    final registryService = RegistryService(
+      containers: _containerService,
+      images: _imageService,
+      cli: BridgeProjectCli(bridge),
+    );
     _mcp = McpSettingsController(
       systemService: _systemService,
       containerService: _containerService,
@@ -103,6 +116,8 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
       mountService: _mountService,
       networkService: _networkService,
       composeService: _composeService,
+      projectService: projectService,
+      registryService: registryService,
     );
     unawaited(_readiness.refresh());
     _menuBar = MenuBarController(

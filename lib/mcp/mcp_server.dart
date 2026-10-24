@@ -17,6 +17,8 @@ import '../services/container_service.dart';
 import '../services/image_service.dart';
 import '../services/mount_service.dart';
 import '../services/network_service.dart';
+import '../services/project_service.dart';
+import '../services/registry_service.dart';
 import '../services/system_service.dart';
 import 'tool_audit.dart';
 import 'tools/compose_tools.dart';
@@ -24,6 +26,8 @@ import 'tools/container_tools.dart';
 import 'tools/image_tools.dart';
 import 'tools/mount_tools.dart';
 import 'tools/network_tools.dart';
+import 'tools/project_tools.dart';
+import 'tools/registry_tools.dart';
 import 'tools/system_tools.dart';
 
 /// MCP server embedded in the app. Lifecycle follows the app (start on
@@ -36,6 +40,8 @@ class GcmMcpServer {
     MountService? mountService,
     NetworkService? networkService,
     ComposeService? composeService,
+    ProjectService? projectService,
+    RegistryService? registryService,
     this.host = '127.0.0.1',
     this.port = defaultPort,
     this.path = '/mcp',
@@ -47,6 +53,8 @@ class GcmMcpServer {
        _mountService = mountService,
        _networkService = networkService,
        _composeService = composeService,
+       _projectService = projectService,
+       _registryService = registryService,
        auditor = auditor ?? McpToolAuditor();
 
   /// Default MCP HTTP port (settings page default, issue #16 验收 4).
@@ -66,6 +74,8 @@ class GcmMcpServer {
   final MountService? _mountService;
   final NetworkService? _networkService;
   final ComposeService? _composeService;
+  final ProjectService? _projectService;
+  final RegistryService? _registryService;
 
   /// Bounded record of tool calls, shared across transport sessions so the
   /// settings page keeps a stable short history (issue #16).
@@ -101,7 +111,10 @@ class GcmMcpServer {
             'tools query and manage containers; image_* tools manage '
             'images (pull/delete are slow or destructive); mount_*/'
             'network_* tools are read-only views; compose_* tools run '
-            'the compose plugin (up/down change real resources). Confirm '
+            'the compose plugin (up/down change real resources); '
+            'project_* tools manage project workflows (build/test/reclaim '
+            'change real resources); registry_* tools manage the local '
+            'registry container. Confirm '
             'with the user before calling tools annotated '
             'destructiveHint: true.',
       ),
@@ -116,6 +129,10 @@ class GcmMcpServer {
     if (network != null) registerNetworkTools(server, network);
     final compose = _composeService;
     if (compose != null) registerComposeTools(server, compose);
+    final project = _projectService;
+    if (project != null) registerProjectTools(server, project);
+    final registry = _registryService;
+    if (registry != null) registerRegistryTools(server, registry);
     return server;
   }
 

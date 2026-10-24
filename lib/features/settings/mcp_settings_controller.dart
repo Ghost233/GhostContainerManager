@@ -24,6 +24,8 @@ import '../../services/container_service.dart';
 import '../../services/image_service.dart';
 import '../../services/mount_service.dart';
 import '../../services/network_service.dart';
+import '../../services/project_service.dart';
+import '../../services/registry_service.dart';
 import '../../services/system_service.dart';
 
 class McpSettingsController extends ChangeNotifier {
@@ -34,6 +36,8 @@ class McpSettingsController extends ChangeNotifier {
     MountService? mountService,
     NetworkService? networkService,
     ComposeService? composeService,
+    ProjectService? projectService,
+    RegistryService? registryService,
     McpToolAuditor? auditor,
   }) : _systemService = systemService,
        _containerService = containerService,
@@ -41,6 +45,8 @@ class McpSettingsController extends ChangeNotifier {
        _mountService = mountService,
        _networkService = networkService,
        _composeService = composeService,
+       _projectService = projectService,
+       _registryService = registryService,
        _auditor = auditor ?? McpToolAuditor(),
        _ownsAuditor = auditor == null {
     _auditorSub = _auditor.changes.listen((_) {
@@ -54,6 +60,8 @@ class McpSettingsController extends ChangeNotifier {
   final MountService? _mountService;
   final NetworkService? _networkService;
   final ComposeService? _composeService;
+  final ProjectService? _projectService;
+  final RegistryService? _registryService;
   final McpToolAuditor _auditor;
 
   /// 缺省自建 auditor 时由本控制器负责释放（E04）。
@@ -107,6 +115,8 @@ class McpSettingsController extends ChangeNotifier {
       mountService: _mountService,
       networkService: _networkService,
       composeService: _composeService,
+      projectService: _projectService,
+      registryService: _registryService,
       port: port,
       auditor: _auditor,
     );

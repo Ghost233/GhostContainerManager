@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghost_container_manager/bridge/container_bridge.dart';
 import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
 import 'package:ghost_container_manager/features/settings/mcp_settings_controller.dart';
 import 'package:ghost_container_manager/mcp/mcp_server.dart';
@@ -10,7 +11,36 @@ import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/image_service.dart';
 import 'package:ghost_container_manager/services/mount_service.dart';
 import 'package:ghost_container_manager/services/network_service.dart';
+import 'package:ghost_container_manager/services/project_service.dart';
+import 'package:ghost_container_manager/services/registry_service.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
+
+/// Minimal ProjectCli fake for wiring tests (T7 logic is covered by its own
+/// suites; here we only need construction to succeed).
+class _FakeProjectCli implements ProjectCli {
+  @override
+  Future<BridgeCommandResult> run(List<String> args, {Duration? timeout}) =>
+      Future.value(
+        const BridgeCommandResult(exitCode: 0, stdout: '', stderr: ''),
+      );
+
+  @override
+  ProjectCliProcess start(List<String> args) => _FakeProjectCliProcess();
+}
+
+class _FakeProjectCliProcess implements ProjectCliProcess {
+  @override
+  Stream<String> get stdoutLines => const Stream.empty();
+
+  @override
+  Stream<String> get stderrLines => const Stream.empty();
+
+  @override
+  Future<int> get exitCode => Future.value(0);
+
+  @override
+  void terminate() {}
+}
 
 /// P2 full-wiring evidence: with every service domain handed to
 /// [GcmMcpServer], `tools/list` exposes the complete v1 surface
@@ -24,6 +54,8 @@ void main() {
   late MountService mountService;
   late NetworkService networkService;
   late ComposeService composeService;
+  late ProjectService projectService;
+  late RegistryService registryService;
 
   setUp(() {
     bridge = FakeContainerBridge();
@@ -42,6 +74,16 @@ void main() {
       bridge: bridge,
       containerService: containerService,
     );
+    projectService = ProjectService(
+      cli: _FakeProjectCli(),
+      containerService: containerService,
+      imageService: imageService,
+    );
+    registryService = RegistryService(
+      containers: containerService,
+      images: imageService,
+      cli: _FakeProjectCli(),
+    );
   });
 
   GcmMcpServer makeServer() => GcmMcpServer(
@@ -51,11 +93,13 @@ void main() {
     mountService: mountService,
     networkService: networkService,
     composeService: composeService,
+    projectService: projectService,
+    registryService: registryService,
     port: 0,
     enableJsonResponse: true,
   );
 
-  test('tools/list exposes exactly 24 v1 tools across six domains', () async {
+  test('tools/list exposes exactly 35 v1 tools across eight domains', () async {
     final server = makeServer();
     await server.start();
     addTearDown(server.stop);
@@ -149,8 +193,19 @@ void main() {
       'compose_list',
       'compose_up',
       'compose_down',
+      'project_list',
+      'project_get',
+      'project_init',
+      'project_build',
+      'project_test',
+      'project_reclaim',
+      'project_publish',
+      'project_restore',
+      'registry_status',
+      'registry_start',
+      'registry_stop',
     };
-    expect(names, hasLength(24), reason: 'unexpected tools: $names');
+    expect(names, hasLength(35), reason: 'unexpected tools: $names');
     expect(
       names,
       expected,
@@ -168,6 +223,8 @@ void main() {
       mountService: mountService,
       networkService: networkService,
       composeService: composeService,
+      projectService: projectService,
+      registryService: registryService,
     )..port = 0;
 
     // 启动时按设置开关拉起（enabled 默认 true）。
