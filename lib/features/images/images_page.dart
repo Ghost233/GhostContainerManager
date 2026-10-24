@@ -17,6 +17,9 @@ import '../../app/placeholders.dart';
 import '../../services/errors.dart';
 import '../../services/image_models.dart';
 import '../../services/image_service.dart';
+import '../../ui/colors.dart';
+import '../../ui/components.dart';
+import '../../ui/text.dart';
 import '../system/readiness_controller.dart';
 
 /// 镜像列表页：工具栏（搜索/计数/拉取/刷新）+ 行列表。
@@ -452,35 +455,80 @@ class _ImageDetailViewState extends State<_ImageDetailView> {
               (null, null) => const Center(child: CircularProgressIndicator()),
               (final ImageInspection inspection, null) => ListView(
                 children: [
-                  _kv('摘要', inspection.digest ?? '-'),
-                  _kv('大小', formatImageSize(inspection.sizeBytes)),
-                  _kv('层数', '${inspection.layers}'),
-                  _kv('平台', inspection.platforms.join('、')),
-                  _section(theme, '入口命令'),
-                  Text(
-                    (inspection.entrypoint + inspection.cmd).join(' '),
-                    style: theme.textTheme.bodySmall,
-                  ),
-                  _section(theme, '暴露端口'),
-                  Text(
-                    inspection.exposedPorts.isEmpty
-                        ? '-'
-                        : inspection.exposedPorts.join('、'),
-                    style: theme.textTheme.bodySmall,
-                  ),
-                  _section(theme, '环境变量'),
-                  for (final env in inspection.env)
-                    Text(env, style: theme.textTheme.bodySmall),
-                  if (inspection.env.isEmpty)
-                    Text('-', style: theme.textTheme.bodySmall),
-                  _section(theme, '标签'),
-                  for (final entry in inspection.labels.entries)
-                    Text(
-                      '${entry.key}=${entry.value}',
-                      style: theme.textTheme.bodySmall,
+                  SectionCard(
+                    title: '概览',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _kv(
+                          '镜像引用',
+                          inspection.reference,
+                          valueWidget: CopyValue(value: inspection.reference),
+                        ),
+                        _kv(
+                          '摘要',
+                          inspection.digest ?? '-',
+                          valueWidget: inspection.digest == null
+                              ? null
+                              : CopyValue(value: inspection.digest!),
+                        ),
+                        _kv('大小', formatImageSize(inspection.sizeBytes)),
+                        _kv('层数', '${inspection.layers}'),
+                        _kv('平台', inspection.platforms.join('、')),
+                      ],
                     ),
-                  if (inspection.labels.isEmpty)
-                    Text('-', style: theme.textTheme.bodySmall),
+                  ),
+                  const SizedBox(height: 24),
+                  SectionCard(
+                    title: '镜像配置',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _kv(
+                          '入口命令',
+                          (inspection.entrypoint + inspection.cmd).join(' '),
+                          mono: true,
+                        ),
+                        _kv(
+                          '暴露端口',
+                          inspection.exposedPorts.isEmpty
+                              ? '-'
+                              : inspection.exposedPorts.join('、'),
+                          mono: true,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  SectionCard(
+                    title: '环境变量',
+                    child: inspection.env.isEmpty
+                        ? _dash(context)
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              for (final env in inspection.env)
+                                _EnvRow(entry: env),
+                            ],
+                          ),
+                  ),
+                  const SizedBox(height: 24),
+                  SectionCard(
+                    title: '标签',
+                    child: inspection.labels.isEmpty
+                        ? _dash(context)
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              for (final entry in inspection.labels.entries)
+                                _kv(
+                                  entry.key,
+                                  entry.value,
+                                  valueWidget: CopyValue(value: entry.value),
+                                ),
+                            ],
+                          ),
+                  ),
                 ],
               ),
             },
@@ -490,31 +538,80 @@ class _ImageDetailViewState extends State<_ImageDetailView> {
     );
   }
 
-  Widget _kv(String label, String value) {
+  Widget _kv(
+    String label,
+    String value, {
+    bool mono = false,
+    Widget? valueWidget,
+  }) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 72,
+            width: 110,
             child: Text(
               label,
               style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.outline,
+                color: GcmColors.textSecondary(context),
               ),
             ),
           ),
-          Flexible(child: Text(value, style: theme.textTheme.bodySmall)),
+          Expanded(
+            child:
+                valueWidget ??
+                SelectableText(
+                  value.isEmpty ? '-' : value,
+                  style: mono
+                      ? monoTextStyle(context)
+                      : theme.textTheme.bodyMedium,
+                ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _section(ThemeData theme, String title) => Padding(
-    padding: const EdgeInsets.only(top: 16, bottom: 6),
-    child: Text(title, style: theme.textTheme.titleSmall),
+  Widget _dash(BuildContext context) => Text(
+    '-',
+    style: Theme.of(context).textTheme.bodySmall
+        ?.copyWith(color: GcmColors.textSecondary(context)),
   );
+}
+
+/// 单条环境变量：KEY=VALUE 拆分，VALUE 用 MaskedValue 打码。
+class _EnvRow extends StatelessWidget {
+  const _EnvRow({required this.entry});
+
+  final String entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final separator = entry.indexOf('=');
+    final key = separator < 0 ? entry : entry.substring(0, separator);
+    final value = separator < 0 ? '' : entry.substring(separator + 1);
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 110,
+            child: Text(
+              key,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: GcmColors.textSecondary(context),
+              ),
+            ),
+          ),
+          Expanded(child: MaskedValue(value: value)),
+        ],
+      ),
+    );
+  }
 }
 
 /// 拉取对话框（验收 2）：输入引用 → 进度条实时更新 → 可取消。

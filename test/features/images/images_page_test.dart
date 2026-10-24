@@ -8,6 +8,7 @@ import 'package:ghost_container_manager/features/images/images_page.dart';
 import 'package:ghost_container_manager/features/system/readiness_controller.dart';
 import 'package:ghost_container_manager/services/image_service.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
+import 'package:ghost_container_manager/ui/components.dart';
 
 Map<String, Object?> imagePayload({
   required String reference,
@@ -92,6 +93,9 @@ void main() {
 
   group('ImagesPage 详情', () {
     testWidgets('点行进详情展示 inspect 配置摘要并可返回', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       const reference = 'docker.io/library/alpine:3.19';
       final fake = FakeContainerBridge()
         ..images = <Map<String, Object?>>[imagePayload(reference: reference)]
@@ -114,11 +118,28 @@ void main() {
       await tester.tap(find.text(reference));
       await tester.pumpAndSettle();
 
+      expect(find.byType(SectionCard, skipOffstage: false), findsNWidgets(4));
+      expect(find.text('镜像引用'), findsOneWidget);
+      expect(find.byType(CopyValue), findsWidgets);
       expect(find.text('入口命令'), findsOneWidget);
       expect(find.text('/entry.sh --serve'), findsOneWidget);
       expect(find.text('8080/tcp'), findsOneWidget);
-      expect(find.text('PATH=/usr/bin'), findsOneWidget);
-      expect(find.text('com.ghost233.project=demo'), findsOneWidget);
+      // 环境变量卡片化后 KEY=VALUE 拆分打码（MaskedValue）。
+      expect(find.text('PATH'), findsOneWidget);
+      expect(find.text('⦿⦿⦿⦿⦿⦿'), findsOneWidget);
+      expect(find.text('/usr/bin'), findsNothing);
+      final maskToggle = find.byKey(const Key('masked-toggle-/usr/bin'));
+      expect(maskToggle, findsOneWidget);
+      await tester.tap(maskToggle);
+      await tester.pump();
+      expect(find.text('/usr/bin'), findsOneWidget);
+      await tester.tap(maskToggle);
+      await tester.pump();
+      expect(find.text('/usr/bin'), findsNothing);
+      expect(find.text('⦿⦿⦿⦿⦿⦿'), findsOneWidget);
+      // 标签卡片化后键值分行（label 灰 + CopyValue）。
+      expect(find.text('com.ghost233.project'), findsOneWidget);
+      expect(find.text('demo'), findsOneWidget);
 
       await tester.tap(find.text('返回镜像列表'));
       await tester.pumpAndSettle();

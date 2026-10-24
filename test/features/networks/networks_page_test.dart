@@ -8,6 +8,7 @@ import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/errors.dart';
 import 'package:ghost_container_manager/services/network_service.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
+import 'package:ghost_container_manager/ui/components.dart';
 
 import '../../services/container_service_test.dart' show snapshotPayload;
 
@@ -89,6 +90,7 @@ void main() {
   testWidgets('ready：网络表含子网/模式/容器数，内建标记，无写入口', (tester) async {
     await pump(tester);
 
+    expect(find.byType(SectionCard), findsNWidgets(2));
     expect(find.text('网络'), findsOneWidget);
     expect(find.text('default'), findsOneWidget);
     expect(find.text('backend'), findsOneWidget);
@@ -103,10 +105,12 @@ void main() {
   testWidgets('行展开按需加载成员容器', (tester) async {
     await pump(tester);
 
-    await tester.tap(find.text('default'));
+    await tester.tap(find.byKey(const Key('network-members-toggle')).first);
     await tester.pumpAndSettle();
 
-    expect(find.text('web'), findsOneWidget);
+    // containerId 可复制；hostname 在 fixture 中也叫 web，不能误算重复 CopyValue。
+    expect(find.widgetWithText(CopyValue, 'web'), findsOneWidget);
+    expect(find.byType(CopyValue), findsNWidgets(2));
     expect(fake.calls, contains('networkList'));
   });
 

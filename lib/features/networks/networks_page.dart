@@ -10,6 +10,9 @@ import 'package:flutter/material.dart';
 
 import '../../services/errors.dart';
 import '../../services/network_service.dart';
+import '../../ui/colors.dart';
+import '../../ui/components.dart';
+import '../../ui/text.dart';
 import '../system/readiness_controller.dart';
 import '../../app/placeholders.dart';
 import '../../app/section_widgets.dart';
@@ -161,54 +164,176 @@ class _NetworkTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return ExpansionTile(
-      onExpansionChanged: (expanded) {
-        if (expanded) onExpand();
-      },
-      title: Row(
-        children: [
-          Expanded(child: Text(network.id, style: theme.textTheme.bodyMedium)),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: SectionCard(
+        title: network.id,
+        actions: [
           if (network.builtin)
             Text(
               '内建',
               style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.outline,
+                color: GcmColors.textSecondary(context),
               ),
             ),
         ],
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _KvRow('模式', network.mode),
+            _KvRow('子网', network.subnet ?? '无子网', mono: true),
+            if (network.gateway != null)
+              _KvRow('网关', network.gateway!, mono: true),
+            _KvRow('容器数', '${network.containerCount} 个容器'),
+            const SizedBox(height: 8),
+            _MembersSection(members: members, onExpand: onExpand),
+          ],
+        ),
       ),
-      subtitle: Text(
-        '${network.subnet ?? '无子网'} · ${network.mode} · '
-        '${network.containerCount} 个容器',
-        style: theme.textTheme.bodySmall,
-      ),
+    );
+  }
+}
+
+/// 成员容器区：展开加载 + 列表。
+class _MembersSection extends StatefulWidget {
+  const _MembersSection({required this.members, required this.onExpand});
+
+  final List<NetworkMember>? members;
+  final VoidCallback onExpand;
+
+  @override
+  State<_MembersSection> createState() => _MembersSectionState();
+}
+
+class _MembersSectionState extends State<_MembersSection> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final members = widget.members;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (members == null)
-          const Padding(
-            padding: EdgeInsets.all(12),
-            child: SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
+        InkWell(
+          key: const Key('network-members-toggle'),
+          onTap: () {
+            if (!_expanded) widget.onExpand();
+            setState(() => _expanded = !_expanded);
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 16,
+                  color: GcmColors.textSecondary(context),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  '成员容器',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: GcmColors.textSecondary(context),
+                  ),
+                ),
+              ],
             ),
-          )
-        else if (members!.isEmpty)
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text('无容器接入', style: theme.textTheme.bodySmall),
-          )
-        else
-          for (final member in members!)
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.dns_outlined, size: 16),
-              title: Text(member.containerId, style: theme.textTheme.bodySmall),
-              subtitle: Text(
-                '${member.hostname} · ${member.address.isEmpty ? '无 IP' : member.address}',
-                style: theme.textTheme.bodySmall,
+          ),
+        ),
+        if (_expanded) ...[
+          const SizedBox(height: 4),
+          if (members == null)
+            const Padding(
+              padding: EdgeInsets.all(8),
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else if (members.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Text(
+                '无容器接入',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: GcmColors.textSecondary(context),
+                ),
+              ),
+            )
+          else
+            for (final member in members)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.dns_outlined,
+                      size: 14,
+                      color: GcmColors.textSecondary(context),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      flex: 3,
+                      child: CopyValue(value: member.containerId),
+                    ),
+                    Expanded(
+                      flex: 2,
+                      child: Text(
+                        member.hostname,
+                        style: theme.textTheme.bodySmall,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Expanded(
+                      flex: 2,
+                      child: member.address.isEmpty
+                          ? Text('无 IP', style: theme.textTheme.bodySmall)
+                          : CopyValue(value: member.address),
+                    ),
+                  ],
+                ),
+              ),
+        ],
+      ],
+    );
+  }
+}
+
+/// label 灰 + value 两列行。
+class _KvRow extends StatelessWidget {
+  const _KvRow(this.label, this.value, {this.mono = false});
+
+  final String label;
+  final String value;
+  final bool mono;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 110,
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: GcmColors.textSecondary(context),
               ),
             ),
-      ],
+          ),
+          Expanded(
+            child: SelectableText(
+              value.isEmpty ? '—' : value,
+              style: mono ? monoTextStyle(context) : theme.textTheme.bodyMedium,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

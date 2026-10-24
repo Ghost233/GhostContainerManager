@@ -8,6 +8,7 @@ import 'package:ghost_container_manager/services/compose_service.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/errors.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
+import 'package:ghost_container_manager/ui/components.dart';
 
 import '../../services/container_service_test.dart' show snapshotPayload;
 
@@ -132,6 +133,49 @@ void main() {
       find.textContaining('would create container shop-web'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('项目详情卡片化，服务状态点与容器标识可复制', (tester) async {
+    fake.containers = [
+      snapshotPayload(
+        id: 'shop-web',
+        labels: const {
+          'com.compose.project': 'shop',
+          'com.compose.service': 'web',
+        },
+      ),
+      snapshotPayload(
+        id: 'shop-db',
+        status: 'stopped',
+        labels: const {
+          'com.compose.project': 'shop',
+          'com.compose.service': 'db',
+        },
+      ),
+    ];
+    await pump(tester);
+
+    expect(find.byType(SectionCard), findsOneWidget);
+    expect(find.text('1/2 个服务运行中'), findsOneWidget);
+    final servicesToggle = find.byKey(
+      const Key('compose-services-toggle-shop'),
+    );
+    expect(servicesToggle, findsOneWidget);
+    expect(find.byType(StateDot), findsNothing);
+
+    await tester.tap(servicesToggle);
+    await tester.pump();
+
+    expect(find.byType(StateDot), findsNWidgets(2));
+    expect(find.text('运行中'), findsOneWidget);
+    expect(find.text('已停止'), findsOneWidget);
+    expect(find.widgetWithText(CopyValue, 'shop-web'), findsOneWidget);
+    expect(find.widgetWithText(CopyValue, 'shop-db'), findsOneWidget);
+    final states = tester
+        .widgetList<StateDot>(find.byType(StateDot))
+        .map((dot) => dot.state)
+        .toList();
+    expect(states, ['running', 'stopped']);
   });
 
   testWidgets('插件缺失：安装引导 + 重新检测', (tester) async {
