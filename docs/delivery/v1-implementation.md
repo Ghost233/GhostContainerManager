@@ -92,3 +92,16 @@
 - 全量验收：check exit 0（format/analyze/315 tests），证据 .tooling/host-tests/run-7ssc1d。
 - T8 批次双轴审查（Spec acf59f69 / Standards e863354b，范围 cdd7569..b4e3af6）：均无 P0。合并后 P1：标题栏缺推送按钮、新建项目按钮未接线、force 复选框死控件、pushed 徽标缺失、成员容器表缺时长/行内操作、磁盘快照借道 reclaim dryRun（接缝误用）、磁盘列逐行全局值误导。处置：task-36（服务支撑，mcp-fixer）+ task-37（UI，ui-prototyper，blockedBy task-36）。P2 处置：进 task-36/37（RegExp.escape、自动跟随、cancelled 态、报告卡注记、日志文件名 sanitize、push 失败清 tag、readLatest 历史回看）；文档侧 Lead 修（container-lifecycle.md exec 默认 30→60 已改；ui-ia.md D11「逐行显示」→「10Hz 合并」待改）；观察项记录（MacLauncher _drainSync 注释、df schema 真机待验）。Spec 轴误报一项：三选弹窗「归档并推送」按钮实际存在（project_dialogs.dart:171），实为标题栏缺推送入口。
 - 依赖新增：file_selector ^1.1.0（目录选择器，task-37 用），lockfile 已锁定。
+
+## 实机验收（2026-10-24，container CLI 1.5.0 + debug 旁路，commit 565ca1e/921a4a3）
+
+MCP 全链路在真实运行时验证通过：35 工具 tools/list、system_status（五级短路）、container_list（真实 25 容器）、image_pull registry:2（XPC）、registry_start/status/stop（gcm-registry @5056）、project_init（prefix-only toml）、project_build（**`container build --label` 实证通过**，镜像 config.Labels 含 `com.ghost233.project`）、project_publish（推送 127.0.0.1:5056/gcm-smoke-demo:latest）、project_get/reclaim（dryRun 预测 + force 实删双 tag，磁盘快照 before/after 正常）。冒烟资源已清理（registry 容器停止并删除，/tmp/gcm-smoke-proj 移除）。
+
+实机抓出并已修三个缺陷：
+- D1：`_imageInventory` 遇外部 digest 寻址镜像抛 INVALID_ARGUMENT 致 project_* 全瘫 → 跳过 digest inspect 走 fallback（565ca1e）。
+- D2：`container system df` 1.5.0 实际键 `sizeInBytes` 解析失败 → 键清单兼容（565ca1e）。
+- D3：containerization OCI config CodingKeys 大写（Env/Labels/…）致 image_inspect 丢 labels/env/cmd → ImageOps.swift 双 case 读取（921a4a3）；此缺陷曾导致项目 label 归属失效（reclaim 零候选）。
+
+总审查（双轴，e75fcfa..4a33da7）：两轴均判可合入、P0=0；P1 两条（network_get 参数 id 化、四工具补 outputSchema）已修于 565ca1e；P2 文档陈旧（ui-ia 端口、lifecycle exec 30s、§3.1 工具数）与 app.dart `_mcp.dispose()`（E04）已修。全量 326 tests 绿（run-5M2po2）。
+
+遗留观察项（v1.1/v2 候选，不阻断）：registry_start 缺 registry:2 时不自动拉取（hint 引导 image_pull）；onRecycle 停止态 restart 语义待 1.6.0 真机确认；菜单栏 D4 完整形态延 v2；readiness_controller 直用 bridge 的 kernel probe（E06 洁癖项）；后台 10s 轮询档未接线；UI 分页视觉走查留人工。
