@@ -84,6 +84,7 @@ prefix = "myapp"
 - `deleteLocal?: bool`：推送成功后删本地镜像（同步 GC 释放磁盘），默认 false。
 - 拉回：`container image pull --scheme http 127.0.0.1:5056/{prefix}-{name}:latest` → `image tag` 回 `{prefix}-{name}:latest`。
 - 归属：拉回的镜像无构建期 label，**按命名前缀归入项目**——label 优先、前缀兜底（前缀约定是项目归属的最终兜底事实）。
+- 回收边界（审查后补记）：`project_reclaim` 的释放判定**只用 label 归属**（`allowFallback: false`），不覆盖前缀兜底的镜像——restore 拉回的无 label 镜像不会被回收（保守取舍，防误删外部同名前缀镜像）；如需清理须显式 `image_delete`。
 
 ## 3. 释放判定算法
 

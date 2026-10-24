@@ -104,7 +104,7 @@
 |---|---|---|---|---|---|---|
 | `registry_status` | registry 容器与健康状态（GET /v2/ 探活） | 无 | ✓ | | ✓ | `{running: bool, port, containerId?, diskBytes?}` |
 | `registry_start` | 一键启动（缺失时 create + 拉 registry:2，bind mount 持久化，幂等） | `port?: int`（默认 5056） | | | ✓ | `{running: true, port, containerId}` |
-| `registry_stop` | 停止 registry（数据保留在 bind mount，不销毁） | 无 | | | ✓ | `{running: false}` |
+| `registry_stop` | 停止 registry（数据保留在 bind mount，不销毁；会中断在途 push/pull，故标 D） | 无 | | ✓ | ✓ | `{running: false}` |
 
 **v1 明确不做**（迷雾/范围外，不暴露为工具）：container export/commit（commit 需 1.6.0，列入 v2 评估）、独立的 image build/push 工具（build/push 仅以策展形态经 `project_build`/`project_publish` 暴露）、network/mount 写操作、DNS 域管理（需 sudo）、builder 管理（CLI 自管）、Machines/K8s、**`container_logs`**（#13 决策：MCP 不提供日志工具，日志查看留 UI 面板；agent 经 `container_exec`/`project_test` 的输出获取信息）。
 
