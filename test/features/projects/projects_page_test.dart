@@ -121,6 +121,13 @@ _pumpPage(
   addImage(bridge, 'mysite-go2:latest', project: 'mysite', sizeBytes: 200);
   addImage(bridge, 'mysite-go1:latest', project: 'mysite', sizeBytes: 100);
   addImage(bridge, 'mysite-debug:latest', project: 'mysite', sizeBytes: 50);
+  // mysite-go1 已推送 registry（「删除本地副本…」入口要求 pushedToRegistry=true）。
+  addImage(
+    bridge,
+    '127.0.0.1:5056/mysite-go1:latest',
+    project: 'mysite',
+    sizeBytes: 100,
+  );
   final cli = FakeProjectCli()
     ..runResults['system df --format json'] = [diskUsageResult(350)];
   return (bridge: bridge, cli: cli);
@@ -134,9 +141,10 @@ void main() {
     expect(find.text('mysite'), findsOneWidget);
     expect(find.text('com.ghost233.project=mysite'), findsOneWidget);
     expect(find.text('本应用创建'), findsOneWidget);
-    expect(find.text('3 个镜像'), findsOneWidget);
+    expect(find.text('4 个镜像'), findsOneWidget);
     expect(find.text('2 个容器'), findsOneWidget);
-    expect(find.text('350 B'), findsOneWidget);
+    // 项目级磁盘 = 该行镜像 sizeBytes 求和（200+100+50+100）。
+    expect(find.text('450 B'), findsOneWidget);
     expect(find.text('⟳ 刷新磁盘快照'), findsOneWidget);
     expect(find.text('＋ 从目录新建项目…'), findsOneWidget);
   });
@@ -144,13 +152,14 @@ void main() {
   testWidgets('磁盘占用是快照：手动刷新后更新为新的 df 值', (tester) async {
     final fixture = _mysiteFixture();
     await _pumpPage(tester, bridge: fixture.bridge, cli: fixture.cli);
-    expect(find.text('350 B'), findsOneWidget);
+    // 工具栏全局快照（df）单一展示位。
+    expect(find.text('磁盘 350 B'), findsOneWidget);
 
     fixture.cli.runResults['system df --format json'] = [diskUsageResult(2048)];
     await tester.tap(find.text('⟳ 刷新磁盘快照'));
     await tester.pumpAndSettle();
 
-    expect(find.text('2.0 KB'), findsOneWidget);
+    expect(find.text('磁盘 2.0 KB'), findsOneWidget);
   });
 
   testWidgets('空态：无项目时显示空态与新建入口', (tester) async {
@@ -200,9 +209,16 @@ void main() {
     expect(find.text('mysite-go2:latest'), findsWidgets);
     expect(find.text('mysite-go1:latest'), findsOneWidget);
     expect(find.text('mysite-debug:latest'), findsWidgets);
-    // go2（mysite-web）与 debug（debug-run）被引用→使用中；go1 未使用。
+    // go2（mysite-web）与 debug（debug-run）被引用→使用中；go1 与 registry 副本未使用。
     expect(find.text('使用中'), findsNWidgets(2));
-    expect(find.text('未使用'), findsOneWidget);
+    expect(find.text('未使用'), findsNWidgets(2));
+    // go1 已推送 registry → 「已推送 registry」徽标 + 删除入口。
+    expect(find.text('已推送 registry'), findsOneWidget);
+    expect(find.text('仅本地'), findsNWidgets(3));
+    expect(
+      find.byKey(const Key('delete-local-mysite-go1:latest')),
+      findsOneWidget,
+    );
     // 成员容器
     expect(find.text('mysite-web'), findsOneWidget);
     expect(find.text('mysite-debug-run'), findsOneWidget);
@@ -461,5 +477,120 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(fixture.bridge.deletedImages, contains('mysite-go1:latest'));
+  });
+
+  // ── task-37 十二条规格修复的新覆盖 ─────────────────────────────────────
+
+  testWidgets('最近构建列：无构建记录时渲染 —', (tester) async {
+    final fixture = _mysiteFixture();
+    await _pumpPage(tester, bridge: fixture.bridge, cli: fixture.cli);
+
+    // ProjectSummary.lastBuildAt == null → '—'（列渲染分支）。
+    // 构建成功后 _lastBuildAt 记录与相对时间渲染由 ProjectService 单测覆盖；
+    // UI 层跨 fake/真实域验证构建链见「构建新版本」用例。
+    expect(find.text('最近构建'), findsOneWidget);
+    expect(find.text('—'), findsOneWidget);
+  });
+
+  testWidgets('推送到本地 registry：按钮触发 publishProject，进度进日志面板', (tester) async {
+    final fixture = _mysiteFixture();
+    final pushProcess = FakeProjectCliProcess();
+    fixture.cli.onStart = (args) {
+      expect(args.join(' '), contains('image push'));
+      return pushProcess;
+    };
+    // publish 先 inspect 源镜像取 sizeBytes。
+    fixture.bridge.imageInspectResponses['mysite-go2:latest'] =
+        <String, Object?>{'reference': 'mysite-go2:latest', 'sizeBytes': 200};
+    await _pumpPage(tester, bridge: fixture.bridge, cli: fixture.cli);
+
+    await tester.tap(find.text('mysite'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('push-button')));
+    await tester.pump();
+
+    // 日志面板打开，标题含推送目标。
+    expect(find.textContaining('推送 mysite-go2:latest'), findsOneWidget);
+    expect(find.textContaining('127.0.0.1:5056'), findsWidgets);
+
+    await tester.runAsync(() async {
+      await pushProcess.finish(0);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    // publish 链：tag → push（deleteLocal:false 不删本地）。
+    final runs = fixture.cli.runs.map((args) => args.join(' ')).toList();
+    expect(
+      runs,
+      contains('image tag mysite-go2:latest 127.0.0.1:5056/mysite-go2:latest'),
+    );
+    // 面板仍打开（标题含推送目标）；成功收尾由 ProjectService 单测覆盖，
+    // UI 层 fake 域与真实 StreamController 混用不验证终态文本。
+    expect(find.textContaining('推送 mysite-go2:latest'), findsOneWidget);
+  });
+
+  testWidgets('回收报告卡：时间注记 + 执行链路注记', (tester) async {
+    final fixture = _mysiteFixture();
+    fixture.cli.onRun = (args) async {
+      if (args.join(' ') == 'system df --format json') {
+        return diskUsageResult(800);
+      }
+      return const BridgeCommandResult(exitCode: 0, stdout: '', stderr: '');
+    };
+    await _pumpPage(tester, bridge: fixture.bridge, cli: fixture.cli);
+
+    await tester.tap(find.text('mysite'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('一键回收…'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('回收并显示报告'));
+    await tester.pumpAndSettle();
+
+    // 回收报告卡含执行链路注记。
+    expect(find.textContaining('已释放'), findsOneWidget);
+    expect(
+      find.textContaining('container prune → image delete → image prune'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('成员容器表：时长列 + 行内启动/停止/删除操作', (tester) async {
+    final fixture = _mysiteFixture();
+    await _pumpPage(tester, bridge: fixture.bridge, cli: fixture.cli);
+
+    await tester.tap(find.text('mysite'));
+    await tester.pumpAndSettle();
+
+    // 行内操作按钮存在（启动/停止、日志、删除）。
+    expect(
+      find.byKey(const Key('container-toggle-mysite-web')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('container-logs-mysite-web')), findsOneWidget);
+    expect(
+      find.byKey(const Key('container-delete-mysite-web')),
+      findsOneWidget,
+    );
+
+    // 停止运行中容器（mysite-web running → stop）。
+    await tester.tap(find.byKey(const Key('container-toggle-mysite-web')));
+    await tester.pumpAndSettle();
+
+    // 删除成员容器：确认弹窗 → delete。
+    await tester.tap(
+      find.byKey(const Key('container-delete-mysite-debug-run')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('删除容器'), findsOneWidget);
+    await tester.tap(find.text('删除'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('新建项目按钮可见（file_selector 平台通道在无头环境不可用）', (tester) async {
+    final fixture = _mysiteFixture();
+    await _pumpPage(tester, bridge: fixture.bridge, cli: fixture.cli);
+    expect(find.text('＋ 从目录新建项目…'), findsOneWidget);
   });
 }

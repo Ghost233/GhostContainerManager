@@ -7,13 +7,15 @@ library;
 
 import 'dart:async';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/placeholders.dart';
 import '../../services/container_service.dart';
 import '../../services/image_service.dart';
 import '../../services/project_service.dart';
-import '../containers/containers_page.dart';
+import '../../ui/text.dart';
+import '../containers/containers_page.dart' show AppOwnedTag;
 import '../system/readiness_controller.dart';
 import 'project_detail.dart';
 
@@ -50,6 +52,9 @@ class _ProjectsPageState extends State<ProjectsPage> {
   /// 磁盘占用快照（bytes）：仅手动刷新更新（终轮拍板，无自动校准）。
   int? _diskBytes;
   bool _diskLoading = false;
+
+  /// 项目级磁盘占用（该行镜像 sizeBytes 求和）：project → bytes。
+  final Map<String, int> _projectDiskBytes = {};
 
   bool get _ready => widget.controller.readiness?.ready ?? false;
 
@@ -90,6 +95,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
       if (_diskBytes == null && !_diskLoading) {
         unawaited(_refreshDiskSnapshot());
       }
+      unawaited(_refreshProjectDiskBytes(projects));
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -104,12 +110,10 @@ class _ProjectsPageState extends State<ProjectsPage> {
     if (_diskLoading) return;
     setState(() => _diskLoading = true);
     try {
-      final report = await widget.service.reclaimProject(
-        project: _projects.isEmpty ? '__none__' : _projects.first.project,
-        dryRun: true,
-      );
+      // 全局磁盘快照：独立 df 查询（不占项目锁，替换 reclaim 借道）。
+      final bytes = await widget.service.diskUsageBytes();
       if (!mounted) return;
-      setState(() => _diskBytes = report.disk.beforeBytes);
+      setState(() => _diskBytes = bytes);
     } catch (_) {
       // 磁盘快照失败不阻塞列表；保持旧值或空。
     } finally {
@@ -123,6 +127,43 @@ class _ProjectsPageState extends State<ProjectsPage> {
     return _projects
         .where((p) => p.project.toLowerCase().contains(query))
         .toList(growable: false);
+  }
+
+  /// 项目级磁盘占用：对每行 getProject 取 ProjectDetails.images 求和 sizeBytes。
+  /// ProjectSummary.images 仅引用无 sizeBytes，故逐项目求和（项目数少，N+1 可接受）。
+  Future<void> _refreshProjectDiskBytes(List<ProjectSummary> projects) async {
+    for (final summary in projects) {
+      try {
+        final details = await widget.service.getProject(
+          project: summary.project,
+        );
+        if (!mounted) return;
+        final total = details.images.fold<int>(
+          0,
+          (sum, image) => sum + (image.sizeBytes ?? 0),
+        );
+        setState(() => _projectDiskBytes[summary.project] = total);
+      } catch (_) {
+        // 单项目求和失败不阻塞列表；保持缺省。
+      }
+    }
+  }
+
+  /// 从目录新建项目：选目录 → initProject（prefix 读 ghostcontainer.toml）→ 刷新。
+  Future<void> _initProject() async {
+    final path = await getDirectoryPath(confirmButtonText: '选择项目目录');
+    if (path == null || !mounted) return;
+    try {
+      final project = await widget.service.initProject(path: path);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('已创建项目 ${project.prefix}')));
+      await _refresh();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('新建项目失败：$error')));
+    }
   }
 
   @override
@@ -161,7 +202,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
       child: Row(
         children: [
           ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 280),
+            constraints: const BoxConstraints(maxWidth: 240),
             child: SizedBox(
               height: 32,
               child: TextField(
@@ -178,6 +219,17 @@ class _ProjectsPageState extends State<ProjectsPage> {
             ),
           ),
           const Spacer(),
+          // 全局磁盘快照（df）：工具栏单一展示位（第 7 条）。
+          if (_diskBytes != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Text(
+                '磁盘 ${formatBytes(_diskBytes!)}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.outline,
+                ),
+              ),
+            ),
           OutlinedButton.icon(
             key: const Key('refresh-disk-snapshot'),
             onPressed: _diskLoading ? null : _refreshDiskSnapshot,
@@ -191,7 +243,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
           const SizedBox(width: 8),
           FilledButton.icon(
             key: const Key('init-project-button'),
-            onPressed: () {},
+            onPressed: _initProject,
             icon: const Icon(Icons.add, size: 16),
             label: const Text('＋ 从目录新建项目…'),
             style: FilledButton.styleFrom(
@@ -214,7 +266,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
     final rows = _filtered;
     if (rows.isEmpty) {
       return _search.isEmpty
-          ? const _EmptyState()
+          ? _EmptyState(onInit: _initProject)
           : Center(
               child: Text(
                 '没有匹配「$_search」的项目',
@@ -230,7 +282,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
             itemCount: rows.length,
             itemBuilder: (context, index) => _ProjectRow(
               summary: rows[index],
-              diskBytes: _diskBytes,
+              diskBytes: _projectDiskBytes[rows[index].project],
               onTap: () =>
                   setState(() => _selectedProject = rows[index].project),
             ),
@@ -344,7 +396,12 @@ class _ProjectRow extends StatelessWidget {
             ),
             SizedBox(
               width: 120,
-              child: Text('—', style: theme.textTheme.bodySmall),
+              child: Text(
+                summary.lastBuildAt == null
+                    ? '—'
+                    : formatRelative(summary.lastBuildAt!),
+                style: theme.textTheme.bodySmall,
+              ),
             ),
           ],
         ),
@@ -354,7 +411,9 @@ class _ProjectRow extends StatelessWidget {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+  const _EmptyState({required this.onInit});
+
+  final VoidCallback onInit;
 
   @override
   Widget build(BuildContext context) {
@@ -379,7 +438,7 @@ class _EmptyState extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           FilledButton.icon(
-            onPressed: () {},
+            onPressed: onInit,
             icon: const Icon(Icons.add, size: 16),
             label: const Text('＋ 从目录新建项目…'),
           ),
