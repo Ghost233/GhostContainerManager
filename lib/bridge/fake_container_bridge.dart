@@ -186,6 +186,13 @@ class FakeContainerBridge implements ContainerBridge {
 
   final List<Map<String, Object?>> createRequests = <Map<String, Object?>>[];
   final List<Map<String, Object?>> killRequests = <Map<String, Object?>>[];
+  final List<Map<String, Object?>> execRequests = <Map<String, Object?>>[];
+  BridgeExecResult execResult = const BridgeExecResult(
+    exitCode: 0,
+    stdout: '',
+    stderr: '',
+  );
+  Completer<void>? execGate;
   int startCalls = 0;
   int stopCalls = 0;
   int deleteCalls = 0;
@@ -283,6 +290,29 @@ class FakeContainerBridge implements ContainerBridge {
     if (signal == 'KILL' || signal == 'SIGKILL' || signal == '9') {
       _setContainerState(id, 'stopped');
     }
+  }
+
+  @override
+  Future<BridgeExecResult> containerExec({
+    required String id,
+    required List<String> command,
+    List<String> env = const [],
+    String? workdir,
+    String? user,
+    int timeoutSeconds = 60,
+  }) async {
+    calls.add('containerExec:$id');
+    execRequests.add(<String, Object?>{
+      'id': id,
+      'command': command,
+      'env': env,
+      'workdir': workdir,
+      'user': user,
+      'timeoutSeconds': timeoutSeconds,
+    });
+    _throwWriteFailure('exec', id);
+    if (execGate != null) await execGate!.future;
+    return execResult;
   }
 
   void _throwWriteFailure(String operation, String id) {

@@ -481,6 +481,70 @@ void registerContainerTools(McpServer server, ContainerService service) {
       );
     }),
   );
+
+  server.registerTool(
+    'container_exec',
+    title: 'Execute Container Command',
+    description:
+        '在运行中的容器内执行一次性非 TTY 命令。command 为 argv 数组，不经过 shell；'
+        '分别返回 stdout/stderr（各最多 64 KiB）、退出码与截断标记。'
+        '非零退出码是命令结果而非工具错误。timeoutSeconds 默认 60，最大 600。',
+    inputSchema: JsonObject(
+      properties: <String, JsonSchema>{
+        'id': const JsonString(description: '运行中容器 id'),
+        'command': const JsonArray(
+          description: '可执行文件及参数的 argv 数组',
+          items: JsonString(),
+        ),
+        'timeoutSeconds': const JsonInteger(
+          description: '等待命令退出的秒数',
+          defaultValue: 60,
+          minimum: 1,
+          maximum: 600,
+        ),
+        'workdir': const JsonString(description: '容器内工作目录'),
+        'env': const JsonObject(
+          description: '覆盖容器环境变量的键值对象',
+          additionalProperties: JsonString(),
+        ),
+      },
+      required: ['id', 'command'],
+      additionalProperties: false,
+    ),
+    outputSchema: JsonObject(
+      properties: <String, JsonSchema>{
+        'exitCode': const JsonInteger(),
+        'stdout': const JsonString(),
+        'stderr': const JsonString(),
+        'truncated': const JsonBoolean(),
+      },
+      required: ['exitCode', 'stdout', 'stderr', 'truncated'],
+      additionalProperties: false,
+    ),
+    annotations: _writeAnnotations(
+      'Execute Container Command',
+      idempotent: false,
+    ),
+    callback: (args, extra) => guardToolCall(() async {
+      final result = await service.exec(
+        args['id'] as String,
+        command: (args['command'] as List).cast<String>(),
+        timeoutSeconds: args['timeoutSeconds'] as int? ?? 60,
+        workdir: args['workdir'] as String?,
+        env:
+            (args['env'] as Map?)?.map(
+              (key, value) => MapEntry(key as String, value as String),
+            ) ??
+            const <String, String>{},
+      );
+      return (
+        data: result.toJson(),
+        summary:
+            '命令已结束，退出码 ${result.exitCode}'
+            '${result.truncated ? '；输出已达 64 KiB 上限并截断' : ''}',
+      );
+    }),
+  );
 }
 
 String _mb(int? bytes) {

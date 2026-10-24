@@ -370,6 +370,70 @@ void main() {
     expect(find.text('web-frontend'), findsNothing);
   });
 
+  testWidgets('终端：一次性命令展示 stdout、stderr、退出码与截断标记', (tester) async {
+    final fake = _twoContainers()
+      ..execResult = const BridgeExecResult(
+        exitCode: 23,
+        stdout: 'hello from stdout',
+        stderr: 'warning from stderr',
+        stdoutTruncated: true,
+        stderrTruncated: true,
+      );
+    await _pumpPage(tester, fake);
+    await tester.tap(find.text('web-frontend'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('终端'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('container-terminal-command')),
+      'printf "hello world"',
+    );
+    await tester.tap(find.byKey(const Key('container-terminal-run')));
+    await tester.pumpAndSettle();
+
+    expect(fake.execRequests.single, <String, Object?>{
+      'id': 'web-frontend',
+      'command': <String>['printf', 'hello world'],
+      'env': <String>[],
+      'workdir': null,
+      'user': null,
+      'timeoutSeconds': 60,
+    });
+    expect(find.text('退出码 23'), findsOneWidget);
+    expect(find.text('hello from stdout'), findsOneWidget);
+    expect(find.text('warning from stderr'), findsOneWidget);
+    expect(find.textContaining('stdout 已截断至 64 KiB'), findsOneWidget);
+    expect(find.textContaining('stderr 已截断至 64 KiB'), findsOneWidget);
+  });
+
+  testWidgets('终端：Service 错误在执行区展示且允许重试', (tester) async {
+    final fake = _twoContainers()
+      ..writeFailures['exec:web-frontend'] = 'exec permission denied';
+    await _pumpPage(tester, fake);
+    await tester.tap(find.text('web-frontend'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('终端'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('container-terminal-command')),
+      'id -u',
+    );
+    await tester.tap(find.byKey(const Key('container-terminal-run')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('执行失败：'), findsOneWidget);
+    expect(
+      find.textContaining('Permission denied during exec'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('PERMISSION_DENIED'), findsOneWidget);
+    final run = tester.widget<FilledButton>(
+      find.byKey(const Key('container-terminal-run')),
+    );
+    expect(run.onPressed, isNotNull);
+  });
+
   testWidgets('日志视图只保留尾部 5000 行', (tester) async {
     final fake = _twoContainers()
       ..logResponses['web-frontend'] = [

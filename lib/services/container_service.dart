@@ -13,6 +13,7 @@ library;
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
+import 'dart:convert';
 
 import '../bridge/container_bridge.dart';
 import 'container_logs_parser.dart';
@@ -42,7 +43,35 @@ class ContainerQuery {
 /// shared by every UI/MCP subscriber rather than being written into raw JSON.
 enum ContainerActivity { creating, starting, stopping, restarting, deleting }
 
-enum _ContainerWriteKind { create, start, stop, restart, delete, kill }
+enum _ContainerWriteKind { create, start, stop, restart, delete, kill, exec }
+
+/// Exit code and bounded, separately captured output from a one-shot process.
+class ContainerExecResult {
+  const ContainerExecResult({
+    required this.exitCode,
+    required this.stdout,
+    required this.stderr,
+    this.stdoutTruncated = false,
+    this.stderrTruncated = false,
+  });
+
+  static const int maxOutputBytes = 64 * 1024;
+
+  final int exitCode;
+  final String stdout;
+  final String stderr;
+  final bool stdoutTruncated;
+  final bool stderrTruncated;
+
+  bool get truncated => stdoutTruncated || stderrTruncated;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'exitCode': exitCode,
+    'stdout': stdout,
+    'stderr': stderr,
+    'truncated': truncated,
+  };
+}
 
 /// Read and write side of the container domain: snapshots, adaptive refresh
 /// (2s foreground / 10s background, orchard pattern), stats, logs.
@@ -192,6 +221,105 @@ class ContainerService {
     } on BridgeCallException catch (e) {
       throw mapContainerFailure(e, operation: 'stats', id: id);
     }
+  }
+
+  /// Execute one non-TTY process in a running container. A non-zero process
+  /// exit is returned as data; bridge/runtime failures remain structured
+  /// exceptions. stdout and stderr are independently capped at 64 KiB.
+  Future<ContainerExecResult> exec(
+    String id, {
+    required List<String> command,
+    Map<String, String> env = const {},
+    String? workdir,
+    String? user,
+    int timeoutSeconds = 60,
+  }) {
+    final containerId = _validId(id);
+    if (command.isEmpty || command.first.trim().isEmpty) {
+      return Future<ContainerExecResult>.error(
+        const GcmException(
+          GcmErrorCode.invalidArgument,
+          'Exec command must contain a non-empty executable.',
+        ),
+      );
+    }
+    if (timeoutSeconds < 1 || timeoutSeconds > 600) {
+      return Future<ContainerExecResult>.error(
+        const GcmException(
+          GcmErrorCode.invalidArgument,
+          'Exec timeout must be between 1 and 600 seconds.',
+        ),
+      );
+    }
+    for (final entry in env.entries) {
+      if (entry.key.isEmpty ||
+          entry.key.contains('=') ||
+          entry.key.contains('\u0000') ||
+          entry.value.contains('\u0000')) {
+        return Future<ContainerExecResult>.error(
+          GcmException(
+            GcmErrorCode.invalidArgument,
+            'Invalid exec environment entry: "${entry.key}".',
+          ),
+        );
+      }
+    }
+    final current = _containerOrNull(containerId);
+    if (current != null && current.state != ContainerState.running) {
+      return Future<ContainerExecResult>.error(
+        GcmException(
+          GcmErrorCode.conflict,
+          'Container "$containerId" is not running; exec requires a running '
+          'container.',
+          hint: 'Start the container first.',
+        ),
+      );
+    }
+    final environment = env.entries
+        .map((entry) => '${entry.key}=${entry.value}')
+        .toList(growable: false);
+    return _enqueue<ContainerExecResult>(
+      id: containerId,
+      kind: _ContainerWriteKind.exec,
+      activity: null,
+      action: () async {
+        final inspected = await inspect(containerId);
+        if (inspected.state != ContainerState.running) {
+          throw GcmException(
+            GcmErrorCode.conflict,
+            'Container "$containerId" is not running; exec requires a '
+            'running container.',
+            hint: 'Start the container first.',
+          );
+        }
+        final result = await _bridge.containerExec(
+          id: containerId,
+          command: command,
+          env: environment,
+          workdir: workdir,
+          user: user,
+          timeoutSeconds: timeoutSeconds,
+        );
+        if (result.timedOut) {
+          throw GcmException(
+            GcmErrorCode.timeout,
+            'Exec in container "$containerId" timed out after '
+            '$timeoutSeconds seconds.',
+            hint: 'The process may still be running inside the container.',
+            source: 'xpc',
+          );
+        }
+        final stdout = _boundedOutput(result.stdout);
+        final stderr = _boundedOutput(result.stderr);
+        return ContainerExecResult(
+          exitCode: result.exitCode,
+          stdout: stdout.value,
+          stderr: stderr.value,
+          stdoutTruncated: result.stdoutTruncated || stdout.truncated,
+          stderrTruncated: result.stderrTruncated || stderr.truncated,
+        );
+      },
+    );
   }
 
   /// Create a container from a local image and optionally start it.
@@ -393,7 +521,9 @@ class ContainerService {
       () => <_PendingContainerOperation<dynamic>>[],
     );
     for (final pending in queue) {
-      if (pending.kind == kind) return pending.future as Future<T>;
+      if (pending.kind == kind && kind != _ContainerWriteKind.exec) {
+        return pending.future as Future<T>;
+      }
     }
     if (kind == _ContainerWriteKind.delete &&
         queue.any(
@@ -532,6 +662,19 @@ class ContainerService {
       );
     }
     return value;
+  }
+
+  static ({String value, bool truncated}) _boundedOutput(String value) {
+    final bytes = utf8.encode(value);
+    if (bytes.length <= ContainerExecResult.maxOutputBytes) {
+      return (value: value, truncated: false);
+    }
+    var end = ContainerExecResult.maxOutputBytes;
+    // Do not split a multi-byte UTF-8 code point at the byte budget.
+    while (end > 0 && (bytes[end] & 0xc0) == 0x80) {
+      end--;
+    }
+    return (value: utf8.decode(bytes.sublist(0, end)), truncated: true);
   }
 
   static int _validTimeout(int seconds) {

@@ -1,9 +1,7 @@
-/// 容器检查器（ui-ia.md D2 A1）：标签页详情 = 概览 + 日志（实时滚动）。
+/// 容器检查器（ui-ia.md D2 A1）：概览 + 日志 + 一次性终端。
 ///
-/// 概览 = inspect 全量配置 + stats 快照（验收 #17 标准 2：CPU/内存等
-/// XPC 可得字段可见）；日志 = XPC 双 FileHandle 流（stdio/boot），
-/// UI 专属（MCP 无 logs 工具，#13 策展决策）。终端标签归后续写操作
-/// 任务（#18/D3），本页不含。
+/// 概览 = inspect 全量配置 + stats 快照；日志 = XPC 双 FileHandle 流；
+/// 终端 = 非 TTY argv exec，不经过 shell，不保存交互式会话。
 library;
 
 import 'dart:async';
@@ -32,7 +30,7 @@ class ContainerDetailView extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -60,6 +58,7 @@ class ContainerDetailView extends StatelessWidget {
             tabs: [
               Tab(text: '概览'),
               Tab(text: '日志'),
+              Tab(text: '终端'),
             ],
           ),
           Expanded(
@@ -67,6 +66,10 @@ class ContainerDetailView extends StatelessWidget {
               children: [
                 _OverviewTab(service: service, containerId: containerId),
                 ContainerLogTab(service: service, containerId: containerId),
+                _ContainerTerminalTab(
+                  service: service,
+                  containerId: containerId,
+                ),
               ],
             ),
           ),
@@ -339,6 +342,247 @@ class _StatsCard extends StatelessWidget {
       ],
     );
   }
+}
+
+/// 一次性终端：只提交 argv，不在主机或容器内隐式启动 shell。
+class _ContainerTerminalTab extends StatefulWidget {
+  const _ContainerTerminalTab({
+    required this.service,
+    required this.containerId,
+  });
+
+  final ContainerService service;
+  final String containerId;
+
+  @override
+  State<_ContainerTerminalTab> createState() => _ContainerTerminalTabState();
+}
+
+class _ContainerTerminalTabState extends State<_ContainerTerminalTab>
+    with AutomaticKeepAliveClientMixin {
+  final TextEditingController _command = TextEditingController();
+  ContainerExecResult? _result;
+  Object? _error;
+  bool _running = false;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void dispose() {
+    _command.dispose();
+    super.dispose();
+  }
+
+  Future<void> _execute() async {
+    if (_running) return;
+    final List<String> command;
+    try {
+      command = _parseArgv(_command.text);
+    } on FormatException catch (error) {
+      setState(() {
+        _error = error;
+        _result = null;
+      });
+      return;
+    }
+    setState(() {
+      _running = true;
+      _error = null;
+      _result = null;
+    });
+    try {
+      final result = await widget.service.exec(
+        widget.containerId,
+        command: command,
+      );
+      if (!mounted) return;
+      setState(() => _result = result);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    final theme = Theme.of(context);
+    final result = _result;
+    final error = _error;
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        Text('一次性终端', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 8),
+        Text(
+          '非 TTY；按 argv 执行并支持引号，不经过 shell。需要管道或重定向时请显式运行 /bin/sh -c。',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.outline,
+          ),
+        ),
+        const SizedBox(height: 16),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 32,
+                child: TextField(
+                  key: const Key('container-terminal-command'),
+                  controller: _command,
+                  enabled: !_running,
+                  style: monoTextStyle(context),
+                  decoration: const InputDecoration(
+                    hintText: '命令与参数，例如：printf "hello world"',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                  ),
+                  onSubmitted: (_) => _execute(),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            FilledButton(
+              key: const Key('container-terminal-run'),
+              style: FilledButton.styleFrom(minimumSize: const Size(88, 32)),
+              onPressed: _running ? null : _execute,
+              child: Text(_running ? '执行中…' : '执行'),
+            ),
+          ],
+        ),
+        if (_running) ...[
+          const SizedBox(height: 12),
+          const LinearProgressIndicator(minHeight: 2),
+        ],
+        if (error != null) ...[
+          const SizedBox(height: 16),
+          Text(
+            '执行失败：$error',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.error,
+            ),
+          ),
+        ],
+        if (result != null) ...[
+          const SizedBox(height: 16),
+          Text(
+            '退出码 ${result.exitCode}',
+            key: const Key('container-terminal-exit-code'),
+            style: theme.textTheme.titleSmall?.copyWith(
+              color: result.exitCode == 0 ? null : theme.colorScheme.error,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _TerminalOutput(
+            label: 'stdout',
+            output: result.stdout,
+            truncated: result.stdoutTruncated,
+          ),
+          const SizedBox(height: 12),
+          _TerminalOutput(
+            label: 'stderr',
+            output: result.stderr,
+            truncated: result.stderrTruncated,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _TerminalOutput extends StatelessWidget {
+  const _TerminalOutput({
+    required this.label,
+    required this.output,
+    required this.truncated,
+  });
+
+  final String label;
+  final String output;
+  final bool truncated;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(label, style: theme.textTheme.titleSmall),
+            if (truncated) ...[
+              const SizedBox(height: 4),
+              Text(
+                '$label 已截断至 64 KiB，仅显示保留的前缀',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            SelectableText(
+              output.isEmpty ? '（无输出）' : output,
+              style: monoTextStyle(context),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+List<String> _parseArgv(String input) {
+  final arguments = <String>[];
+  final current = StringBuffer();
+  String? quote;
+  var escaped = false;
+  var started = false;
+  for (final character in input.runes) {
+    final value = String.fromCharCode(character);
+    if (escaped) {
+      current.write(value);
+      escaped = false;
+      started = true;
+    } else if (value == r'\' && quote != "'") {
+      escaped = true;
+      started = true;
+    } else if (quote != null) {
+      if (value == quote) {
+        quote = null;
+      } else {
+        current.write(value);
+      }
+      started = true;
+    } else if (value == "'" || value == '"') {
+      quote = value;
+      started = true;
+    } else if (value.trim().isEmpty) {
+      if (started) {
+        arguments.add(current.toString());
+        current.clear();
+        started = false;
+      }
+    } else {
+      current.write(value);
+      started = true;
+    }
+  }
+  if (escaped || quote != null) {
+    throw const FormatException('命令包含未闭合的引号或转义符');
+  }
+  if (started) arguments.add(current.toString());
+  if (arguments.isEmpty || arguments.first.isEmpty) {
+    throw const FormatException('请输入要执行的命令');
+  }
+  return List<String>.unmodifiable(arguments);
 }
 
 /// 日志标签页：stdio/boot 双源实时滚动；上滚暂停跟随，回到底部恢复。

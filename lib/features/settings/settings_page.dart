@@ -1,16 +1,19 @@
-/// 设置页（T1b 范围：MCP 区块，issue #16 验收 4；ui-ia.md D9）。
-/// 其余区块（通用 / Container 路径 / 菜单栏）由后续任务补齐。
+/// 设置页：通用偏好与内置 MCP 服务。
 library;
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../app/menu_bar_controller.dart';
 import 'mcp_settings_controller.dart';
 
 class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key, required this.mcp});
+  const SettingsPage({super.key, required this.mcp, required this.menuBar});
 
   final McpSettingsController mcp;
+  final MenuBarController menuBar;
 
   @override
   Widget build(BuildContext context) {
@@ -22,12 +25,107 @@ class SettingsPage extends StatelessWidget {
           children: [
             Text('设置', style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 24),
+            _GeneralSection(menuBar: menuBar),
+            const SizedBox(height: 24),
             _McpSection(mcp: mcp),
             const SizedBox(height: 24),
             const _AboutSection(),
           ],
         );
       },
+    );
+  }
+}
+
+class _GeneralSection extends StatelessWidget {
+  const _GeneralSection({required this.menuBar});
+
+  final MenuBarController menuBar;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('通用', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 16),
+            Text('外观', style: theme.textTheme.titleSmall),
+            ListenableBuilder(
+              listenable: menuBar,
+              builder: (context, _) => Column(
+                children: [
+                  SwitchListTile(
+                    key: const Key('settings-menu-bar-visible'),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('显示菜单栏图标'),
+                    subtitle: const Text('在 macOS 菜单栏显示运行状态和快捷操作'),
+                    value: menuBar.visible,
+                    onChanged: (value) => unawaited(menuBar.setVisible(value)),
+                  ),
+                  if (menuBar.lastError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        '菜单栏操作失败：${menuBar.lastError}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.error,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text('行为', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 12),
+            ListenableBuilder(
+              listenable: menuBar,
+              builder: (context, _) => DropdownButtonFormField<String>(
+                key: const Key('settings-default-start-page'),
+                initialValue: menuBar.defaultStartPage,
+                decoration: const InputDecoration(
+                  labelText: '默认启动页',
+                  helperText: '下次启动主窗口时显示',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                items: kDefaultStartPages
+                    .map(
+                      (page) => DropdownMenuItem<String>(
+                        value: page,
+                        child: Text(page),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (page) {
+                  if (page != null) {
+                    unawaited(menuBar.setDefaultStartPage(page));
+                  }
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              key: const Key('settings-language'),
+              initialValue: 'zh',
+              decoration: const InputDecoration(
+                labelText: '语言',
+                helperText: 'v1 仅支持中文',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: const [
+                DropdownMenuItem<String>(value: 'zh', child: Text('中文')),
+              ],
+              onChanged: null,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

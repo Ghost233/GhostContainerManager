@@ -66,7 +66,7 @@ running/stopped(autoRemove) --退出--> 消失
 | 操作 | 上游路径 | 精确定义（v1 语义） | 参数与默认值 | 幂等性 |
 |---|---|---|---|---|
 | list | `ContainerClient.list()` | 全量快照（含 config+status+networks+startedDate）。**资源全可见**：不做 orchard 的 machine backing 过滤（见 §4 差异点） | 无 | 只读 |
-| create | `ClientImage.fetch` → `client.create` | 拉镜像（缺时）→ 落盘配置。落盘后状态=stopped，不启动 | autoRemove 默认 false（对应 `container run --rm` 的反面；UI 暴露为「退出后自动删除」开关）；内存下限 200 MiB 由上游校验 | 同名报错，非幂等 |
+| create | `ClientImage.get` → `client.create` | **本地镜像-only**（2026-10-24 用户拍板，修正原「缺时自动 fetch」）：镜像必须已存在，缺失时立即报错并提示先 `image_pull`（避免 create 隐式变成分钟级长操作；pulling 合成态随之取消）。落盘后状态=stopped，不启动 | autoRemove 默认 false（对应 `container run --rm` 的反面；UI 暴露为「退出后自动删除」开关）；v1 创建面=name/image/command/env/ports/mounts/labels/network/start（cpus/memoryBytes 延 v2，审查 P1 裁决）；内存下限 200 MiB 由上游校验 | 同名报错，非幂等 |
 | start | `bootstrap` + `startProcess` | 注册 launchd runtime 服务并拉起 init 进程；stdio 全 nil（后台容器语义） | 无参数 | 上游幂等（running 时 no-op） |
 | stop | `client.stop(id, opts)` | 向 init 发停止信号，等待优雅超时后 runtime 升级 SIGKILL；完成后清理 runtime 服务，状态回 stopped | `timeoutInSeconds` 默认 **5**（=`ContainerStopOptions.default` 与 CLI `--time` 默认）；`signal` 默认 nil → 用容器配置 `stopSignal` → 再缺省 SIGTERM | 上游幂等 |
 | restart | **上游无此命令**（CLI 与 orchard 均无） | Service layer 合成：`stop(默认参数)` 成功后 `start`。非原子；stop 幂等所以 restart 一个 stopped 容器 = 纯 start | 参数继承 stop | 合成操作，可安全重试 |
@@ -77,7 +77,7 @@ running/stopped(autoRemove) --退出--> 消失
 补充语义细节：
 
 - **stop 的升级路径**：`ContainerStopOptions{timeoutInSeconds, signal}` 交给 runtime 执行「signal → 等 timeout → SIGKILL」。这与 Docker 语义一致，只是默认 5s 而非 Docker 的 10s。
-- **kill**：v1 操作清单未列 kill，但 XPC 有 `kill(id, signal)`。建议 Service layer 内部保留能力（stop 超时升级、exec 超时清理都用得到），UI/MCP 不暴露独立 kill 操作。
+- **kill**：XPC 有 `kill(id, signal)`。v1 决定（issue #18 拍板）：MCP 暴露 `container_kill`（默认 `KILL`，destructive，供 agent 在 stop 无效时使用）；UI 不暴露独立 kill（stop 的超时升级已覆盖强杀需求，避免误操作）。Service layer 内部能力保留（stop 超时升级、exec 超时清理）。
 - **autoRemove 容器消失**：list 轮询时条目会无预警消失。UI 需要把「条目消失」当正常事件处理（从列表移除+轻提示），不当错误。
 - **stats**：单次快照（cpuUsageUsec/memoryUsageBytes/memoryLimitBytes/networkRx/Tx/blockRead/Write/numProcesses），流式=Service layer 轮询（列表页 2s，详情页 10s——与 bridge 调研建议一致）。仅 running 容器可取。
 
@@ -136,7 +136,7 @@ running/stopped(autoRemove) --退出--> 消失
 4. **logs 初始加载量与 follow 默认**：推荐 末尾 500 行 + follow 默认开。→ 推荐：**500 行 + follow 开**。
 5. **退出码展示限制**：推荐 仅展示 app 运行期间观察到的退出码，详情页标注「退出码仅在 App 运行期间可见」（上游不持久化）。备选 轮询 wait 常驻追踪所有容器（成本高、重启仍丢失）。→ 推荐：**best-effort 观察**。
 6. **machine backing 容器**：推荐 可见且可操作，但标注来源插件。→ 推荐：**可见+打标**（已定「资源全可见」的推论，列出仅作确认）。
-7. **kill 是否作为独立用户操作**：推荐 不暴露独立 kill（stop 的超时升级已覆盖强杀需求；exec 超时清理由内部使用）。→ 推荐：**不暴露**。
+7. **kill 是否作为独立用户操作**：已拍板（issue #18）：MCP 暴露 `container_kill`（默认 `KILL`；stop 无效时的最后手段），UI 不暴露；Service layer 内部仍用于 stop 超时升级与 exec 超时清理。→ 结论：**MCP 暴露、UI 不暴露**。
 
 ## 7. GLOSSARY 新术语（建议追加）
 

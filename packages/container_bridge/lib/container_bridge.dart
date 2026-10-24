@@ -37,6 +37,7 @@ abstract final class ContainerBridgeMethods {
   static const String containerStop = 'container.stop';
   static const String containerDelete = 'container.delete';
   static const String containerKill = 'container.kill';
+  static const String containerExec = 'container.exec';
   static const String networkList = 'network.list';
   static const String networkInspect = 'network.inspect';
   static const String composeHelp = 'compose.help';
@@ -184,6 +185,24 @@ class ContainerBridgeChannel {
   }) => _invoke(ContainerBridgeMethods.containerKill, <String, Object?>{
     'id': id,
     'signal': signal,
+  });
+
+  /// Execute one non-TTY process and return its exit code and separate output
+  /// streams. Each stream is capped by the native bridge at 64 KiB.
+  Future<Map<String, Object?>> containerExec({
+    required String id,
+    required List<String> command,
+    List<String> env = const [],
+    String? workdir,
+    String? user,
+    int timeoutSeconds = 60,
+  }) => _invoke(ContainerBridgeMethods.containerExec, <String, Object?>{
+    'id': id,
+    'command': command,
+    'env': env,
+    'workdir': ?workdir,
+    'user': ?user,
+    'timeoutSeconds': timeoutSeconds,
   });
 
   /// `container network ls --format json`.

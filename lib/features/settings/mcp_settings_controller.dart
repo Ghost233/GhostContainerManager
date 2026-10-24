@@ -5,17 +5,20 @@
 /// exposes presentation state for the settings page. The server instance is
 /// created lazily so a port edit takes effect on the next start.
 ///
-/// 注意：「最近 MCP 调用简表」需要 GcmMcpServer 提供调用记录 hook（lib/mcp
-/// 属服务侧范围），本控制器先暴露空的只读列表占位。
+/// 注意：「最近 MCP 调用简表」的数据由 [GcmMcpServer.auditor] 记录，本控制器
+/// 只暴露只读快照并在有新调用时 notifyListeners。
 library;
 
 // Public named parameters keep their names; the initializing-formals lint
 // cannot apply to private fields (same pattern as mcp_server.dart).
 // ignore_for_file: prefer_initializing_formals
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../mcp/mcp_server.dart';
+import '../../mcp/tool_audit.dart';
 import '../../services/compose_service.dart';
 import '../../services/container_service.dart';
 import '../../services/image_service.dart';
@@ -31,12 +34,18 @@ class McpSettingsController extends ChangeNotifier {
     MountService? mountService,
     NetworkService? networkService,
     ComposeService? composeService,
+    McpToolAuditor? auditor,
   }) : _systemService = systemService,
        _containerService = containerService,
        _imageService = imageService,
        _mountService = mountService,
        _networkService = networkService,
-       _composeService = composeService;
+       _composeService = composeService,
+       _auditor = auditor ?? McpToolAuditor() {
+    _auditorSub = _auditor.changes.listen((_) {
+      if (!_disposed) notifyListeners();
+    });
+  }
 
   final SystemService _systemService;
   final ContainerService _containerService;
@@ -44,6 +53,9 @@ class McpSettingsController extends ChangeNotifier {
   final MountService? _mountService;
   final NetworkService? _networkService;
   final ComposeService? _composeService;
+  final McpToolAuditor _auditor;
+  StreamSubscription<void>? _auditorSub;
+  bool _disposed = false;
   GcmMcpServer? _server;
 
   /// 开关状态（MCP-first：默认开启）。
@@ -60,8 +72,8 @@ class McpSettingsController extends ChangeNotifier {
   /// 最近一次启动/停止失败原因。
   String? lastError;
 
-  /// 最近调用简表占位：服务侧尚无调用记录 hook，恒为空。
-  List<Object> get recentCalls => const [];
+  /// Newest-first call history (bounded by [McpToolAuditor.capacity]).
+  List<McpCallRecord> get recentCalls => _auditor.records;
 
   String get endpoint => 'http://127.0.0.1:${boundPort ?? port}/mcp';
 
@@ -92,6 +104,7 @@ class McpSettingsController extends ChangeNotifier {
       networkService: _networkService,
       composeService: _composeService,
       port: port,
+      auditor: _auditor,
     );
     try {
       await server.start();
@@ -114,5 +127,13 @@ class McpSettingsController extends ChangeNotifier {
     boundPort = null;
     await server?.stop();
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _auditorSub?.cancel();
+    _auditorSub = null;
+    super.dispose();
   }
 }

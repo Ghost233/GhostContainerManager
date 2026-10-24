@@ -22,13 +22,13 @@
 | — | P0 Flutter 脚手架 | platform-analyst | — | 完成（#14，merge 807ec04） |
 | #16 T1 | 运行时通路与 MCP 骨架（onboarding + system_* + MCP server） | task-15 mcp-architect（服务侧）/ task-16 platform-analyst（UI 侧） | — / task-15 | 完成（merge 2508965） |
 | #17 T2 | 容器只读通路（列表/详情/日志 + 只读工具） | task-17 lifecycle-analyst / task-18 ui-prototyper | task-15 / +task-16 | 完成（2508965 + 085b9b7） |
-| #18 T3 | 容器写操作全栈 | task-19 lifecycle-builder | task-17、task-18 | 进行中（含 container_kill 与审查修复） |
-| #19 T4 | exec 终端与菜单栏 | task-20 ui-prototyper | task-19 | 待 T3 |
+| #18 T3 | 容器写操作全栈 | task-19 lifecycle-builder | task-17、task-18 | 完成（4f1cb2b；双轴审查进行中） |
+| #19 T4 | exec 终端与菜单栏 | task-20 terminal-builder | task-19 | 进行中 |
 | #20 T5 | 镜像通路全栈 | task-21 mcp-architect / task-27 mcp-fixer | task-15、task-16 | 已实现（085b9b7），审查修复中 |
 | #21 T6 | 挂载/网络/Compose 通路 | task-22 platform-analyst / task-28 platform-fixer | task-15、task-16 | 已实现（085b9b7），审查修复与构建验证中 |
 | #22 T7 | 项目工作流与 registry（服务层 + 11 工具） | task-23 mcp-architect | task-19、task-21 | 待 T3、T5 |
 | #23 T8 | 项目页 UI（D11 终轮版） | task-24 ui-prototyper | task-23 | 待 T7 |
-| #24 T9 | MacLauncher 集成 | task-25 platform-analyst | task-19 | 待 T3 |
+| #24 T9 | MacLauncher 集成 | task-25 platform-fixer | task-19 | 进行中 |
 
 审查点：T1 完成后阶段审查（Standards+Spec）；其后按 T2/T5/T6、T3/T4、T7/T8、T9 分批审查；最终总审查覆盖 e75fcfa..总候选。
 
@@ -57,4 +57,16 @@
 - 构建门禁：当前批次已通过。早先 run-44LdNO 失败（GeneratedPluginRegistrant/macOS 12.0 诊断）未再复现；保留 ImageOps imports 与 Package.swift products 修复后，platform-fixer 在 HEAD `085b9b7` + 当前工作区复跑 `flutter build macos --debug`，PIPESTATUS[0]=0，生成 `build/macos/Build/Products/Debug/GhostContainerManager.app`，未改 macos 文件（三处 deployment target 本已 15.0）。最终复验日志 `/tmp/gcm-task28-macos-debug-final.log`（BUILD_EXIT_CODE=0）；配置链证据为 macos/Runner.xcodeproj/project.pbxproj:353-360（GeneratedPluginRegistrant 属 Runner sources）与 :556（project Debug=15.0），ephemeral 无覆盖；仅有 ContainerBridgePlugin.swift:320 Sendable warning。真机 1.6.0 仍未验证，后续批次与总验收仍须重跑构建。
 - 双轴审查（Standards c066 + Spec 855）结论：无规格级 P0；Standards 将上述未通过的 Swift 构建列为 P0。P1 修复已分派：镜像拉取失败 UI、ImageService 删除预检接线（Lead 已修）、CLI/XPC source、guardToolCall 归并、非 GcmException 兜底与 unawaited；P2 修复含英文工具 title、注释漂移、日志 5000 行尾部上限、保留 full_wiring_test。
 - 修复验收：task-27 完成（镜像失败 UI、guard 归并、XPC source、14 个英文 title；定点 44/44 exit 0，run-GOYbPk）。task-28 完成（T6 source/unawaited/兜底/注释/full_wiring_test；定点 29 + MCP 2 exit 0；macOS 最终构建 exit 0）。两者全量检查恰逢 T3 接口在飞而失败（container start/activityFor 尚未同步等），不记为回归；待 T3 收尾后由 Lead 重新执行，不沿用并发现场结果。
-- 下一阶段：T3 容器写操作全栈（lifecycle-builder，含 container_kill 与审查修复）；T4 为 exec 终端与菜单栏，待 T3。
+### 2026-10-24 03:2x T3 + 审查修复集成（4f1cb2b）
+
+- 候选 SHA：`4f1cb2b`（integration/v1，含 T3、task-27、task-28、Swift 导入修复与 Lead 集成）。
+- T3：Swift/XPC create/start/stop/delete/kill；Service 同操作 Future 合并、异操作排队、restart 单锁合成、queued/active stop/restart 时 delete CONFLICT、乐观快照与合成态；六个 MCP 写工具；UI 五操作、创建表单、force 分叉、stop 15s 等待上限；日志尾部 5000 行。
+- Lead 集成：`test/mcp/mcp_full_wiring_test.dart` 从 17 子集加强为精确 23 工具集合，并让 ImageService 预检接线与 app 一致。
+- 证据：`test-host.sh check` exit 0（format/analyze/205 tests，run-VG2oWA）；bridge package analyze 无问题；macOS debug build 通过（T3 实现者与 task-28 分别验证）。
+- 残余验收：未执行真实 Apple container 写操作或人工窗口视觉验收。
+- T3 双轴审查结果（085b9b7..4f1cb2b，两轴均无 P0）：P1 直接修复项=P1-C stop 补 stoppedGracefully/kill 补 status（测试改断言契约）、P1-D 并发同名 create→CONFLICT、stop/delete 按参数区分合并、P1-E Service 输入校验（id ≤63、端口格式、signal 白名单、错误码 INVALID_ARGUMENT 映射）；P2 低成本批量=读工具英文 title、注释漂移、UI env/命令/端口解析、弹窗 432→480、TIMEOUT 映射、合成态 overlay/refresh。全部归入 task-30（blockedBy task-20）。
+- 用户拍板（2026-10-24，ask_user_question 双裁决）：
+  1. **create 能力面**：v1 补 mounts+labels（挂载/标签全链路：Swift→bridge→Service→MCP schema→UI 表单分段）；cpus/memoryBytes 延 v2。规格已改：mcp-tools.md:40、container-lifecycle.md create 行、ui-ia.md D10。
+  2. **create 不自动 pull** 定为正式语义：镜像须本地已有，缺失 NOT_FOUND 且文案指名 image + 提示先 image_pull；pulling 合成态随之取消；lifecycle:69 已由「缺时 fetch」改为本地镜像-only。
+- 延期记录（不随 v1 修）：日志初始 500 行/筛选/导出/暂停、bootlog 来源切换、UI stop 高级 timeout/signal、deleting 行置灰、cpus/memoryBytes。
+- 并行边界：T4 与 T9 启动；T7 与 T4 共用容器桥接文件，待 T4 定型后启动，T8 继续等待 T7。

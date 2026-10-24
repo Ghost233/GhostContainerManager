@@ -161,6 +161,31 @@ class MethodChannelContainerBridge implements seam.ContainerBridge {
   }
 
   @override
+  Future<seam.BridgeExecResult> containerExec({
+    required String id,
+    required List<String> command,
+    List<String> env = const [],
+    String? workdir,
+    String? user,
+    int timeoutSeconds = 60,
+  }) async {
+    try {
+      return seam.BridgeExecResult.fromMap(
+        await _channel.containerExec(
+          id: id,
+          command: command,
+          env: env,
+          workdir: workdir,
+          user: user,
+          timeoutSeconds: timeoutSeconds,
+        ),
+      );
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
   Stream<seam.BridgeLogEvent> containerLogs(String id) {
     return _events.containerLogs(id).map(_toLogEvent);
   }

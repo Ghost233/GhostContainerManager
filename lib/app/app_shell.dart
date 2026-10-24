@@ -25,6 +25,7 @@ import '../../services/image_service.dart';
 import '../../services/mount_service.dart';
 import '../../services/network_service.dart';
 import '../../services/system_service.dart';
+import 'menu_bar_controller.dart';
 import 'placeholders.dart';
 
 /// 侧栏项（ui-ia.md #13 回填后的 9 项）。
@@ -45,6 +46,7 @@ class AppShell extends StatefulWidget {
     super.key,
     required this.readiness,
     required this.mcp,
+    required this.menuBar,
     required this.containers,
     required this.images,
     required this.mounts,
@@ -55,6 +57,9 @@ class AppShell extends StatefulWidget {
 
   final ReadinessController readiness;
   final McpSettingsController mcp;
+
+  /// 状态栏菜单偏好及原生导航事件。
+  final MenuBarController menuBar;
 
   /// 容器只读通路（T2a service，容器页消费其公开 API）。
   final ContainerService containers;
@@ -76,6 +81,27 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   late int _selected = widget.initialIndex;
+  late final StreamSubscription<String> _navigationSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _navigationSubscription = widget.menuBar.navigationRequests.listen(
+      _handleNavigation,
+    );
+  }
+
+  void _handleNavigation(String page) {
+    if (mounted && kSidebarItems.contains(page)) {
+      setState(() => _selected = kSidebarItems.indexOf(page));
+    }
+  }
+
+  @override
+  void dispose() {
+    unawaited(_navigationSubscription.cancel());
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -178,7 +204,7 @@ class _AppShellState extends State<AppShell> {
         return RuntimePage(controller: widget.readiness);
       case '设置':
       case 'MCP': // MCP 是设置页内的区块（ui-ia.md D9）
-        return SettingsPage(mcp: widget.mcp);
+        return SettingsPage(mcp: widget.mcp, menuBar: widget.menuBar);
       default:
         return PlaceholderSectionPage(
           title: title,

@@ -13,6 +13,13 @@ class _ScriptedChannel extends ContainerBridgeChannel {
   final Map<String, Object> statsResponses = {};
   final Map<String, Map<String, Object?>> writeCalls = {};
   Object? writeError;
+  Map<String, Object?> execResponse = {
+    'exitCode': 0,
+    'stdout': '',
+    'stderr': '',
+    'stdoutTruncated': false,
+    'stderrTruncated': false,
+  };
 
   Future<Map<String, Object?>> _recordWrite(
     String method,
@@ -70,6 +77,26 @@ class _ScriptedChannel extends ContainerBridgeChannel {
     String signal = 'KILL',
   }) async {
     return _recordWrite('kill', {'id': id, 'signal': signal});
+  }
+
+  @override
+  Future<Map<String, Object?>> containerExec({
+    required String id,
+    required List<String> command,
+    List<String> env = const [],
+    String? workdir,
+    String? user,
+    int timeoutSeconds = 60,
+  }) async {
+    await _recordWrite('exec', {
+      'id': id,
+      'command': command,
+      'env': env,
+      'workdir': workdir,
+      'user': user,
+      'timeoutSeconds': timeoutSeconds,
+    });
+    return execResponse;
   }
 
   @override
@@ -213,6 +240,46 @@ void main() {
         );
       }
     });
+
+    test(
+      'container exec forwards options and decodes bounded output',
+      () async {
+        final channel = _ScriptedChannel()
+          ..execResponse = {
+            'exitCode': 23,
+            'stdout': 'partial out',
+            'stderr': 'err',
+            'stdoutTruncated': true,
+            'stderrTruncated': false,
+          };
+        final bridge = MethodChannelContainerBridge(channel: channel);
+
+        final result = await bridge.containerExec(
+          id: 'web',
+          command: ['ls', '/tmp'],
+          env: ['LANG=C'],
+          workdir: '/srv',
+          user: 'www',
+          timeoutSeconds: 12,
+        );
+
+        expect(channel.writeCalls['exec'], {
+          'id': 'web',
+          'command': ['ls', '/tmp'],
+          'env': ['LANG=C'],
+          'workdir': '/srv',
+          'user': 'www',
+          'timeoutSeconds': 12,
+        });
+        expect(result.exitCode, 23);
+        expect(result.stdout, 'partial out');
+        expect(result.stderr, 'err');
+        expect(result.stdoutTruncated, isTrue);
+        expect(result.stderrTruncated, isFalse);
+        expect(result.truncated, isTrue);
+        expect(result.timedOut, isFalse);
+      },
+    );
 
     test('containerLogs decodes data/eof/error events', () async {
       final controller = StreamController<Map<String, Object?>>();

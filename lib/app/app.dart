@@ -21,6 +21,7 @@ import '../services/mount_service.dart';
 import '../services/network_service.dart';
 import '../services/system_service.dart';
 import 'app_shell.dart';
+import 'menu_bar_controller.dart';
 
 class GhostContainerManagerApp extends StatefulWidget {
   const GhostContainerManagerApp({
@@ -28,6 +29,7 @@ class GhostContainerManagerApp extends StatefulWidget {
     this.bridge,
     this.debugBypass = false,
     this.enableMcp = true,
+    this.menuBarChannel,
   });
 
   /// 测试注入点：fake 桥接；缺省用 MethodChannel 真实桥接。
@@ -38,6 +40,9 @@ class GhostContainerManagerApp extends StatefulWidget {
 
   /// 是否按设置启动 MCP server（测试关闭以避免绑定真实端口）。
   final bool enableMcp;
+
+  /// 测试注入点；生产环境由 macOS AppKit 实现状态栏和偏好持久化。
+  final MenuBarChannel? menuBarChannel;
 
   @override
   State<GhostContainerManagerApp> createState() =>
@@ -53,6 +58,8 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
   late final ComposeService _composeService;
   late final ReadinessController _readiness;
   late final McpSettingsController _mcp;
+  late final MenuBarController _menuBar;
+  late final Future<void> _menuInitialization;
 
   /// 「跳过并仅查看设置」出口（本次会话内有效，不持久化）。
   bool _skipToSettings = false;
@@ -92,6 +99,11 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
       composeService: _composeService,
     );
     unawaited(_readiness.refresh());
+    _menuBar = MenuBarController(
+      containers: _containerService,
+      channel: widget.menuBarChannel,
+    );
+    _menuInitialization = _menuBar.initialize();
     if (widget.enableMcp) {
       unawaited(_mcp.sync());
     }
@@ -104,6 +116,7 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
     // readiness controller. McpSettingsController keeps its own ownership;
     // the public switch stops the server without reaching into settings.
     unawaited(_mcp.setEnabled(false));
+    _menuBar.dispose();
     unawaited(_containerService.dispose());
     _readiness.dispose();
     super.dispose();
@@ -137,15 +150,29 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
               onSkipToSettings: () => setState(() => _skipToSettings = true),
             );
           }
-          return AppShell(
-            readiness: _readiness,
-            mcp: _mcp,
-            containers: _containerService,
-            images: _imageService,
-            mounts: _mountService,
-            networks: _networkService,
-            compose: _composeService,
-            initialIndex: _skipToSettings ? kSidebarItems.indexOf('设置') : 0,
+          return FutureBuilder<void>(
+            future: _menuInitialization,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Scaffold(
+                  body: Center(child: CircularProgressIndicator()),
+                );
+              }
+              final startPage = _skipToSettings
+                  ? '设置'
+                  : _menuBar.defaultStartPage;
+              return AppShell(
+                readiness: _readiness,
+                mcp: _mcp,
+                menuBar: _menuBar,
+                containers: _containerService,
+                images: _imageService,
+                mounts: _mountService,
+                networks: _networkService,
+                compose: _composeService,
+                initialIndex: kSidebarItems.indexOf(startPage),
+              );
+            },
           );
         },
       ),

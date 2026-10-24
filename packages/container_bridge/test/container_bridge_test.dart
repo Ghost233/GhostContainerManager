@@ -63,4 +63,46 @@ void main() {
     expect(calls[3].arguments, {'id': 'web', 'signal': 'TERM'});
     expect(calls[4].arguments, {'id': 'web', 'force': true});
   });
+
+  test('container exec encodes its non-TTY process options', () async {
+    const channel = MethodChannel(ContainerBridgeChannels.methods);
+    final calls = <MethodCall>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          return <String, Object?>{
+            'exitCode': 17,
+            'stdout': 'out',
+            'stderr': 'err',
+            'truncated': false,
+          };
+        });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+    final bridge = ContainerBridgeChannel(channel: channel);
+
+    final result = await bridge.containerExec(
+      id: 'web',
+      command: ['printenv', 'MODE'],
+      env: ['MODE=prod'],
+      workdir: '/srv/app',
+      user: 'www',
+      timeoutSeconds: 42,
+    );
+
+    expect(calls.single.method, 'container.exec');
+    expect(calls.single.arguments, {
+      'id': 'web',
+      'command': ['printenv', 'MODE'],
+      'env': ['MODE=prod'],
+      'workdir': '/srv/app',
+      'user': 'www',
+      'timeoutSeconds': 42,
+    });
+    expect(result['exitCode'], 17);
+    expect(result['stdout'], 'out');
+    expect(result['stderr'], 'err');
+  });
 }

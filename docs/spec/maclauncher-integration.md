@@ -15,7 +15,7 @@
 | --- | --- | --- |
 | 应用级 | `AppCallbacks` 全量（窗口接管、入口接管、版本查询） | 由 SDK 框架承担，无业务语义风险 |
 | 服务级 onStatus | ✅ 注册 | 只读，映射到管理入口的实际观测状态（§3.3） |
-| 服务级 onLogs | ✅ 注册 | 只读流，映射到容器日志流（XPC FileHandle 路径，v1 已有该能力） |
+| 服务级 onLogs | ✅ 注册 | 只读批次，按 `LogQuery` 返回最近 N 条；底层映射容器日志读取（XPC FileHandle 路径） |
 | 服务级 onStart | ✅ 注册 | 映射到容器 start；语义简单明确 |
 | 服务级 onRecycle | ✅ 注册，语义按 §2 推荐方案 | SDK 无 onStop 回调，启动器侧的"重启"诉求由 recycle 承载 |
 
@@ -67,9 +67,11 @@ SDK 文档明确 recycle 的业务含义"由规格确定"。三个候选语义�
 
 ### 3.4 onLogs
 
-- 语义：流式回传指定容器日志。
-- 映射：管理入口 `containers.logs(name, follow: true)`（XPC FileHandle → 桥接 → Dart 流）；SDK 断开或回调取消时按 E03/E04 取消上游订阅并释放 fd。
-- 限制：不保证历史完整性语义（是否带 `-n` 尾部行数由 SDK 协议参数决定，v1 默认跟流不带历史）。
+- **固定 SDK 实施校正**：`268f88ef` 的实际签名是 `Future<LogBatch> Function(LogQuery)`，语义为“查询最近日志批次”，不是持续 follow 流。
+- 映射管理入口的日志读取，按 `LogQuery.limit` 返回最近 N 条（SDK 默认 200、最大 500），`LogBatch.entries` 按 oldest-first 排列。
+- 如实填写 `truncated` 与 `observedAt`；`instanceId` 没有可靠来源时保持 null，不伪造运行代次。
+- 读到 EOF、SDK 取消或适配层 dispose 时取消上游订阅并释放 fd；不把一次批次响应伪装成持续流。
+- v1 不承诺历史完整性；日志页的本地回看仍由容器日志能力承担。
 
 ### 3.5 AppCallbacks
 
@@ -114,8 +116,7 @@ MacLauncher ──SDK(固定 268f88ef)──► MacLauncherBridge（Dart 适配�
   ➡️ 推荐：是。粒度与操作语义一一对应；未来若要"项目级启停"再立项。
 - **Q4 - 非就绪时启动器操作的处理**：onStart/onRecycle 在 runtime 未就绪时拒绝，还是尝试自动 `container system start`？
   ➡️ 推荐：拒绝并携带状态。system start 是有用户可见副作用的决策（可能触发内核下载），不应被启动器静默触发。
-- **Q5 - onLogs 历史语义**：日志回传是否带历史尾部（如最近 200 行）还是纯 follow？
-  ➡️ 推荐：纯 follow（v1）；历史回看由 app 内日志页承担，SDK 协议若后续支持参数再加。
+- **Q5 - onLogs 历史语义**：已定。固定 SDK `268f88ef` 是批式最近 N 条查询，而非纯 follow；按 `LogQuery.limit` 返回 oldest-first 的 `LogBatch`，并保留截断与观测时间信息。
 
 ## 7. GLOSSARY 新术语建议
 

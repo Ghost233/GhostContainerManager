@@ -55,7 +55,7 @@ void main() {
     enableJsonResponse: true,
   );
 
-  test('tools/list exposes exactly 23 v1 tools across six domains', () async {
+  test('tools/list exposes exactly 24 v1 tools across six domains', () async {
     final server = makeServer();
     await server.start();
     addTearDown(server.stop);
@@ -137,6 +137,7 @@ void main() {
       'container_restart',
       'container_delete',
       'container_kill',
+      'container_exec',
       'image_list',
       'image_inspect',
       'image_delete',
@@ -149,7 +150,7 @@ void main() {
       'compose_up',
       'compose_down',
     };
-    expect(names, hasLength(23), reason: 'unexpected tools: $names');
+    expect(names, hasLength(24), reason: 'unexpected tools: $names');
     expect(
       names,
       expected,

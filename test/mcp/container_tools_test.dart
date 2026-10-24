@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghost_container_manager/bridge/container_bridge.dart';
 import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
 import 'package:ghost_container_manager/mcp/mcp_server.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
@@ -132,6 +133,7 @@ void main() {
       'container_restart': 'Restart Container',
       'container_kill': 'Kill Container',
       'container_delete': 'Delete Container',
+      'container_exec': 'Execute Container Command',
     };
     expect(names, containsAll(writeTitles.keys));
     for (final entry in writeTitles.entries) {
@@ -148,7 +150,7 @@ void main() {
       );
       expect(
         annotations['idempotentHint'],
-        entry.key != 'container_create',
+        entry.key != 'container_create' && entry.key != 'container_exec',
         reason: entry.key,
       );
     }
@@ -237,6 +239,54 @@ void main() {
     await initialize();
     final result = await callTool('container_stats', <String, dynamic>{
       'id': 'db',
+    });
+    expect(result['isError'], isTrue);
+    final structured = result['structuredContent'] as Map<String, dynamic>;
+    expect((structured['error'] as Map)['code'], 'CONFLICT');
+  });
+
+  test('container_exec 返回退出码、分管输出与截断标记', () async {
+    bridge.execResult = const BridgeExecResult(
+      exitCode: 23,
+      stdout: 'partial stdout',
+      stderr: 'stderr text',
+      stdoutTruncated: true,
+    );
+    await initialize();
+
+    final result = await callTool('container_exec', <String, dynamic>{
+      'id': 'web',
+      'command': <String>['sh', '-c', 'exit 23'],
+      'env': <String, String>{'MODE': 'production'},
+      'workdir': '/srv',
+      'timeoutSeconds': 9,
+    });
+
+    expect(result['isError'], isNot(true));
+    expect(result['structuredContent'], <String, Object?>{
+      'exitCode': 23,
+      'stdout': 'partial stdout',
+      'stderr': 'stderr text',
+      'truncated': true,
+    });
+    expect(bridge.execRequests.single, <String, Object?>{
+      'id': 'web',
+      'command': <String>['sh', '-c', 'exit 23'],
+      'env': <String>['MODE=production'],
+      'workdir': '/srv',
+      'user': null,
+      'timeoutSeconds': 9,
+    });
+    final content = result['content'] as List;
+    expect((content.first as Map)['text'], contains('退出码 23'));
+    expect((content.first as Map)['text'], contains('截断'));
+  });
+
+  test('container_exec 非运行容器走统一 CONFLICT guard', () async {
+    await initialize();
+    final result = await callTool('container_exec', <String, dynamic>{
+      'id': 'db',
+      'command': <String>['true'],
     });
     expect(result['isError'], isTrue);
     final structured = result['structuredContent'] as Map<String, dynamic>;

@@ -258,6 +258,49 @@ void main() {
     });
   });
 
+  group('one-shot exec', () {
+    test(
+      'preserves a non-zero exit code and caps each UTF-8 output stream',
+      () async {
+        bridge.containers = [snapshotPayload(id: 'web')];
+        await service.refresh();
+        final ascii = List.filled(64 * 1024 - 1, 'a').join();
+        final stderrBytes = List.filled(64 * 1024 + 100, 'e').join();
+        bridge.execResult = BridgeExecResult(
+          exitCode: 42,
+          stdout: '$ascii中discarded',
+          stderr: stderrBytes,
+        );
+
+        final result = await service.exec(
+          'web',
+          command: ['sh', '-c', 'exit 42'],
+          env: const {'MODE': 'prod'},
+          workdir: '/srv',
+          user: 'www',
+          timeoutSeconds: 12,
+        );
+
+        expect(result.exitCode, 42);
+        expect(result.stdout, ascii);
+        expect(result.stderr, List.filled(64 * 1024, 'e').join());
+        expect(utf8.encode(result.stdout).length, lessThanOrEqualTo(64 * 1024));
+        expect(utf8.encode(result.stderr).length, 64 * 1024);
+        expect(result.stdoutTruncated, isTrue);
+        expect(result.stderrTruncated, isTrue);
+        expect(result.truncated, isTrue);
+        expect(bridge.execRequests.single, {
+          'id': 'web',
+          'command': ['sh', '-c', 'exit 42'],
+          'env': ['MODE=prod'],
+          'workdir': '/srv',
+          'user': 'www',
+          'timeoutSeconds': 12,
+        });
+      },
+    );
+  });
+
   group('write lifecycle', () {
     test(
       'create forwards configuration and exposes creating immediately',

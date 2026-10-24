@@ -18,6 +18,7 @@ import '../services/image_service.dart';
 import '../services/mount_service.dart';
 import '../services/network_service.dart';
 import '../services/system_service.dart';
+import 'tool_audit.dart';
 import 'tools/compose_tools.dart';
 import 'tools/container_tools.dart';
 import 'tools/image_tools.dart';
@@ -39,12 +40,14 @@ class GcmMcpServer {
     this.port = defaultPort,
     this.path = '/mcp',
     this.enableJsonResponse = false,
+    McpToolAuditor? auditor,
   }) : _systemService = systemService,
        _containerService = containerService,
        _imageService = imageService,
        _mountService = mountService,
        _networkService = networkService,
-       _composeService = composeService;
+       _composeService = composeService,
+       auditor = auditor ?? McpToolAuditor();
 
   /// Default MCP HTTP port (settings page default, issue #16 验收 4).
   static const int defaultPort = 35731;
@@ -63,6 +66,14 @@ class GcmMcpServer {
   final MountService? _mountService;
   final NetworkService? _networkService;
   final ComposeService? _composeService;
+
+  /// Bounded record of tool calls, shared across transport sessions so the
+  /// settings page keeps a stable short history (issue #16).
+  final McpToolAuditor auditor;
+
+  /// Newest-first snapshot for the settings page.
+  List<McpCallRecord> get recentCalls => auditor.records;
+
   final String host;
   final int port;
   final String path;
@@ -80,8 +91,9 @@ class GcmMcpServer {
   /// Builds a protocol server with every tool domain registered. Exposed so
   /// the stdio path and tests can attach their own transports.
   McpServer buildServer() {
-    final server = McpServer(
+    final server = AuditedMcpServer(
       serverInfo,
+      auditor: auditor,
       options: McpServerOptions(
         instructions:
             'Manages the local Apple container runtime on macOS. '

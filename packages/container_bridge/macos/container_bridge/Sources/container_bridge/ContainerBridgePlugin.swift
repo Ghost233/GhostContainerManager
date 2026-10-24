@@ -99,6 +99,32 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
         return
       }
       containerStats(id: id, result: result)
+    case "container.exec":
+      guard let id = args?["id"] as? String,
+        let command = args?["command"] as? [String],
+        !command.isEmpty
+      else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "container.exec requires 'id' and a non-empty 'command' string array.",
+            details: nil
+          )
+        )
+        return
+      }
+      let env = args?["env"] as? [String] ?? []
+      let timeoutSeconds = args?["timeoutSeconds"] as? Int ?? 60
+      containerWrite(result: result) {
+        try await ExecOps.run(
+          id: id,
+          command: command,
+          env: env,
+          workdir: args?["workdir"] as? String,
+          user: args?["user"] as? String,
+          timeoutSeconds: timeoutSeconds
+        )
+      }
     case "container.create":
       guard let id = args?["id"] as? String,
         let image = args?["image"] as? String

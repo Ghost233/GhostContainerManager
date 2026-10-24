@@ -2,6 +2,7 @@
 /// safety and eof tail flushing per source).
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -84,6 +85,31 @@ void main() {
       expect(events[1].source, 'boot');
       expect(events[1].text, '\uFFFD');
       expect(events[2].kind, 'eof');
+    });
+
+    test('cancelling an idle subscription cancels upstream', () async {
+      final upstream = StreamController<BridgeLogEvent>();
+      final listened = Completer<void>();
+      var cancelled = false;
+      upstream.onListen = () {
+        if (!listened.isCompleted) listened.complete();
+      };
+      upstream.onCancel = () {
+        cancelled = true;
+      };
+      addTearDown(() async {
+        if (upstream.hasListener || cancelled) {
+          await upstream.close();
+        }
+      });
+      final subscription = decodeContainerLogs(upstream.stream).listen((_) {});
+      await listened.future;
+
+      final cancellation = subscription.cancel();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(cancelled, isTrue);
+      await cancellation.timeout(const Duration(seconds: 1));
     });
 
     test('error events pass through untouched', () async {

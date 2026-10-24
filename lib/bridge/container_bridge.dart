@@ -40,6 +40,38 @@ class BridgeCommandResult {
   String get combinedOutput => '$stdout\n$stderr';
 }
 
+/// Result of a one-shot, non-TTY process in a running container.
+class BridgeExecResult {
+  const BridgeExecResult({
+    required this.exitCode,
+    required this.stdout,
+    required this.stderr,
+    this.stdoutTruncated = false,
+    this.stderrTruncated = false,
+    this.timedOut = false,
+  });
+
+  factory BridgeExecResult.fromMap(Map<Object?, Object?> map) {
+    return BridgeExecResult(
+      exitCode: (map['exitCode'] as num?)?.toInt() ?? -1,
+      stdout: (map['stdout'] as String?) ?? '',
+      stderr: (map['stderr'] as String?) ?? '',
+      stdoutTruncated: (map['stdoutTruncated'] as bool?) ?? false,
+      stderrTruncated: (map['stderrTruncated'] as bool?) ?? false,
+      timedOut: (map['timedOut'] as bool?) ?? false,
+    );
+  }
+
+  final int exitCode;
+  final String stdout;
+  final String stderr;
+  final bool stdoutTruncated;
+  final bool stderrTruncated;
+  final bool timedOut;
+
+  bool get truncated => stdoutTruncated || stderrTruncated;
+}
+
 /// Result of an XPC health-check ping against the container apiserver.
 class BridgePingResult {
   const BridgePingResult.ok({
@@ -241,6 +273,17 @@ abstract interface class ContainerBridge {
 
   /// `ContainerClient.kill(id:signal:)`; [signal] defaults to KILL.
   Future<void> containerKill(String id, {String signal = 'KILL'});
+
+  /// Execute a one-shot non-TTY process. Output is captured independently and
+  /// the process exit code is data, not a bridge failure.
+  Future<BridgeExecResult> containerExec({
+    required String id,
+    required List<String> command,
+    List<String> env = const [],
+    String? workdir,
+    String? user,
+    int timeoutSeconds = 60,
+  });
 
   /// Log byte stream for [id] (XPC fd handover: stdio + boot handles).
   /// UI-only surface — MCP deliberately has no logs tool (#13 decision).

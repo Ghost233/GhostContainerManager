@@ -7,6 +7,7 @@
 /// tool (#13 decision — logs are a UI surface).
 library;
 
+import 'dart:async';
 import 'dart:convert';
 
 import '../bridge/container_bridge.dart';
@@ -42,9 +43,17 @@ class ContainerLogEvent {
 }
 
 /// Binds chunked UTF-8 decoding onto a raw bridge log stream.
-Stream<ContainerLogEvent> decodeContainerLogs(
-  Stream<BridgeLogEvent> source,
-) async* {
+Stream<ContainerLogEvent> decodeContainerLogs(Stream<BridgeLogEvent> source) {
+  return Stream<ContainerLogEvent>.eventTransformed(
+    source,
+    (sink) => _ContainerLogEventSink(sink),
+  );
+}
+
+class _ContainerLogEventSink implements EventSink<BridgeLogEvent> {
+  _ContainerLogEventSink(this._output);
+
+  final EventSink<ContainerLogEvent> _output;
   final buffers = <String, StringBuffer>{};
   final sinks = <String, Sink<List<int>>>{};
 
@@ -61,20 +70,25 @@ Stream<ContainerLogEvent> decodeContainerLogs(
     return buffer;
   }
 
-  await for (final event in source) {
+  @override
+  void add(BridgeLogEvent event) {
     switch (event.event) {
       case 'data':
         final buffer = bufferFor(event.source);
         sinks[event.source]!.add(event.bytes);
         if (buffer.isNotEmpty) {
-          yield ContainerLogEvent.data(
-            source: event.source,
-            text: buffer.toString(),
+          _output.add(
+            ContainerLogEvent.data(
+              source: event.source,
+              text: buffer.toString(),
+            ),
           );
           buffer.clear();
         }
       case 'error':
-        yield ContainerLogEvent.error(event.message ?? 'log stream error');
+        _output.add(
+          ContainerLogEvent.error(event.message ?? 'log stream error'),
+        );
       case 'eof':
         // Closing the chunked sinks flushes any tail fragment (an
         // incomplete UTF-8 sequence at end-of-stream decodes to a
@@ -84,11 +98,21 @@ Stream<ContainerLogEvent> decodeContainerLogs(
           value.close();
           final tail = buffers[key]!.toString();
           if (tail.isNotEmpty) {
-            yield ContainerLogEvent.data(source: key, text: tail);
+            _output.add(ContainerLogEvent.data(source: key, text: tail));
             buffers[key]!.clear();
           }
         }
-        yield const ContainerLogEvent.eof();
+        _output.add(const ContainerLogEvent.eof());
     }
+  }
+
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) {
+    _output.addError(error, stackTrace);
+  }
+
+  @override
+  void close() {
+    _output.close();
   }
 }
