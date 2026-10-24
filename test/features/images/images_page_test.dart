@@ -8,6 +8,19 @@ import 'package:ghost_container_manager/features/images/images_page.dart';
 import 'package:ghost_container_manager/features/system/readiness_controller.dart';
 import 'package:ghost_container_manager/services/image_service.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
+import 'package:ghost_container_manager/ui/components.dart';
+
+class _GatedDeleteBridge extends FakeContainerBridge {
+  _GatedDeleteBridge(this.gate);
+
+  final Completer<void> gate;
+
+  @override
+  Future<void> imageDelete(String reference) async {
+    await gate.future;
+    return super.imageDelete(reference);
+  }
+}
 
 Map<String, Object?> imagePayload({
   required String reference,
@@ -92,6 +105,9 @@ void main() {
 
   group('ImagesPage 详情', () {
     testWidgets('点行进详情展示 inspect 配置摘要并可返回', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       const reference = 'docker.io/library/alpine:3.19';
       final fake = FakeContainerBridge()
         ..images = <Map<String, Object?>>[imagePayload(reference: reference)]
@@ -114,11 +130,28 @@ void main() {
       await tester.tap(find.text(reference));
       await tester.pumpAndSettle();
 
+      expect(find.byType(SectionCard, skipOffstage: false), findsNWidgets(4));
+      expect(find.text('镜像引用'), findsOneWidget);
+      expect(find.byType(CopyValue), findsWidgets);
       expect(find.text('入口命令'), findsOneWidget);
       expect(find.text('/entry.sh --serve'), findsOneWidget);
       expect(find.text('8080/tcp'), findsOneWidget);
-      expect(find.text('PATH=/usr/bin'), findsOneWidget);
-      expect(find.text('com.ghost233.project=demo'), findsOneWidget);
+      // 环境变量卡片化后 KEY=VALUE 拆分打码（MaskedValue）。
+      expect(find.text('PATH'), findsOneWidget);
+      expect(find.text('⦿⦿⦿⦿⦿⦿'), findsOneWidget);
+      expect(find.text('/usr/bin'), findsNothing);
+      final maskToggle = find.byKey(const Key('masked-toggle-/usr/bin'));
+      expect(maskToggle, findsOneWidget);
+      await tester.tap(maskToggle);
+      await tester.pump();
+      expect(find.text('/usr/bin'), findsOneWidget);
+      await tester.tap(maskToggle);
+      await tester.pump();
+      expect(find.text('/usr/bin'), findsNothing);
+      expect(find.text('⦿⦿⦿⦿⦿⦿'), findsOneWidget);
+      // 标签卡片化后键值分行（label 灰 + CopyValue）。
+      expect(find.text('com.ghost233.project'), findsOneWidget);
+      expect(find.text('demo'), findsOneWidget);
 
       await tester.tap(find.text('返回镜像列表'));
       await tester.pumpAndSettle();
@@ -141,6 +174,40 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(fake.deletedImages, [reference]);
+      expect(find.text('暂无镜像，拉取一个开始使用'), findsOneWidget);
+    });
+
+    testWidgets('删除进行时在行内显示 spinner 并禁止重复操作', (tester) async {
+      const reference = 'docker.io/library/alpine:3.19';
+      final gate = Completer<void>();
+      final fake = _GatedDeleteBridge(gate)
+        ..images = <Map<String, Object?>>[imagePayload(reference: reference)];
+      await _pumpPage(tester, fake);
+
+      await tester.tap(find.byTooltip('删除'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '删除'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      final row = find.ancestor(
+        of: find.text(reference),
+        matching: find.byType(Card),
+      );
+      final spinner = find.descendant(
+        of: row,
+        matching: find.byType(CircularProgressIndicator),
+      );
+      expect(spinner, findsOneWidget);
+      expect(tester.getSize(spinner), const Size(16, 16));
+      expect(tester.widget<CircularProgressIndicator>(spinner).strokeWidth, 2);
+      final button = tester.widget<IconButton>(
+        find.descendant(of: row, matching: find.byType(IconButton)),
+      );
+      expect(button.onPressed, isNull);
+
+      gate.complete();
+      await tester.pumpAndSettle();
       expect(find.text('暂无镜像，拉取一个开始使用'), findsOneWidget);
     });
 

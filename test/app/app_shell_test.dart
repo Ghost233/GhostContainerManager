@@ -7,6 +7,7 @@ import 'package:ghost_container_manager/app/app_shell.dart';
 import 'package:ghost_container_manager/app/menu_bar_controller.dart';
 import 'package:ghost_container_manager/bridge/container_bridge.dart';
 import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
+import 'package:ghost_container_manager/features/containers/containers_page.dart';
 import 'package:ghost_container_manager/features/images/images_page.dart';
 import 'package:ghost_container_manager/features/settings/settings_page.dart';
 
@@ -144,5 +145,44 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(find.text('暂无容器'), findsOneWidget);
+  });
+
+  testWidgets('主内容 180ms easeInOut 渐隐渐现，侧栏高亮即时更新', (tester) async {
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await _pumpApp(tester, FakeContainerBridge());
+    final switcherFinder = find.byType(AnimatedSwitcher);
+    expect(switcherFinder, findsOneWidget);
+    final switcher = tester.widget<AnimatedSwitcher>(switcherFinder);
+    expect(switcher.duration, const Duration(milliseconds: 180));
+    expect(switcher.switchInCurve, Curves.easeInOut);
+    expect(switcher.switchOutCurve, Curves.easeInOut);
+
+    await tester.tap(find.text('镜像'));
+    await tester.pump();
+    final imagesTile = tester.widget<ListTile>(
+      find.ancestor(of: find.text('镜像'), matching: find.byType(ListTile)),
+    );
+    expect(imagesTile.selected, isTrue);
+
+    await tester.pump(const Duration(milliseconds: 90));
+    expect(find.byType(ContainersPage), findsOneWidget);
+    expect(find.byType(ImagesPage), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
+    expect(find.byType(ContainersPage), findsNothing);
+    expect(find.byType(ImagesPage), findsOneWidget);
+  });
+
+  testWidgets('侧栏分组（工作/资源/系统）+ 容器运行中数徽章', (tester) async {
+    await _pumpApp(tester, FakeContainerBridge());
+
+    // 分组标题（P0 信息架构）。
+    expect(find.text('工作'), findsOneWidget);
+    expect(find.text('资源'), findsOneWidget);
+    expect(find.text('系统'), findsOneWidget);
   });
 }

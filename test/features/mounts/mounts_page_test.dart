@@ -7,6 +7,7 @@ import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/errors.dart';
 import 'package:ghost_container_manager/services/mount_service.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
+import 'package:ghost_container_manager/ui/components.dart';
 
 import '../../services/mount_service_test.dart'
     show payloadWithMounts, virtiofsMount;
@@ -78,9 +79,16 @@ void main() {
     await pump(tester);
 
     expect(find.text('挂载'), findsOneWidget);
-    expect(find.text('/Users/x/site'), findsOneWidget);
+    expect(find.byType(SectionCard), findsOneWidget);
+    // 卡片化后标题与「主机路径」CopyValue 均显示来源路径。
+    expect(find.text('/Users/x/site'), findsNWidgets(2));
+    // 主机路径、容器 ID、容器内目标路径均可复制。
+    expect(find.byType(CopyValue), findsNWidgets(3));
     expect(find.text('只读'), findsOneWidget);
-    expect(find.textContaining('web : /usr/share'), findsOneWidget);
+    // 使用方分行显示（容器 ID + 目的地 + ro 标记）。
+    expect(find.text('web'), findsOneWidget);
+    expect(find.text('/usr/share'), findsOneWidget);
+    expect(find.text('ro'), findsOneWidget);
     // 只读红线：没有任何新增/删除/编辑按钮。
     expect(find.text('新建'), findsNothing);
     expect(find.text('删除'), findsNothing);

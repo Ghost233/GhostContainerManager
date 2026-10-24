@@ -10,6 +10,8 @@ import 'package:flutter/material.dart';
 
 import '../../services/errors.dart';
 import '../../services/mount_service.dart';
+import '../../ui/colors.dart';
+import '../../ui/components.dart';
 import '../system/readiness_controller.dart';
 import '../../app/placeholders.dart';
 import '../../app/section_widgets.dart';
@@ -137,46 +139,113 @@ class _MountRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                mount.type == 'tmpfs'
-                    ? Icons.memory_outlined
-                    : Icons.folder_outlined,
-                size: 16,
-                color: theme.colorScheme.outline,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(mount.name, style: theme.textTheme.bodyMedium),
-              ),
-              Chip(
-                label: Text(mount.fullyReadOnly ? '只读' : '可写'),
-                visualDensity: VisualDensity.compact,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                mount.type,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.outline,
-                ),
-              ),
-            ],
-          ),
-          for (final usage in mount.usedBy)
-            Padding(
-              padding: const EdgeInsets.only(left: 24, top: 2),
-              child: Text(
-                '${usage.containerId} : ${usage.destination}'
-                '${usage.readOnly ? '（ro）' : ''}',
-                style: theme.textTheme.bodySmall,
+      padding: const EdgeInsets.only(bottom: 16),
+      child: SectionCard(
+        title: mount.name,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _KvRow(
+              '类型',
+              mount.type,
+              valueWidget: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    mount.type == 'tmpfs'
+                        ? Icons.memory_outlined
+                        : Icons.folder_outlined,
+                    size: 16,
+                    color: GcmColors.textSecondary(context),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(mount.type, style: theme.textTheme.bodyMedium),
+                ],
               ),
             ),
-          const Divider(height: 12),
+            if (mount.source != null)
+              _KvRow(
+                '主机路径',
+                mount.source!,
+                valueWidget: CopyValue(value: mount.source!),
+              ),
+            _KvRow('读写', mount.fullyReadOnly ? '只读' : '可写'),
+            _KvRow('使用方', '${mount.usedBy.length} 个容器'),
+            if (mount.usedBy.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                '使用方',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: GcmColors.textSecondary(context),
+                ),
+              ),
+              const SizedBox(height: 4),
+              for (final usage in mount.usedBy)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: CopyValue(value: usage.containerId),
+                      ),
+                      Expanded(
+                        flex: 3,
+                        child: CopyValue(value: usage.destination),
+                      ),
+                      SizedBox(
+                        width: 48,
+                        child: Text(
+                          usage.readOnly ? 'ro' : 'rw',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: GcmColors.textSecondary(context),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// label 灰 + value 两列行。
+class _KvRow extends StatelessWidget {
+  const _KvRow(this.label, this.value, {this.valueWidget});
+
+  final String label;
+  final String value;
+  final Widget? valueWidget;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 110,
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: GcmColors.textSecondary(context),
+              ),
+            ),
+          ),
+          Expanded(
+            child:
+                valueWidget ??
+                SelectableText(
+                  value.isEmpty ? '—' : value,
+                  style: theme.textTheme.bodyMedium,
+                ),
+          ),
         ],
       ),
     );

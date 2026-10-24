@@ -1,14 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghost_container_manager/bridge/container_bridge.dart';
 import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
+import 'package:ghost_container_manager/features/containers/container_detail.dart';
 import 'package:ghost_container_manager/features/containers/containers_page.dart';
 import 'package:ghost_container_manager/features/system/readiness_controller.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
+import 'package:ghost_container_manager/ui/colors.dart';
+import 'package:ghost_container_manager/ui/components.dart';
 
 /// 与 test/services/container_service_test.dart 相同的 1.6.0 快照形态。
 Map<String, Object?> snapshotPayload({
@@ -117,19 +121,47 @@ FakeContainerBridge _twoContainers() {
     ];
 }
 
+class _StreamingLogsBridge extends FakeContainerBridge {
+  final StreamController<BridgeLogEvent> logsController =
+      StreamController<BridgeLogEvent>();
+
+  @override
+  Stream<BridgeLogEvent> containerLogs(String id) => logsController.stream;
+}
+
 void main() {
   testWidgets('列表：名称/镜像/状态/端口齐全，com.ghost233.* 带「本应用创建」标记', (tester) async {
     await _pumpPage(tester, _twoContainers());
 
     expect(find.text('web-frontend'), findsOneWidget);
     expect(find.text('cache'), findsOneWidget);
-    expect(find.text('docker.io/library/nginx:latest'), findsOneWidget);
-    expect(find.text('docker.io/library/redis:7'), findsOneWidget);
-    expect(find.text('8080→80'), findsWidgets); // 两个容器同一映射
+    const runningSecondary = 'docker.io/library/nginx:latest · 端口 8080→80';
+    expect(find.text(runningSecondary), findsOneWidget);
+    expect(find.text('docker.io/library/redis:7 · 端口 8080→80'), findsOneWidget);
+    expect(find.byType(StateDot), findsNWidgets(2));
     expect(find.text('本应用创建'), findsOneWidget); // 仅 web-frontend
     expect(find.text('1 运行中 / 共 2'), findsOneWidget);
     expect(find.text('运行中'), findsOneWidget);
     expect(find.text('已停止'), findsOneWidget);
+
+    final rowContext = tester.element(find.text(runningSecondary));
+    final secondaryStyle = tester
+        .widget<Text>(find.text(runningSecondary))
+        .style;
+    expect(
+      secondaryStyle?.fontSize,
+      Theme.of(rowContext).textTheme.bodySmall?.fontSize,
+    );
+    expect(secondaryStyle?.color, GcmColors.textSecondary(rowContext));
+    final statusStyle = tester
+        .widget<Text>(find.byKey(const Key('container-status-web-frontend')))
+        .style;
+    expect(statusStyle?.color, GcmColors.stateColorOf(rowContext, 'running'));
+    final row = find.ancestor(
+      of: find.text('web-frontend'),
+      matching: find.byType(InkWell),
+    );
+    expect(tester.getSize(row.first).height, greaterThanOrEqualTo(56));
   });
 
   testWidgets('搜索过滤列表', (tester) async {
@@ -149,24 +181,116 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('返回容器列表'), findsOneWidget);
-    expect(find.text('概览'), findsOneWidget);
+    // 标签页 + 概览卡片标题（卡片化后「概览」同时是 Tab 与 SectionCard 标题）。
+    expect(find.text('概览'), findsNWidgets(2));
     expect(find.text('日志'), findsOneWidget);
-    // inspect 配置
+    // 滚动详情列表让网络/进程卡进入视口（ListView 懒构建）。
+    final detailList = find.descendant(
+      of: find.byType(ContainerDetailView),
+      matching: find.byType(ListView),
+    );
+    await tester.drag(detailList, const Offset(0, -2000));
+    await tester.pumpAndSettle();
+    // inspect 配置（网络卡 + 进程卡）
+    expect(find.text('default'), findsOneWidget);
     expect(find.text('192.168.64.3（网关 192.168.64.1）'), findsOneWidget);
     expect(find.textContaining('/sbin/init --serve'), findsOneWidget);
-    // stats（fake 默认 64MB/512MB、3 进程）
-    expect(find.text('内存 64 MB / 512 MB'), findsOneWidget);
-    expect(find.text('进程 3'), findsOneWidget);
+    // 滚回顶部让 stats 图表卡进入视口。
+    await tester.drag(detailList, const Offset(0, 2000));
+    await tester.pumpAndSettle();
+    // stats 字段始终可见；实时采样到达后由空态切换为图表。
+    expect(find.text('资源占用'), findsOneWidget);
+    final hasChartPanels = find.text('CPU').evaluate().isNotEmpty;
+    final hasStatsEmpty = find.textContaining('暂无统计数据').evaluate().isNotEmpty;
+    expect(hasChartPanels || hasStatsEmpty, isTrue);
+    if (hasChartPanels) expect(find.text('内存'), findsOneWidget);
   });
 
-  testWidgets('已停止容器概览：stats 冲突显示「无实时统计」', (tester) async {
+  testWidgets('三栏：选中保留列表与详情，再点同一行返回详情空态', (tester) async {
+    await _pumpPage(tester, _twoContainers());
+
+    const listPaneKey = Key('containers-list-pane');
+    expect(find.byKey(listPaneKey), findsOneWidget);
+    expect(tester.getSize(find.byKey(listPaneKey)).width, 340);
+    expect(find.text('选择一个容器查看详情'), findsOneWidget);
+    expect(find.byType(ContainerDetailView), findsNothing);
+
+    await tester.tap(find.byKey(const Key('container-row-web-frontend')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ContainerDetailView), findsOneWidget);
+    expect(find.text('cache'), findsOneWidget);
+    expect(find.text('选择一个容器查看详情'), findsNothing);
+    expect(tester.getSize(find.byKey(listPaneKey)).width, 340);
+
+    await tester.tap(find.byKey(const Key('container-row-web-frontend')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ContainerDetailView), findsNothing);
+    expect(find.text('选择一个容器查看详情'), findsOneWidget);
+    expect(find.text('web-frontend'), findsOneWidget);
+  });
+
+  testWidgets('已停止容器概览：stats 图表空态提示', (tester) async {
     final (fake, _) = await _pumpPage(tester, _twoContainers());
     fake.statsFailures['cache'] = 'container "cache" not running';
 
     await tester.tap(find.text('cache'));
     await tester.pumpAndSettle();
 
-    expect(find.text('容器未在运行，无实时统计'), findsOneWidget);
+    // 无 stats 历史 → 图表空态（停止容器无采样）。
+    expect(find.textContaining('暂无统计数据'), findsOneWidget);
+  });
+
+  testWidgets('stats 图表固定完整时间窗并显示 X 轴刻度', (tester) async {
+    final (_, service) = await _pumpPage(tester, _twoContainers());
+    await tester.tap(find.text('web-frontend'));
+    await tester.pumpAndSettle();
+    for (
+      var attempt = 0;
+      attempt < 4 && service.statsHistoryFor('web-frontend').length < 2;
+      attempt++
+    ) {
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(
+      service.statsHistoryFor('web-frontend').length,
+      greaterThanOrEqualTo(2),
+    );
+
+    final detailList = find.descendant(
+      of: find.byType(ContainerDetailView),
+      matching: find.byType(ListView),
+    );
+    await tester.drag(detailList, const Offset(0, -2000));
+    await tester.pumpAndSettle();
+    await tester.drag(detailList, const Offset(0, 2000));
+    await tester.pumpAndSettle();
+    expect(find.byType(LineChart), findsWidgets);
+
+    LineChartData chartData() =>
+        tester.widgetList<LineChart>(find.byType(LineChart)).first.data;
+    expect(
+      chartData().maxX - chartData().minX,
+      const Duration(minutes: 5).inMilliseconds,
+    );
+    expect(chartData().titlesData.bottomTitles.sideTitles.showTitles, isTrue);
+    expect(
+      chartData().titlesData.bottomTitles.sideTitles.interval,
+      const Duration(minutes: 2).inMilliseconds,
+    );
+
+    await tester.tap(find.byKey(const Key('stats-window-15m')));
+    await tester.pump();
+    expect(
+      chartData().maxX - chartData().minX,
+      const Duration(minutes: 15).inMilliseconds,
+    );
+    expect(
+      chartData().titlesData.bottomTitles.sideTitles.interval,
+      const Duration(minutes: 5).inMilliseconds,
+    );
   });
 
   testWidgets('日志标签页：stdio/boot 双源实时滚动，eof 收尾', (tester) async {
@@ -374,7 +498,9 @@ void main() {
       'pending-api',
     );
     await tester.tap(find.widgetWithText(FilledButton, '创建'));
-    await tester.pumpAndSettle();
+    // 创建挂起期间乐观行的 spinner 持续动画，不能用 pumpAndSettle。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.text('pending-api'), findsOneWidget);
     expect(find.text('创建中'), findsOneWidget);
@@ -424,18 +550,66 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('停止容器'), findsOneWidget);
     await tester.tap(find.widgetWithText(FilledButton, '停止'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
 
     expect(find.text('停止中'), findsOneWidget);
+    final stoppingContext = tester.element(find.text('停止中'));
+    expect(
+      tester.widget<Text>(find.text('停止中')).style?.color,
+      GcmColors.stateColorOf(stoppingContext, 'stopping'),
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is StateDot && widget.state == 'stopping',
+      ),
+      findsOneWidget,
+    );
     final menu = tester.widget<PopupMenuButton<String>>(
       find.byKey(const Key('container-actions-web-frontend')),
     );
     expect(menu.enabled, isFalse);
+    final rowSpinner = find.descendant(
+      of: find.byKey(const Key('container-actions-web-frontend')),
+      matching: find.byType(CircularProgressIndicator),
+    );
+    expect(rowSpinner, findsOneWidget);
+    expect(tester.getSize(rowSpinner), const Size(16, 16));
+    expect(tester.widget<CircularProgressIndicator>(rowSpinner).strokeWidth, 2);
 
     fake.stopGate!.complete();
     await tester.pumpAndSettle();
     expect(find.text('停止中'), findsNothing);
     expect(find.text('已停止'), findsWidgets);
+  });
+
+  testWidgets('详情停止操作显示 spinner 并禁止重复操作', (tester) async {
+    final fake = _twoContainers()..stopGate = Completer<void>();
+    await _pumpPage(tester, fake);
+    await tester.tap(find.byKey(const Key('container-row-web-frontend')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.byKey(const Key('container-detail-toggle')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    final button = tester.widget<FilledButton>(
+      find.byKey(const Key('container-detail-toggle')),
+    );
+    expect(button.onPressed, isNull);
+    expect(find.text('停止中'), findsWidgets);
+    final spinner = find.descendant(
+      of: find.byKey(const Key('container-detail-toggle')),
+      matching: find.byType(CircularProgressIndicator),
+    );
+    expect(spinner, findsOneWidget);
+    expect(tester.getSize(spinner), const Size(16, 16));
+    expect(tester.widget<CircularProgressIndicator>(spinner).strokeWidth, 2);
+
+    fake.stopGate!.complete();
+    await tester.pumpAndSettle();
+    expect(spinner, findsNothing);
   });
 
   testWidgets('停止等待超时只提示，后台操作仍继续', (tester) async {
@@ -552,6 +726,62 @@ void main() {
     expect(run.onPressed, isNotNull);
   });
 
+  testWidgets('日志跟随平滑滚动，用户上滚后新增日志不抢滚动位置', (tester) async {
+    final fake = _StreamingLogsBridge();
+    final service = ContainerService(bridge: fake);
+    addTearDown(service.dispose);
+    addTearDown(fake.logsController.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            height: 240,
+            child: ContainerLogTab(service: service, containerId: 'web'),
+          ),
+        ),
+      ),
+    );
+
+    fake.logsController.add(
+      BridgeLogEvent.data(
+        source: 'stdio',
+        bytes: utf8.encode(
+          List.generate(200, (index) => 'line-$index').join('\n'),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    final scroll = tester.widget<ListView>(find.byType(ListView)).controller!;
+    expect(scroll.position.maxScrollExtent, greaterThan(0));
+    expect(scroll.position.pixels, lessThan(scroll.position.maxScrollExtent));
+
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(scroll.position.pixels, greaterThan(0));
+    expect(scroll.position.pixels, lessThan(scroll.position.maxScrollExtent));
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(
+      scroll.position.pixels,
+      closeTo(scroll.position.maxScrollExtent, 0.01),
+    );
+
+    await tester.drag(find.byType(ListView), const Offset(0, 120));
+    await tester.pumpAndSettle();
+    expect(find.text('回到底部并跟随'), findsOneWidget);
+    final pausedPixels = scroll.position.pixels;
+    fake.logsController.add(
+      BridgeLogEvent.data(
+        source: 'stdio',
+        bytes: utf8.encode(
+          List.generate(20, (index) => 'paused-$index').join('\n'),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(scroll.position.pixels, closeTo(pausedPixels, 0.01));
+  });
+
   testWidgets('日志视图只保留尾部 5000 行', (tester) async {
     final fake = _twoContainers()
       ..logResponses['web-frontend'] = [
@@ -568,7 +798,12 @@ void main() {
     await tester.tap(find.text('日志'));
     await tester.pumpAndSettle();
 
-    final list = tester.widget<ListView>(find.byType(ListView));
+    final list = tester.widget<ListView>(
+      find.descendant(
+        of: find.byType(ContainerDetailView),
+        matching: find.byType(ListView),
+      ),
+    );
     final delegate = list.childrenDelegate as SliverChildListDelegate;
     expect(delegate.estimatedChildCount, 5000);
     expect(delegate.children, hasLength(5000));

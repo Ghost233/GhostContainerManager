@@ -9,13 +9,16 @@ import '../../services/project_service.dart';
 /// 三选删除弹窗的选择。
 enum DeleteLocalChoice { deleteOnly, archiveAndDelete }
 
-/// 一键回收确认弹窗。返回 true=确认执行，false/null=取消。
-Future<bool?> showReclaimDialog(
+/// 一键回收确认弹窗的返回：confirmed=确认执行，force=强制删除运行中容器。
+typedef ReclaimConfirmation = ({bool confirmed, bool force});
+
+/// 一键回收确认弹窗。返回 {confirmed:true, force} 确认执行，null=取消。
+Future<ReclaimConfirmation?> showReclaimDialog(
   BuildContext context, {
   required String project,
   required ProjectReclaimReport preview,
 }) {
-  return showDialog<bool>(
+  return showDialog<ReclaimConfirmation>(
     context: context,
     builder: (context) => _ReclaimDialog(project: project, preview: preview),
   );
@@ -109,7 +112,7 @@ class _ReclaimDialogState extends State<_ReclaimDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
+          onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
         FilledButton(
@@ -117,7 +120,8 @@ class _ReclaimDialogState extends State<_ReclaimDialog> {
             backgroundColor: theme.colorScheme.error,
             foregroundColor: theme.colorScheme.onError,
           ),
-          onPressed: () => Navigator.of(context).pop(true),
+          onPressed: () =>
+              Navigator.of(context).pop((confirmed: true, force: _force)),
           child: const Text('回收并显示报告'),
         ),
       ],

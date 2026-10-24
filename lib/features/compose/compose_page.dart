@@ -18,6 +18,8 @@ import '../../services/errors.dart';
 import '../system/readiness_controller.dart';
 import '../../app/placeholders.dart';
 import '../../app/section_widgets.dart';
+import '../../ui/colors.dart';
+import '../../ui/components.dart';
 
 /// Compose 页数据状态（页面级 ChangeNotifier）。up/down 参数（文件路径等）
 /// 是页面局部 State，不进 controller。
@@ -333,40 +335,170 @@ class _ProjectList extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         for (final project in projects)
-          Card(
-            child: ExpansionTile(
-              title: Text(project.name, style: theme.textTheme.bodyMedium),
-              subtitle: Text(
-                '${project.runningCount}/${project.services.length} 个服务运行中',
-                style: theme.textTheme.bodySmall,
-              ),
-              children: [
-                for (final service in project.services)
-                  ListTile(
-                    dense: true,
-                    title: Text(
-                      service.serviceName.isEmpty
-                          ? service.containerId
-                          : service.serviceName,
-                      style: theme.textTheme.bodySmall,
-                    ),
-                    subtitle: Text(
-                      service.containerId,
-                      style: theme.textTheme.bodySmall,
-                    ),
-                    trailing: Text(
-                      service.state.wireName,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: service.state.wireName == 'running'
-                            ? theme.colorScheme.primary
-                            : theme.colorScheme.outline,
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: _ProjectCard(project: project),
+          ),
+      ],
+    );
+  }
+}
+
+class _ProjectCard extends StatefulWidget {
+  const _ProjectCard({required this.project});
+
+  final ComposeProject project;
+
+  @override
+  State<_ProjectCard> createState() => _ProjectCardState();
+}
+
+class _ProjectCardState extends State<_ProjectCard> {
+  bool _servicesExpanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final project = widget.project;
+    return SectionCard(
+      title: project.name,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _KvRow(
+            '运行状态',
+            '${project.runningCount}/${project.services.length} 个服务运行中',
+          ),
+          _KvRow('服务数', '${project.services.length} 个'),
+          const SizedBox(height: 8),
+          InkWell(
+            key: Key('compose-services-toggle-${project.name}'),
+            borderRadius: BorderRadius.circular(4),
+            onTap: () {
+              setState(() => _servicesExpanded = !_servicesExpanded);
+            },
+            child: SizedBox(
+              height: 32,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '服务与容器',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: GcmColors.textSecondary(context),
                       ),
                     ),
                   ),
-              ],
+                  Icon(
+                    _servicesExpanded ? Icons.expand_less : Icons.expand_more,
+                    size: 18,
+                    color: GcmColors.textSecondary(context),
+                  ),
+                ],
+              ),
             ),
           ),
-      ],
+          if (_servicesExpanded) ...[
+            const SizedBox(height: 4),
+            for (final service in project.services)
+              _ComposeServiceRow(service: service),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ComposeServiceRow extends StatelessWidget {
+  const _ComposeServiceRow({required this.service});
+
+  final ComposeProjectService service;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final state = service.state.wireName;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  service.serviceName.isEmpty
+                      ? service.containerId
+                      : service.serviceName,
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+              StateDot(state: state),
+              const SizedBox(width: 6),
+              Text(
+                _composeStateLabel(state),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: GcmColors.stateColorOf(context, state),
+                ),
+              ),
+            ],
+          ),
+          _KvRow(
+            '容器 ID',
+            service.containerId,
+            valueWidget: CopyValue(value: service.containerId),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _composeStateLabel(String state) => switch (state) {
+  'running' => '运行中',
+  'stopped' || 'exited' => '已停止',
+  'paused' => '已暂停',
+  'starting' => '启动中',
+  'stopping' => '停止中',
+  'restarting' => '重启中',
+  _ => state,
+};
+
+/// label 灰 + value 两列行。
+class _KvRow extends StatelessWidget {
+  const _KvRow(this.label, this.value, {this.valueWidget});
+
+  final String label;
+  final String value;
+  final Widget? valueWidget;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 110,
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: GcmColors.textSecondary(context),
+              ),
+            ),
+          ),
+          Expanded(
+            child:
+                valueWidget ??
+                SelectableText(
+                  value.isEmpty ? '—' : value,
+                  style: theme.textTheme.bodyMedium,
+                ),
+          ),
+        ],
+      ),
     );
   }
 }
