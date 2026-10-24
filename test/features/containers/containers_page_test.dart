@@ -149,24 +149,33 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('返回容器列表'), findsOneWidget);
-    expect(find.text('概览'), findsOneWidget);
+    // 标签页 + 概览卡片标题（卡片化后「概览」同时是 Tab 与 SectionCard 标题）。
+    expect(find.text('概览'), findsNWidgets(2));
     expect(find.text('日志'), findsOneWidget);
-    // inspect 配置
+    // 滚动让网络/进程卡进入视口（ListView 懒构建）。
+    await tester.drag(find.byType(ListView).first, const Offset(0, -2000));
+    await tester.pumpAndSettle();
+    // inspect 配置（网络卡 + 进程卡）
+    expect(find.text('default'), findsOneWidget);
     expect(find.text('192.168.64.3（网关 192.168.64.1）'), findsOneWidget);
     expect(find.textContaining('/sbin/init --serve'), findsOneWidget);
-    // stats（fake 默认 64MB/512MB、3 进程）
-    expect(find.text('内存 64 MB / 512 MB'), findsOneWidget);
-    expect(find.text('进程 3'), findsOneWidget);
+    // 滚回顶部让 stats 图表卡进入视口。
+    await tester.drag(find.byType(ListView).first, const Offset(0, 2000));
+    await tester.pumpAndSettle();
+    // stats 图表卡（无历史 → 空态；实时采样由 task-40 接缝驱动）。
+    expect(find.text('资源占用'), findsOneWidget);
+    expect(find.textContaining('暂无统计数据'), findsOneWidget);
   });
 
-  testWidgets('已停止容器概览：stats 冲突显示「无实时统计」', (tester) async {
+  testWidgets('已停止容器概览：stats 图表空态提示', (tester) async {
     final (fake, _) = await _pumpPage(tester, _twoContainers());
     fake.statsFailures['cache'] = 'container "cache" not running';
 
     await tester.tap(find.text('cache'));
     await tester.pumpAndSettle();
 
-    expect(find.text('容器未在运行，无实时统计'), findsOneWidget);
+    // 无 stats 历史 → 图表空态（停止容器无采样）。
+    expect(find.textContaining('暂无统计数据'), findsOneWidget);
   });
 
   testWidgets('日志标签页：stdio/boot 双源实时滚动，eof 收尾', (tester) async {

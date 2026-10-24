@@ -13,6 +13,8 @@ import '../../app/placeholders.dart';
 import '../../services/container_models.dart';
 import '../../services/container_service.dart';
 import '../../services/errors.dart';
+import '../../ui/colors.dart';
+import '../../ui/text.dart';
 import '../system/readiness_controller.dart';
 import 'container_detail.dart';
 import 'container_dialogs.dart';
@@ -541,7 +543,7 @@ extension ContainerActivityLabel on ContainerActivity {
   };
 }
 
-/// 生命周期状态点（运行绿 / 停止灰 / 停止中琥珀 / 未知灰轮廓）。
+/// 生命周期状态点（语义色经 GcmColors 映射，配文字标签使用）。
 class ContainerStateDot extends StatelessWidget {
   const ContainerStateDot({super.key, required this.state});
 
@@ -549,16 +551,13 @@ class ContainerStateDot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final color = switch (state) {
-      ContainerState.running => const Color(0xFF1D7A34),
-      ContainerState.stopping => const Color(0xFF8A6D00),
-      _ => scheme.outline,
-    };
     return Container(
       width: 8,
       height: 8,
-      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      decoration: BoxDecoration(
+        color: GcmColors.stateColorOf(context, state.wireName),
+        shape: BoxShape.circle,
+      ),
     );
   }
 }
@@ -657,38 +656,4 @@ class _ErrorState extends StatelessWidget {
       ),
     );
   }
-}
-
-/// 等宽小字（镜像/端口/路径/标识；macos-ui-standards 字体角色）。
-TextStyle? monoTextStyle(BuildContext context) {
-  return Theme.of(context).textTheme.bodySmall
-      ?.copyWith(fontFamily: 'Menlo', fontFamilyFallback: const ['monospace']);
-}
-
-String formatBytes(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  var value = bytes / 1024.0;
-  var unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit++;
-  }
-  return value >= 10
-      ? '${value.round()} ${units[unit]}'
-      : '${value.toStringAsFixed(1)} ${units[unit]}';
-}
-
-String formatDuration(Duration duration) {
-  if (duration.inMinutes < 1) return '${duration.inSeconds} 秒';
-  if (duration.inHours < 1) return '${duration.inMinutes} 分钟';
-  if (duration.inDays < 1) return '${duration.inHours} 小时';
-  return '${duration.inDays} 天';
-}
-
-String formatDateTime(DateTime value) {
-  final local = value.toLocal();
-  String two(int v) => v.toString().padLeft(2, '0');
-  return '${local.year}-${two(local.month)}-${two(local.day)} '
-      '${two(local.hour)}:${two(local.minute)}';
 }
