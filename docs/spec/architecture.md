@@ -100,7 +100,7 @@ lib/
     container_bridge.dart    # 抽象接口（接缝）
   mcp/
     mcp_server.dart          # 内嵌 server 生命周期（HTTP）
-    tools/                   # 34 个工具注册（薄适配：参数校验→调 Service layer→格式化输出）
+    tools/                   # 35 个工具注册（薄适配：参数校验→调 Service layer→格式化输出）
   launcher/
     maclauncher_registrar.dart  # MacLauncher SDK 接入（对接面见 §7）
 packages/

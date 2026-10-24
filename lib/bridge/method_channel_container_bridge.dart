@@ -1,0 +1,460 @@
+/// Real [ContainerBridge] backed by the `container_bridge` plugin
+/// (MethodChannel → Swift: ContainerAPIClient over XPC + CLI runner).
+///
+/// Pure-local probes (locating the CLI binary, checking the default-kernel
+/// symlink) use dart:io directly — no channel roundtrip.
+library;
+
+import 'dart:async';
+import 'dart:io';
+
+import 'package:container_bridge/container_bridge.dart';
+import 'package:flutter/services.dart';
+
+import 'container_bridge.dart' as seam;
+
+class MethodChannelContainerBridge implements seam.ContainerBridge {
+  MethodChannelContainerBridge({
+    ContainerBridgeChannel? channel,
+    ContainerBridgeEvents? events,
+  }) : _channel = channel ?? ContainerBridgeChannel(),
+       _events = events ?? ContainerBridgeEvents();
+
+  /// Candidate install locations probed by [locateBinary], in order.
+  static const defaultBinaryCandidates = <String>[
+    '/usr/local/bin/container',
+    '/opt/homebrew/bin/container',
+  ];
+
+  final ContainerBridgeChannel _channel;
+  final ContainerBridgeEvents _events;
+  static int _nextCliHandle = 0;
+
+  @override
+  Future<String?> locateBinary({String? customPath}) async {
+    for (final path in [?customPath, ...defaultBinaryCandidates]) {
+      if (File(path).existsSync()) return path;
+    }
+    return null;
+  }
+
+  @override
+  Future<seam.BridgeCommandResult> systemVersion() =>
+      _command(() => _channel.systemVersion());
+
+  @override
+  Future<seam.BridgeCommandResult> systemStatus() =>
+      _command(() => _channel.systemStatus());
+
+  @override
+  Future<seam.BridgeCommandResult> systemStart({required bool installKernel}) =>
+      _command(() => _channel.systemStart(installKernel: installKernel));
+
+  @override
+  Future<seam.BridgeCommandResult> systemStop() =>
+      _command(() => _channel.systemStop());
+
+  @override
+  Future<seam.BridgeCommandResult> kernelSetRecommended({bool force = false}) =>
+      _command(() => _channel.systemKernelSet(force: force));
+
+  @override
+  Future<bool> kernelInstalled() async {
+    final home = Platform.environment['HOME'];
+    if (home == null) return false;
+    return Link(
+      '$home/Library/Application Support/com.apple.container/kernels/default.kernel-arm64',
+    ).existsSync();
+  }
+
+  @override
+  Future<seam.BridgePingResult> ping() async {
+    try {
+      return seam.BridgePingResult.fromMap(await _channel.systemPing());
+    } on PlatformException catch (e) {
+      return seam.BridgePingResult.failure(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> containerList() async {
+    try {
+      return await _channel.containerList();
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<Map<String, Object?>> containerInspect(String id) async {
+    try {
+      return await _channel.containerGet(id);
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<Map<String, Object?>> containerStats(String id) async {
+    try {
+      return await _channel.containerStats(id);
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<void> containerCreate({
+    required String id,
+    required String image,
+    List<String> command = const [],
+    List<String> env = const [],
+    List<String> ports = const [],
+    String? network,
+    List<Map<String, Object?>> mounts = const [],
+    Map<String, String> labels = const {},
+  }) async {
+    try {
+      await _channel.containerCreate(
+        id: id,
+        image: image,
+        command: command,
+        env: env,
+        ports: ports,
+        network: network,
+        mounts: mounts,
+        labels: labels,
+      );
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<void> containerStart(String id) async {
+    try {
+      await _channel.containerStart(id);
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<bool> containerStop(String id, {int timeoutSeconds = 5}) async {
+    try {
+      final result = await _channel.containerStop(
+        id,
+        timeoutSeconds: timeoutSeconds,
+      );
+      return result['stoppedGracefully'] == true;
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<void> containerDelete(String id, {bool force = false}) async {
+    try {
+      await _channel.containerDelete(id, force: force);
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<String> containerKill(String id, {String signal = 'KILL'}) async {
+    try {
+      final result = await _channel.containerKill(id, signal: signal);
+      return result['status'] as String? ?? 'unknown';
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<seam.BridgeExecResult> containerExec({
+    required String id,
+    required List<String> command,
+    List<String> env = const [],
+    String? workdir,
+    String? user,
+    int timeoutSeconds = 60,
+  }) async {
+    try {
+      return seam.BridgeExecResult.fromMap(
+        await _channel.containerExec(
+          id: id,
+          command: command,
+          env: env,
+          workdir: workdir,
+          user: user,
+          timeoutSeconds: timeoutSeconds,
+        ),
+      );
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Stream<seam.BridgeLogEvent> containerLogs(String id) {
+    return _events.containerLogs(id).map(_toLogEvent);
+  }
+
+  @override
+  Future<seam.BridgeCommandResult> cliRun(
+    List<String> arguments, {
+    Duration? timeout,
+  }) => _command(() => _channel.cliRun(arguments, timeout: timeout));
+
+  @override
+  seam.BridgeCliProcess cliStart(List<String> arguments) {
+    final handle =
+        'cli-${DateTime.now().microsecondsSinceEpoch}-${_nextCliHandle++}';
+    return _MethodChannelBridgeCliProcess(_channel, _events, arguments, handle);
+  }
+
+  @override
+  Future<seam.BridgeCommandResult> networkList() =>
+      _command(() => _channel.networkList());
+
+  @override
+  Future<seam.BridgeCommandResult> networkInspect(String id) =>
+      _command(() => _channel.networkInspect(id));
+
+  @override
+  Future<seam.BridgeCommandResult> composeHelp() =>
+      _command(() => _channel.composeHelp());
+
+  @override
+  Future<seam.BridgeCommandResult> composeRun(
+    List<String> arguments, {
+    Duration? timeout,
+  }) => _command(
+    () => _channel.composeRun(arguments, timeoutSeconds: timeout?.inSeconds),
+  );
+
+  // -- image domain (T5) -----------------------------------------------------
+
+  @override
+  Future<List<Map<String, Object?>>> imageList() async {
+    try {
+      return await _channel.imageList();
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<Map<String, Object?>> imageInspect(String reference) async {
+    try {
+      return await _channel.imageInspect(reference);
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<void> imageDelete(String reference) async {
+    try {
+      await _channel.imageDelete(reference);
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<Map<String, Object?>> imagePull({
+    required String pullId,
+    required String reference,
+    String? platform,
+  }) async {
+    try {
+      return await _channel.imagePull(
+        pullId: pullId,
+        reference: reference,
+        platform: platform,
+      );
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<void> imagePullCancel(String pullId) async {
+    try {
+      await _channel.imagePullCancel(pullId);
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Stream<seam.BridgeImagePullEvent> imagePullEvents() {
+    return _events.imagePull().map(seam.BridgeImagePullEvent.fromMap);
+  }
+
+  static seam.BridgeLogEvent _toLogEvent(Map<String, Object?> event) {
+    final kind = event['event'] as String? ?? 'data';
+    switch (kind) {
+      case 'eof':
+        return const seam.BridgeLogEvent.eof();
+      case 'error':
+        return seam.BridgeLogEvent.error(event['message'] as String? ?? '');
+      default:
+        final raw = event['data'];
+        return seam.BridgeLogEvent.data(
+          source: event['source'] as String? ?? 'stdio',
+          bytes: raw is Uint8List ? raw : Uint8List(0),
+        );
+    }
+  }
+
+  Future<seam.BridgeCommandResult> _command(
+    Future<Map<String, Object?>> Function() call,
+  ) async {
+    try {
+      return seam.BridgeCommandResult.fromMap(await call());
+    } on PlatformException catch (e) {
+      return seam.BridgeCommandResult(
+        exitCode: -1,
+        stdout: '',
+        stderr: e.message ?? e.code,
+      );
+    }
+  }
+}
+
+class _MethodChannelBridgeCliProcess implements seam.BridgeCliProcess {
+  _MethodChannelBridgeCliProcess(
+    this._channel,
+    this._events,
+    this._arguments,
+    this._handle,
+  ) {
+    _stdout = StreamController<String>(onCancel: _onOutputCancelled);
+    _stderr = StreamController<String>(onCancel: _onOutputCancelled);
+    unawaited(_start());
+  }
+
+  final ContainerBridgeChannel _channel;
+  final ContainerBridgeEvents _events;
+  final List<String> _arguments;
+  final String _handle;
+  final Completer<int> _exit = Completer<int>();
+  final Completer<void> _launched = Completer<void>();
+  late final StreamController<String> _stdout;
+  late final StreamController<String> _stderr;
+  StreamSubscription<Map<String, Object?>>? _subscription;
+  Future<void>? _termination;
+  bool _launchFailed = false;
+  bool _finished = false;
+
+  @override
+  Stream<String> get stdoutLines => _stdout.stream;
+
+  @override
+  Stream<String> get stderrLines => _stderr.stream;
+
+  @override
+  Future<int> get exitCode => _exit.future;
+
+  Future<void> _start() async {
+    try {
+      await _channel.cliStart(_arguments, handle: _handle);
+      _subscription = _events
+          .cliProcess(_handle)
+          .listen(_onEvent, onError: _onStreamError, onDone: _onStreamDone);
+      _launched.complete();
+    } on PlatformException catch (error) {
+      _launchFailed = true;
+      _fail(seam.BridgeCallException(error.message ?? error.code));
+      _launched.complete();
+    } catch (error) {
+      _launchFailed = true;
+      _fail(seam.BridgeCallException('$error'));
+      _launched.complete();
+    }
+  }
+
+  void _onEvent(Map<String, Object?> event) {
+    if (_finished) return;
+    switch (event['event']) {
+      case 'stdout':
+        _stdout.add(event['line'] as String? ?? '');
+      case 'stderr':
+        _stderr.add(event['line'] as String? ?? '');
+      case 'error':
+        _fail(
+          seam.BridgeCallException(event['message'] as String? ?? 'CLI failed'),
+        );
+      case 'exit':
+        _finish((event['exitCode'] as num?)?.toInt() ?? -1);
+    }
+  }
+
+  void _onStreamError(Object error) {
+    _fail(seam.BridgeCallException('$error'));
+  }
+
+  void _onStreamDone() {
+    if (!_finished) {
+      _fail(
+        const seam.BridgeCallException(
+          'CLI event stream ended without an exit event.',
+        ),
+      );
+    }
+  }
+
+  void _finish(int exitCode) {
+    if (_finished) return;
+    _finished = true;
+    _exit.complete(exitCode);
+    unawaited(_closeOutputs());
+    unawaited(_subscription?.cancel());
+  }
+
+  void _fail(seam.BridgeCallException error) {
+    if (_finished) return;
+    _finished = true;
+    if (!_launchFailed) {
+      unawaited(
+        _channel.cliTerminate(_handle).then((_) {}, onError: (Object _) {}),
+      );
+    }
+    _exit.completeError(error);
+    if (!_stdout.isClosed) _stdout.addError(error);
+    if (!_stderr.isClosed) _stderr.addError(error);
+    unawaited(_closeOutputs());
+    unawaited(_subscription?.cancel());
+  }
+
+  Future<void> _closeOutputs() async {
+    await Future.wait<void>([
+      if (!_stdout.isClosed) _stdout.close(),
+      if (!_stderr.isClosed) _stderr.close(),
+    ]);
+  }
+
+  void _onOutputCancelled() {
+    if (_finished) return;
+    unawaited(terminate().then((_) {}, onError: (Object _) {}));
+  }
+
+  @override
+  Future<void> terminate() {
+    if (_finished) return Future<void>.value();
+    return _termination ??= _terminate();
+  }
+
+  Future<void> _terminate() async {
+    await _launched.future;
+    if (_finished || _launchFailed) return;
+    try {
+      await _channel.cliTerminate(_handle);
+    } on PlatformException catch (error) {
+      throw seam.BridgeCallException(error.message ?? error.code);
+    }
+  }
+}

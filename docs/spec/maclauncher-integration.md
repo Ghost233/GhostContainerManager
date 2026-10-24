@@ -15,13 +15,13 @@
 | --- | --- | --- |
 | 应用级 | `AppCallbacks` 全量（窗口接管、入口接管、版本查询） | 由 SDK 框架承担，无业务语义风险 |
 | 服务级 onStatus | ✅ 注册 | 只读，映射到管理入口的实际观测状态（§3.3） |
-| 服务级 onLogs | ✅ 注册 | 只读流，映射到容器日志流（XPC FileHandle 路径，v1 已有该能力） |
+| 服务级 onLogs | ✅ 注册 | 只读批次，按 `LogQuery` 返回最近 N 条；底层映射容器日志读取（XPC FileHandle 路径） |
 | 服务级 onStart | ✅ 注册 | 映射到容器 start；语义简单明确 |
 | 服务级 onRecycle | ✅ 注册，语义按 §2 推荐方案 | SDK 无 onStop 回调，启动器侧的"重启"诉求由 recycle 承载 |
 
 **服务粒度推荐：一个容器 = 一个 MacLauncher 服务**。服务 ID 用容器名（Apple container 的容器标识），显示名直接用容器名。Compose 项目不注册为服务（其成员容器各自注册）；镜像、网络、挂载不是可"启动"的对象，不注册。
 
-**注册范围推荐：只注册 App 创建的资源**（带 `com.ghost233.*` label 的容器）。用户已有的容器默认不出现在启动器里——理由：E04 资源所有权（启动器的 start/recycle 是写操作，对用户既有资源应由用户显式请求而非默认暴露）；同时避免启动器被几十个旧容器淹没。设置中提供"把此容器加入 MacLauncher"的逐容器开关作为逃生门。
+**注册范围推荐：只注册 App 创建的资源**（带 `com.ghost233.*` label 的容器）。用户已有的容器默认不出现在启动器里——理由：E04 资源所有权（启动器的 start/recycle 是写操作，对用户既有资源应由用户显式请求而非默认暴露）；同时避免启动器被几十个旧容器淹没。**v1 裁剪拍板（task-31）：逐容器加入开关延至 v2；v1 = `com.ghost233.*` 容器自动注册，并随 ContainerService 快照动态增删**（建连后新建/删除的容器同步注册/注销，不是一次性快照）。
 
 **maclauncher.json**：`services` 列表由应用运行时动态上报（当前 SDK 的发现机制经 `projectName` + `SdkEntry.currentAppBundle() ?? SdkEntry.currentExecutable()`），仓库内静态 `services: []` 保持为空，直到首个能力实现后再按实际填写。
 
@@ -67,9 +67,11 @@ SDK 文档明确 recycle 的业务含义"由规格确定"。三个候选语义�
 
 ### 3.4 onLogs
 
-- 语义：流式回传指定容器日志。
-- 映射：管理入口 `containers.logs(name, follow: true)`（XPC FileHandle → 桥接 → Dart 流）；SDK 断开或回调取消时按 E03/E04 取消上游订阅并释放 fd。
-- 限制：不保证历史完整性语义（是否带 `-n` 尾部行数由 SDK 协议参数决定，v1 默认跟流不带历史）。
+- **固定 SDK 实施校正**：`268f88ef` 的实际签名是 `Future<LogBatch> Function(LogQuery)`，语义为“查询最近日志批次”，不是持续 follow 流。
+- 映射管理入口的日志读取，按 `LogQuery.limit` 返回最近 N 条（SDK 默认 200、最大 500），`LogBatch.entries` 按 oldest-first 排列。
+- 如实填写 `truncated` 与 `observedAt`；`instanceId` 没有可靠来源时保持 null，不伪造运行代次。
+- 读到 EOF、SDK 取消或适配层 dispose 时取消上游订阅并释放 fd；不把一次批次响应伪装成持续流。
+- v1 不承诺历史完整性；日志页的本地回看仍由容器日志能力承担。
 
 ### 3.5 AppCallbacks
 
@@ -98,7 +100,7 @@ MacLauncher ──SDK(固定 268f88ef)──► MacLauncherBridge（Dart 适配�
 | 场景 | 行为 |
 | --- | --- |
 | 启动器未运行 | 应用完全独立工作（窗口、菜单栏、MCP 全部正常）；SDK 侧静默等待发现，不弹错 |
-| pending-approval（等待用户在启动器批准） | 保留重试；日志节流；UI 设置页显示"等待 MacLauncher 批准"状态，不阻塞主功能 |
+| pending-approval（等待用户在启动器批准） | 保留重试；日志节流。**v1 裁剪拍板（task-31）：设置页状态显示延至 v2**（SDK 仍负责握手重试，应用不阻塞主功能） |
 | 运行中 SDK 断连 | 已注册服务从启动器消失；应用侧资源**不动**（容器继续运行）；自动重连，恢复后重新注册 |
 | 启动器退出 | 同上（断连语义）；不触发任何容器操作 |
 | 应用退出 | 容器处置按 #3 生命周期工单结论；SDK `dispose()` 归还入口；不因退出回收用户资源 |
@@ -109,13 +111,12 @@ MacLauncher ──SDK(固定 268f88ef)──► MacLauncherBridge（Dart 适配�
 - **Q1 - recycle 语义**：是否采用方案 A（recycle = 重启，stop+start 同一容器）？
   ➡️ 推荐：A。重建（B）破坏性太强且依赖配置回放模型，不注册（C）则浪费启动器的重启入口。
 - **Q2 - 注册范围**：MacLauncher 服务是否只默认注册 App 创建的容器（`com.ghost233.*` label），用户已有容器靠设置页逐容器开关加入？
-  ➡️ 推荐：是。符合 E04 资源所有权，避免启动器被历史容器淹没。
+  ➡️ 推荐：是。符合 E04 资源所有权，避免启动器被历史容器淹没。**已拍板（task-31）：v1 自动注册+动态增删；逐容器开关延 v2。**
 - **Q3 - 服务粒度**：一个容器 = 一个服务（compose 项目不注册、成员容器各自注册）？
   ➡️ 推荐：是。粒度与操作语义一一对应；未来若要"项目级启停"再立项。
 - **Q4 - 非就绪时启动器操作的处理**：onStart/onRecycle 在 runtime 未就绪时拒绝，还是尝试自动 `container system start`？
   ➡️ 推荐：拒绝并携带状态。system start 是有用户可见副作用的决策（可能触发内核下载），不应被启动器静默触发。
-- **Q5 - onLogs 历史语义**：日志回传是否带历史尾部（如最近 200 行）还是纯 follow？
-  ➡️ 推荐：纯 follow（v1）；历史回看由 app 内日志页承担，SDK 协议若后续支持参数再加。
+- **Q5 - onLogs 历史语义**：已定。固定 SDK `268f88ef` 是批式最近 N 条查询，而非纯 follow；按 `LogQuery.limit` 返回 oldest-first 的 `LogBatch`，并保留截断与观测时间信息。
 
 ## 7. GLOSSARY 新术语建议
 
