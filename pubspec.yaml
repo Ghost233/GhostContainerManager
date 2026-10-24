@@ -20,6 +20,7 @@ dependencies:
       path: packages/maclauncher_sdk
   # MCP server SDK（task-15，issue #16；选型见 docs/research/dart-mcp-server-options.md）
   mcp_dart: ^2.4.3
+  file_selector: ^1.1.0
 
 dev_dependencies:
   flutter_lints: 6.0.0

@@ -90,3 +90,5 @@
 - task-34（mcp-fixer）：path 缺失 INVALID_ARGUMENT、Dockerfile 缺失 NOT_FOUND、TIMEOUT 映射、Service 层 100ms progress 节流（leading/coalesce/trailing）、app_constants.dart bundle id 收敛。
 - Lead：app_shell/app.dart 项目页接线（projects: _projectService）；规格回写（maclauncher v1 裁剪：自动注册+动态增删，逐容器开关/pending-approval UI 延 v2；registry_stop 补 D；reclaim allowFallback:false 边界）。
 - 全量验收：check exit 0（format/analyze/315 tests），证据 .tooling/host-tests/run-7ssc1d。
+- T8 批次双轴审查（Spec acf59f69 / Standards e863354b，范围 cdd7569..b4e3af6）：均无 P0。合并后 P1：标题栏缺推送按钮、新建项目按钮未接线、force 复选框死控件、pushed 徽标缺失、成员容器表缺时长/行内操作、磁盘快照借道 reclaim dryRun（接缝误用）、磁盘列逐行全局值误导。处置：task-36（服务支撑，mcp-fixer）+ task-37（UI，ui-prototyper，blockedBy task-36）。P2 处置：进 task-36/37（RegExp.escape、自动跟随、cancelled 态、报告卡注记、日志文件名 sanitize、push 失败清 tag、readLatest 历史回看）；文档侧 Lead 修（container-lifecycle.md exec 默认 30→60 已改；ui-ia.md D11「逐行显示」→「10Hz 合并」待改）；观察项记录（MacLauncher _drainSync 注释、df schema 真机待验）。Spec 轴误报一项：三选弹窗「归档并推送」按钮实际存在（project_dialogs.dart:171），实为标题栏缺推送入口。
+- 依赖新增：file_selector ^1.1.0（目录选择器，task-37 用），lockfile 已锁定。
