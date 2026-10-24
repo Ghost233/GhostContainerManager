@@ -241,19 +241,32 @@ class _ContainersPageState extends State<ContainersPage> {
       );
     }
     final selectedId = _selectedId;
-    if (selectedId != null) {
-      return ContainerDetailView(
-        key: ValueKey(selectedId),
-        service: widget.service,
-        containerId: selectedId,
-        onBack: () => setState(() => _selectedId = null),
-      );
-    }
-    return Column(
+    return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildToolbar(context),
-        Expanded(child: _buildBody(context)),
+        SizedBox(
+          key: const Key('containers-list-pane'),
+          width: 340,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildToolbar(context),
+              Expanded(child: _buildBody(context, compact: true)),
+            ],
+          ),
+        ),
+        const VerticalDivider(width: 1),
+        Expanded(
+          key: const Key('containers-detail-pane'),
+          child: selectedId == null
+              ? const _DetailEmptyState()
+              : ContainerDetailView(
+                  key: ValueKey(selectedId),
+                  service: widget.service,
+                  containerId: selectedId,
+                  onBack: () => setState(() => _selectedId = null),
+                ),
+        ),
       ],
     );
   }
@@ -268,29 +281,46 @@ class _ContainersPageState extends State<ContainersPage> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 640;
-          return Row(
-            children: [
-              Flexible(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 280),
-                  child: SizedBox(
-                    height: 32,
-                    child: TextField(
-                      decoration: const InputDecoration(
-                        hintText: '搜索名称或镜像',
-                        prefixIcon: Icon(Icons.search, size: 18),
-                        isDense: true,
-                        contentPadding: EdgeInsets.symmetric(vertical: 8),
-                        border: OutlineInputBorder(),
-                      ),
-                      style: theme.textTheme.bodySmall,
-                      onChanged: (value) => setState(() => _search = value),
-                    ),
-                  ),
+          final search = ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 280),
+            child: SizedBox(
+              height: 32,
+              child: TextField(
+                decoration: const InputDecoration(
+                  hintText: '搜索名称或镜像',
+                  prefixIcon: Icon(Icons.search, size: 18),
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(vertical: 8),
+                  border: OutlineInputBorder(),
                 ),
+                style: theme.textTheme.bodySmall,
+                onChanged: (value) => setState(() => _search = value),
               ),
-              if (!compact) ...[
-                const SizedBox(width: 16),
+            ),
+          );
+          final refresh = IconButton(
+            tooltip: '刷新',
+            icon: const Icon(Icons.refresh, size: 18),
+            onPressed: _refresh,
+          );
+          if (compact) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: search),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      key: const Key('create-container-button'),
+                      tooltip: '新建容器',
+                      icon: const Icon(Icons.add, size: 18),
+                      onPressed: _createContainer,
+                    ),
+                    refresh,
+                  ],
+                ),
                 Text(
                   '$running 运行中 / 共 ${_snapshot.length}',
                   style: theme.textTheme.bodySmall?.copyWith(
@@ -298,6 +328,18 @@ class _ContainersPageState extends State<ContainersPage> {
                   ),
                 ),
               ],
+            );
+          }
+          return Row(
+            children: [
+              Flexible(child: search),
+              const SizedBox(width: 16),
+              Text(
+                '$running 运行中 / 共 ${_snapshot.length}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.outline,
+                ),
+              ),
               const Spacer(),
               FilledButton.icon(
                 key: const Key('create-container-button'),
@@ -310,11 +352,7 @@ class _ContainersPageState extends State<ContainersPage> {
                 ),
               ),
               const SizedBox(width: 8),
-              IconButton(
-                tooltip: '刷新',
-                icon: const Icon(Icons.refresh, size: 18),
-                onPressed: _refresh,
-              ),
+              refresh,
             ],
           );
         },
@@ -322,7 +360,7 @@ class _ContainersPageState extends State<ContainersPage> {
     );
   }
 
-  Widget _buildBody(BuildContext context) {
+  Widget _buildBody(BuildContext context, {bool compact = false}) {
     if (_loading && _snapshot.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -342,15 +380,20 @@ class _ContainersPageState extends State<ContainersPage> {
     }
     return Column(
       children: [
-        const _ListHeader(),
+        _ListHeader(compact: compact),
         Expanded(
           child: ListView.builder(
             itemCount: rows.length,
             itemBuilder: (context, index) => _ContainerRow(
+              key: Key('container-row-${rows[index].id}'),
               container: rows[index],
               activity: _activities[rows[index].id],
               selected: _selectedId == rows[index].id,
-              onTap: () => setState(() => _selectedId = rows[index].id),
+              compact: compact,
+              onTap: () => setState(() {
+                final id = rows[index].id;
+                _selectedId = _selectedId == id ? null : id;
+              }),
               onAction: (action) => _handleContainerAction(rows[index], action),
             ),
           ),
@@ -362,7 +405,9 @@ class _ContainersPageState extends State<ContainersPage> {
 
 /// 表头（macos-ui-standards：表头行高 32）。
 class _ListHeader extends StatelessWidget {
-  const _ListHeader();
+  const _ListHeader({this.compact = false});
+
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -381,8 +426,8 @@ class _ListHeader extends StatelessWidget {
           SizedBox(width: 22, child: Text('', style: style)),
           Expanded(flex: 8, child: Text('名称 / 镜像 / 端口', style: style)),
           SizedBox(width: 76, child: Text('状态', style: style)),
-          SizedBox(width: 90, child: Text('运行时长', style: style)),
-          SizedBox(width: 40, child: Text('操作', style: style)),
+          if (!compact) SizedBox(width: 90, child: Text('运行时长', style: style)),
+          SizedBox(width: 40, child: compact ? null : Text('操作', style: style)),
         ],
       ),
     );
@@ -394,16 +439,19 @@ class _ListHeader extends StatelessWidget {
 /// 次行展示镜像与端口，状态、运行时长与操作保持独立列。
 class _ContainerRow extends StatelessWidget {
   const _ContainerRow({
+    super.key,
     required this.container,
     required this.activity,
     required this.onTap,
     required this.onAction,
     this.selected = false,
+    this.compact = false,
   });
 
   final ContainerSnapshotInfo container;
   final ContainerActivity? activity;
   final bool selected;
+  final bool compact;
   final VoidCallback onTap;
   final ValueChanged<String> onAction;
 
@@ -514,15 +562,16 @@ class _ContainerRow extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            SizedBox(
-              width: 90,
-              child: Text(
-                _uptime,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: GcmColors.textSecondary(context),
+            if (!compact)
+              SizedBox(
+                width: 90,
+                child: Text(
+                  _uptime,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: GcmColors.textSecondary(context),
+                  ),
                 ),
               ),
-            ),
             SizedBox(
               width: 40,
               child: PopupMenuButton<String>(
@@ -612,6 +661,36 @@ class AppOwnedTag extends StatelessWidget {
         '本应用创建',
         style: Theme.of(context).textTheme.labelSmall
             ?.copyWith(color: scheme.onSecondaryContainer, fontSize: 10),
+      ),
+    );
+  }
+}
+
+class _DetailEmptyState extends StatelessWidget {
+  const _DetailEmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.inventory_2_outlined,
+            size: 40,
+            color: GcmColors.textSecondary(context),
+          ),
+          const SizedBox(height: 12),
+          Text('选择一个容器查看详情', style: theme.textTheme.bodyMedium),
+          const SizedBox(height: 4),
+          Text(
+            '列表会保持显示，可随时切换容器',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: GcmColors.textSecondary(context),
+            ),
+          ),
+        ],
       ),
     );
   }

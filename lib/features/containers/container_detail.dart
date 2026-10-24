@@ -18,6 +18,7 @@ import '../../ui/colors.dart';
 import '../../ui/components.dart';
 import '../../ui/text.dart';
 import 'containers_page.dart' show ContainerStateDot;
+import 'stats_chart.dart';
 
 /// 容器详情：标题栏（返回 + 名称 + 状态 + 操作组）+ 三标签页。
 class ContainerDetailView extends StatefulWidget {
@@ -502,9 +503,7 @@ class _StatsChartsCardState extends State<_StatsChartsCard> {
     final theme = Theme.of(context);
     final now = DateTime.now();
     final cutoff = now.subtract(_window);
-    final visible = _history
-        .where((s) => !s.timestamp.isBefore(cutoff))
-        .toList(growable: false);
+    final visible = statsSamplesInWindow(_history, now: now, window: _window);
     final latest = visible.isEmpty ? null : visible.last;
 
     return SectionCard(
@@ -536,6 +535,7 @@ class _StatsChartsCardState extends State<_StatsChartsCard> {
                         spots: _spots(visible, (s) => s.cpuPercent),
                         color: GcmColors.stateRunning,
                         cutoff: cutoff,
+                        end: now,
                       ),
                     ),
                     const SizedBox(width: 16),
@@ -551,6 +551,7 @@ class _StatsChartsCardState extends State<_StatsChartsCard> {
                         ),
                         color: theme.colorScheme.primary,
                         cutoff: cutoff,
+                        end: now,
                       ),
                     ),
                   ],
@@ -570,6 +571,7 @@ class _StatsChartsCardState extends State<_StatsChartsCard> {
                         ),
                         color: GcmColors.stateTransition,
                         cutoff: cutoff,
+                        end: now,
                       ),
                     ),
                     const SizedBox(width: 16),
@@ -585,6 +587,7 @@ class _StatsChartsCardState extends State<_StatsChartsCard> {
                         ),
                         color: GcmColors.stateFailed(context),
                         cutoff: cutoff,
+                        end: now,
                       ),
                     ),
                   ],
@@ -598,14 +601,7 @@ class _StatsChartsCardState extends State<_StatsChartsCard> {
     List<ContainerStatsSample> samples,
     double? Function(ContainerStatsSample) value,
   ) {
-    final spots = <FlSpot>[];
-    for (var i = 0; i < samples.length; i++) {
-      final v = value(samples[i]);
-      if (v != null) {
-        spots.add(FlSpot(i.toDouble(), v));
-      }
-    }
-    return spots;
+    return statsChartSpots(samples, value);
   }
 }
 
@@ -668,6 +664,7 @@ class _ChartPanel extends StatelessWidget {
     required this.spots,
     required this.color,
     required this.cutoff,
+    required this.end,
   });
 
   final String title;
@@ -675,10 +672,17 @@ class _ChartPanel extends StatelessWidget {
   final List<FlSpot> spots;
   final Color color;
   final DateTime cutoff;
+  final DateTime end;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final segments = splitStatsChartSpots(spots);
+    final hasLine = segments.any((segment) => segment.length >= 2);
+    final window = end.difference(cutoff);
+    final tickInterval = window == const Duration(minutes: 5)
+        ? const Duration(minutes: 2)
+        : const Duration(minutes: 5);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -699,7 +703,7 @@ class _ChartPanel extends StatelessWidget {
         const SizedBox(height: 8),
         SizedBox(
           height: 72,
-          child: spots.length < 2
+          child: !hasLine
               ? Center(
                   child: Text(
                     '数据不足',
@@ -710,22 +714,54 @@ class _ChartPanel extends StatelessWidget {
                 )
               : LineChart(
                   LineChartData(
+                    minX: cutoff.millisecondsSinceEpoch.toDouble(),
+                    maxX: end.millisecondsSinceEpoch.toDouble(),
                     gridData: const FlGridData(show: false),
-                    titlesData: const FlTitlesData(show: false),
+                    titlesData: FlTitlesData(
+                      show: true,
+                      leftTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false),
+                      ),
+                      topTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false),
+                      ),
+                      rightTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false),
+                      ),
+                      bottomTitles: AxisTitles(
+                        sideTitles: SideTitles(
+                          showTitles: true,
+                          reservedSize: 22,
+                          interval: tickInterval.inMilliseconds.toDouble(),
+                          getTitlesWidget: (value, meta) => SideTitleWidget(
+                            meta: meta,
+                            space: 4,
+                            child: Text(
+                              _formatStatsTick(value),
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: GcmColors.textSecondary(context),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                     borderData: FlBorderData(show: false),
                     lineTouchData: const LineTouchData(enabled: false),
                     lineBarsData: [
-                      LineChartBarData(
-                        spots: spots,
-                        isCurved: true,
-                        color: color,
-                        barWidth: 2,
-                        dotData: const FlDotData(show: false),
-                        belowBarData: BarAreaData(
-                          show: true,
-                          color: color.withValues(alpha: 0.12),
-                        ),
-                      ),
+                      for (final segment in segments)
+                        if (segment.length >= 2)
+                          LineChartBarData(
+                            spots: segment,
+                            isCurved: true,
+                            color: color,
+                            barWidth: 2,
+                            dotData: const FlDotData(show: false),
+                            belowBarData: BarAreaData(
+                              show: true,
+                              color: color.withValues(alpha: 0.12),
+                            ),
+                          ),
                     ],
                   ),
                 ),
@@ -733,6 +769,13 @@ class _ChartPanel extends StatelessWidget {
       ],
     );
   }
+}
+
+String _formatStatsTick(double milliseconds) {
+  final time = DateTime.fromMillisecondsSinceEpoch(milliseconds.toInt());
+  final hour = time.hour.toString().padLeft(2, '0');
+  final minute = time.minute.toString().padLeft(2, '0');
+  return '$hour:$minute';
 }
 
 /// 一次性终端：只提交 argv，不在主机或容器内隐式启动 shell。

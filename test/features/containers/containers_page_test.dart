@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghost_container_manager/bridge/container_bridge.dart';
 import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
+import 'package:ghost_container_manager/features/containers/container_detail.dart';
 import 'package:ghost_container_manager/features/containers/containers_page.dart';
 import 'package:ghost_container_manager/features/system/readiness_controller.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
@@ -174,19 +176,51 @@ void main() {
     // 标签页 + 概览卡片标题（卡片化后「概览」同时是 Tab 与 SectionCard 标题）。
     expect(find.text('概览'), findsNWidgets(2));
     expect(find.text('日志'), findsOneWidget);
-    // 滚动让网络/进程卡进入视口（ListView 懒构建）。
-    await tester.drag(find.byType(ListView).first, const Offset(0, -2000));
+    // 滚动详情列表让网络/进程卡进入视口（ListView 懒构建）。
+    final detailList = find.descendant(
+      of: find.byType(ContainerDetailView),
+      matching: find.byType(ListView),
+    );
+    await tester.drag(detailList, const Offset(0, -2000));
     await tester.pumpAndSettle();
     // inspect 配置（网络卡 + 进程卡）
     expect(find.text('default'), findsOneWidget);
     expect(find.text('192.168.64.3（网关 192.168.64.1）'), findsOneWidget);
     expect(find.textContaining('/sbin/init --serve'), findsOneWidget);
     // 滚回顶部让 stats 图表卡进入视口。
-    await tester.drag(find.byType(ListView).first, const Offset(0, 2000));
+    await tester.drag(detailList, const Offset(0, 2000));
     await tester.pumpAndSettle();
-    // stats 图表卡（无历史 → 空态；实时采样由 task-40 接缝驱动）。
+    // stats 字段始终可见；实时采样到达后由空态切换为图表。
     expect(find.text('资源占用'), findsOneWidget);
-    expect(find.textContaining('暂无统计数据'), findsOneWidget);
+    final hasChartPanels = find.text('CPU').evaluate().isNotEmpty;
+    final hasStatsEmpty = find.textContaining('暂无统计数据').evaluate().isNotEmpty;
+    expect(hasChartPanels || hasStatsEmpty, isTrue);
+    if (hasChartPanels) expect(find.text('内存'), findsOneWidget);
+  });
+
+  testWidgets('三栏：选中保留列表与详情，再点同一行返回详情空态', (tester) async {
+    await _pumpPage(tester, _twoContainers());
+
+    const listPaneKey = Key('containers-list-pane');
+    expect(find.byKey(listPaneKey), findsOneWidget);
+    expect(tester.getSize(find.byKey(listPaneKey)).width, 340);
+    expect(find.text('选择一个容器查看详情'), findsOneWidget);
+    expect(find.byType(ContainerDetailView), findsNothing);
+
+    await tester.tap(find.byKey(const Key('container-row-web-frontend')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ContainerDetailView), findsOneWidget);
+    expect(find.text('cache'), findsOneWidget);
+    expect(find.text('选择一个容器查看详情'), findsNothing);
+    expect(tester.getSize(find.byKey(listPaneKey)).width, 340);
+
+    await tester.tap(find.byKey(const Key('container-row-web-frontend')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ContainerDetailView), findsNothing);
+    expect(find.text('选择一个容器查看详情'), findsOneWidget);
+    expect(find.text('web-frontend'), findsOneWidget);
   });
 
   testWidgets('已停止容器概览：stats 图表空态提示', (tester) async {
@@ -198,6 +232,57 @@ void main() {
 
     // 无 stats 历史 → 图表空态（停止容器无采样）。
     expect(find.textContaining('暂无统计数据'), findsOneWidget);
+  });
+
+  testWidgets('stats 图表固定完整时间窗并显示 X 轴刻度', (tester) async {
+    final (_, service) = await _pumpPage(tester, _twoContainers());
+    await tester.tap(find.text('web-frontend'));
+    await tester.pumpAndSettle();
+    for (
+      var attempt = 0;
+      attempt < 4 && service.statsHistoryFor('web-frontend').length < 2;
+      attempt++
+    ) {
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(
+      service.statsHistoryFor('web-frontend').length,
+      greaterThanOrEqualTo(2),
+    );
+
+    final detailList = find.descendant(
+      of: find.byType(ContainerDetailView),
+      matching: find.byType(ListView),
+    );
+    await tester.drag(detailList, const Offset(0, -2000));
+    await tester.pumpAndSettle();
+    await tester.drag(detailList, const Offset(0, 2000));
+    await tester.pumpAndSettle();
+    expect(find.byType(LineChart), findsWidgets);
+
+    LineChartData chartData() =>
+        tester.widgetList<LineChart>(find.byType(LineChart)).first.data;
+    expect(
+      chartData().maxX - chartData().minX,
+      const Duration(minutes: 5).inMilliseconds,
+    );
+    expect(chartData().titlesData.bottomTitles.sideTitles.showTitles, isTrue);
+    expect(
+      chartData().titlesData.bottomTitles.sideTitles.interval,
+      const Duration(minutes: 2).inMilliseconds,
+    );
+
+    await tester.tap(find.byKey(const Key('stats-window-15m')));
+    await tester.pump();
+    expect(
+      chartData().maxX - chartData().minX,
+      const Duration(minutes: 15).inMilliseconds,
+    );
+    expect(
+      chartData().titlesData.bottomTitles.sideTitles.interval,
+      const Duration(minutes: 5).inMilliseconds,
+    );
   });
 
   testWidgets('日志标签页：stdio/boot 双源实时滚动，eof 收尾', (tester) async {
@@ -610,7 +695,12 @@ void main() {
     await tester.tap(find.text('日志'));
     await tester.pumpAndSettle();
 
-    final list = tester.widget<ListView>(find.byType(ListView));
+    final list = tester.widget<ListView>(
+      find.descendant(
+        of: find.byType(ContainerDetailView),
+        matching: find.byType(ListView),
+      ),
+    );
     final delegate = list.childrenDelegate as SliverChildListDelegate;
     expect(delegate.estimatedChildCount, 5000);
     expect(delegate.children, hasLength(5000));
