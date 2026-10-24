@@ -65,11 +65,14 @@ enum ImageOps {
       "layers": manifest.layers.count,
       "platforms": platforms,
       "config": [
-        "env": configObject["env"] ?? [String](),
-        "entrypoint": configObject["entrypoint"] ?? [String](),
-        "cmd": configObject["cmd"] ?? [String](),
-        "exposedPorts": configObject["exposedPorts"] ?? [String](),
-        "labels": configObject["labels"] ?? [String: String](),
+        // Containerization encodes OCI config keys capitalized ("Env",
+        // "Labels"); accept both cases so Dart sees a stable lowercase shape.
+        "env": configObject["env"] ?? configObject["Env"] ?? [String](),
+        "entrypoint": configObject["entrypoint"] ?? configObject["Entrypoint"] ?? [String](),
+        "cmd": configObject["cmd"] ?? configObject["Cmd"] ?? [String](),
+        "exposedPorts":
+          configObject["exposedPorts"] ?? configObject["ExposedPorts"] ?? [String](),
+        "labels": configObject["labels"] ?? configObject["Labels"] ?? [String: String](),
       ],
     ]
   }
