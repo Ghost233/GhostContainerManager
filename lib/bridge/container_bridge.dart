@@ -40,6 +40,19 @@ class BridgeCommandResult {
   String get combinedOutput => '$stdout\n$stderr';
 }
 
+/// Live generic CLI process with line-oriented, independently drained output.
+///
+/// Implementations retain output produced before a listener attaches and
+/// complete [exitCode] after the native side has drained both pipes.
+abstract class BridgeCliProcess {
+  Stream<String> get stdoutLines;
+  Stream<String> get stderrLines;
+  Future<int> get exitCode;
+
+  /// Terminates the whole native process group. Repeated calls are safe.
+  Future<void> terminate();
+}
+
 /// Result of a one-shot, non-TTY process in a running container.
 class BridgeExecResult {
   const BridgeExecResult({
@@ -226,6 +239,17 @@ abstract interface class ContainerBridge {
   /// apiserver is not running ("connection invalid") or when the wire format
   /// is incompatible ("failed to decode ... in health check").
   Future<BridgePingResult> ping();
+
+  /// Runs an arbitrary `container` CLI argument vector. The bridge performs
+  /// no quoting, parsing, or business validation and returns raw output.
+  Future<BridgeCommandResult> cliRun(
+    List<String> arguments, {
+    Duration? timeout,
+  });
+
+  /// Starts a generic CLI process and returns its handle synchronously.
+  /// Launch failures are delivered through [BridgeCliProcess.exitCode].
+  BridgeCliProcess cliStart(List<String> arguments);
 
   /// `ContainerClient.list()` — ALL containers as JSON-decoded snapshot
   /// maps. Filtering (label/status) happens in the Service layer so its

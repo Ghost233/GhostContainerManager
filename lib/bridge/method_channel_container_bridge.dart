@@ -5,6 +5,7 @@
 /// symlink) use dart:io directly — no channel roundtrip.
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:container_bridge/container_bridge.dart';
@@ -27,6 +28,7 @@ class MethodChannelContainerBridge implements seam.ContainerBridge {
 
   final ContainerBridgeChannel _channel;
   final ContainerBridgeEvents _events;
+  static int _nextCliHandle = 0;
 
   @override
   Future<String?> locateBinary({String? customPath}) async {
@@ -200,6 +202,19 @@ class MethodChannelContainerBridge implements seam.ContainerBridge {
   }
 
   @override
+  Future<seam.BridgeCommandResult> cliRun(
+    List<String> arguments, {
+    Duration? timeout,
+  }) => _command(() => _channel.cliRun(arguments, timeout: timeout));
+
+  @override
+  seam.BridgeCliProcess cliStart(List<String> arguments) {
+    final handle =
+        'cli-${DateTime.now().microsecondsSinceEpoch}-${_nextCliHandle++}';
+    return _MethodChannelBridgeCliProcess(_channel, _events, arguments, handle);
+  }
+
+  @override
   Future<seam.BridgeCommandResult> networkList() =>
       _command(() => _channel.networkList());
 
@@ -306,6 +321,135 @@ class MethodChannelContainerBridge implements seam.ContainerBridge {
         stdout: '',
         stderr: e.message ?? e.code,
       );
+    }
+  }
+}
+
+class _MethodChannelBridgeCliProcess implements seam.BridgeCliProcess {
+  _MethodChannelBridgeCliProcess(
+    this._channel,
+    this._events,
+    this._arguments,
+    this._handle,
+  ) {
+    _stdout = StreamController<String>(onCancel: _onOutputCancelled);
+    _stderr = StreamController<String>(onCancel: _onOutputCancelled);
+    unawaited(_start());
+  }
+
+  final ContainerBridgeChannel _channel;
+  final ContainerBridgeEvents _events;
+  final List<String> _arguments;
+  final String _handle;
+  final Completer<int> _exit = Completer<int>();
+  final Completer<void> _launched = Completer<void>();
+  late final StreamController<String> _stdout;
+  late final StreamController<String> _stderr;
+  StreamSubscription<Map<String, Object?>>? _subscription;
+  Future<void>? _termination;
+  bool _launchFailed = false;
+  bool _finished = false;
+
+  @override
+  Stream<String> get stdoutLines => _stdout.stream;
+
+  @override
+  Stream<String> get stderrLines => _stderr.stream;
+
+  @override
+  Future<int> get exitCode => _exit.future;
+
+  Future<void> _start() async {
+    try {
+      await _channel.cliStart(_arguments, handle: _handle);
+      _subscription = _events
+          .cliProcess(_handle)
+          .listen(_onEvent, onError: _onStreamError, onDone: _onStreamDone);
+      _launched.complete();
+    } on PlatformException catch (error) {
+      _launchFailed = true;
+      _fail(seam.BridgeCallException(error.message ?? error.code));
+      _launched.complete();
+    } catch (error) {
+      _launchFailed = true;
+      _fail(seam.BridgeCallException('$error'));
+      _launched.complete();
+    }
+  }
+
+  void _onEvent(Map<String, Object?> event) {
+    if (_finished) return;
+    switch (event['event']) {
+      case 'stdout':
+        _stdout.add(event['line'] as String? ?? '');
+      case 'stderr':
+        _stderr.add(event['line'] as String? ?? '');
+      case 'error':
+        _fail(
+          seam.BridgeCallException(event['message'] as String? ?? 'CLI failed'),
+        );
+      case 'exit':
+        _finish((event['exitCode'] as num?)?.toInt() ?? -1);
+    }
+  }
+
+  void _onStreamError(Object error) {
+    _fail(seam.BridgeCallException('$error'));
+  }
+
+  void _onStreamDone() {
+    if (!_finished) {
+      _fail(
+        const seam.BridgeCallException(
+          'CLI event stream ended without an exit event.',
+        ),
+      );
+    }
+  }
+
+  void _finish(int exitCode) {
+    if (_finished) return;
+    _finished = true;
+    _exit.complete(exitCode);
+    unawaited(_closeOutputs());
+    unawaited(_subscription?.cancel());
+  }
+
+  void _fail(seam.BridgeCallException error) {
+    if (_finished) return;
+    _finished = true;
+    _exit.completeError(error);
+    if (!_stdout.isClosed) _stdout.addError(error);
+    if (!_stderr.isClosed) _stderr.addError(error);
+    unawaited(_closeOutputs());
+    unawaited(_subscription?.cancel());
+  }
+
+  Future<void> _closeOutputs() async {
+    await Future.wait<void>([
+      if (!_stdout.isClosed) _stdout.close(),
+      if (!_stderr.isClosed) _stderr.close(),
+    ]);
+  }
+
+  void _onOutputCancelled() {
+    if (_finished) return;
+    unawaited(terminate().then((_) {}, onError: (Object _) {}));
+  }
+
+  @override
+  Future<void> terminate() {
+    if (_finished) return Future<void>.value();
+    return _termination ??= _terminate();
+  }
+
+  Future<void> _terminate() async {
+    await _launched.future;
+    if (_finished || _launchFailed) return;
+    try {
+      await _channel.cliTerminate(_handle);
+    } on PlatformException catch (error) {
+      throw seam.BridgeCallException(error.message ?? error.code);
     }
   }
 }

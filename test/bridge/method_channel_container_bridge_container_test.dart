@@ -14,6 +14,16 @@ class _ScriptedChannel extends ContainerBridgeChannel {
   final Map<String, Map<String, Object?>> writeCalls = {};
   final Map<String, Map<String, Object?>> writeResponses = {};
   Object? writeError;
+  Map<String, Object?> cliRunResponse = {
+    'exitCode': 0,
+    'stdout': '',
+    'stderr': '',
+    'timedOut': false,
+  };
+  final List<Map<String, Object?>> cliRunCalls = [];
+  final List<Map<String, Object?>> cliStartCalls = [];
+  final List<String> cliTerminateCalls = [];
+  Object? cliStartError;
   Map<String, Object?> execResponse = {
     'exitCode': 0,
     'stdout': '',
@@ -123,6 +133,32 @@ class _ScriptedChannel extends ContainerBridgeChannel {
     final next = statsResponses.remove(id)!;
     if (next is Exception) throw next;
     return (next as Map).cast<String, Object?>();
+  }
+
+  @override
+  Future<Map<String, Object?>> cliRun(
+    List<String> arguments, {
+    Duration? timeout,
+  }) async {
+    cliRunCalls.add({'arguments': arguments, 'timeout': timeout});
+    return cliRunResponse;
+  }
+
+  @override
+  Future<Map<String, Object?>> cliStart(
+    List<String> arguments, {
+    required String handle,
+  }) async {
+    cliStartCalls.add({'arguments': arguments, 'handle': handle});
+    final error = cliStartError;
+    if (error != null) throw error;
+    return {'handle': handle};
+  }
+
+  @override
+  Future<Map<String, Object?>> cliTerminate(String handle) async {
+    cliTerminateCalls.add(handle);
+    return const {};
   }
 }
 
@@ -302,6 +338,122 @@ void main() {
       },
     );
 
+    test('generic cliRun forwards arguments and decodes the result', () async {
+      final channel = _ScriptedChannel()
+        ..cliRunResponse = {
+          'exitCode': 17,
+          'stdout': 'out',
+          'stderr': 'err',
+          'timedOut': true,
+        };
+      final bridge = MethodChannelContainerBridge(channel: channel);
+
+      final result = await bridge.cliRun([
+        'compose',
+        '--debug',
+        'config',
+      ], timeout: const Duration(milliseconds: 1500));
+
+      expect(channel.cliRunCalls.single, {
+        'arguments': ['compose', '--debug', 'config'],
+        'timeout': const Duration(milliseconds: 1500),
+      });
+      expect(result.exitCode, 17);
+      expect(result.stdout, 'out');
+      expect(result.stderr, 'err');
+      expect(result.timedOut, isTrue);
+    });
+
+    test(
+      'generic cliStart splits stdout/stderr and retains trailing lines',
+      () async {
+        final channel = _ScriptedChannel();
+        final events = _ScriptedEvents(const Stream.empty());
+        final bridge = MethodChannelContainerBridge(
+          channel: channel,
+          events: events,
+        );
+
+        final process = bridge.cliStart(['compose', 'up', '-d']);
+        final stdout = process.stdoutLines.toList();
+        final stderr = process.stderrLines.toList();
+        final exitCode = process.exitCode;
+        final handle = channel.cliStartCalls.single['handle']! as String;
+        expect(channel.cliStartCalls.single['arguments'], [
+          'compose',
+          'up',
+          '-d',
+        ]);
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+
+        final controller = events.cliController(handle);
+        controller
+          ..add({'event': 'stdout', 'line': 'building'})
+          ..add({'event': 'stderr', 'line': 'warning'})
+          ..add({'event': 'stdout', 'line': 'done'})
+          ..add({'event': 'exit', 'exitCode': 0});
+        await controller.close();
+
+        expect(await stdout, ['building', 'done']);
+        expect(await stderr, ['warning']);
+        expect(await exitCode, 0);
+      },
+    );
+
+    test(
+      'generic cli terminate and stream cancellation use the same handle',
+      () async {
+        final channel = _ScriptedChannel();
+        final events = _ScriptedEvents(const Stream.empty());
+        final bridge = MethodChannelContainerBridge(
+          channel: channel,
+          events: events,
+        );
+
+        final first = bridge.cliStart(['run', '--help']);
+        final firstHandle = channel.cliStartCalls.single['handle']! as String;
+        await Future<void>.delayed(Duration.zero);
+        await first.terminate();
+        expect(channel.cliTerminateCalls, [firstHandle]);
+
+        final second = bridge.cliStart(['compose', 'up']);
+        final secondHandle = channel.cliStartCalls.last['handle']! as String;
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+        final subscription = second.stdoutLines.listen((_) {});
+        await subscription.cancel();
+        expect(channel.cliTerminateCalls, [firstHandle, secondHandle]);
+
+        final controller = events.cliController(secondHandle);
+        controller.add({'event': 'exit', 'exitCode': 143});
+        await controller.close();
+        expect(await second.exitCode, 143);
+      },
+    );
+
+    test('generic cliStart surfaces launch failures on exitCode', () async {
+      final channel = _ScriptedChannel()
+        ..cliStartError = PlatformException(
+          code: 'cliError',
+          message: 'container CLI not found',
+        );
+      final bridge = MethodChannelContainerBridge(channel: channel);
+
+      final process = bridge.cliStart(['version']);
+
+      await expectLater(
+        process.exitCode,
+        throwsA(
+          isA<BridgeCallException>().having(
+            (error) => error.message,
+            'message',
+            'container CLI not found',
+          ),
+        ),
+      );
+    });
+
     test('containerLogs decodes data/eof/error events', () async {
       final controller = StreamController<Map<String, Object?>>();
       final events = _ScriptedEvents(controller.stream);
@@ -333,7 +485,17 @@ void main() {
 class _ScriptedEvents extends ContainerBridgeEvents {
   _ScriptedEvents(this._stream);
   final Stream<Map<String, Object?>> _stream;
+  final Map<String, StreamController<Map<String, Object?>>> cliControllers = {};
+
+  StreamController<Map<String, Object?>> cliController(String handle) {
+    return cliControllers.putIfAbsent(handle, StreamController.new);
+  }
 
   @override
   Stream<Map<String, Object?>> containerLogs(String id) => _stream;
+
+  @override
+  Stream<Map<String, Object?>> cliProcess(String handle) {
+    return cliController(handle).stream;
+  }
 }

@@ -92,6 +92,37 @@ class FakeContainerBridge implements ContainerBridge {
     return pingScript.first;
   }
 
+  BridgeCommandResult cliRunResult = _ok;
+  final List<Map<String, Object?>> cliRunRequests = <Map<String, Object?>>[];
+  final List<List<String>> cliStartRequests = <List<String>>[];
+  final List<FakeBridgeCliProcess> cliProcessScript = <FakeBridgeCliProcess>[];
+  final List<FakeBridgeCliProcess> cliStartedProcesses =
+      <FakeBridgeCliProcess>[];
+
+  @override
+  Future<BridgeCommandResult> cliRun(
+    List<String> arguments, {
+    Duration? timeout,
+  }) async {
+    calls.add('cliRun ${arguments.join(' ')}');
+    cliRunRequests.add(<String, Object?>{
+      'arguments': List<String>.unmodifiable(arguments),
+      'timeout': timeout,
+    });
+    return cliRunResult;
+  }
+
+  @override
+  BridgeCliProcess cliStart(List<String> arguments) {
+    calls.add('cliStart ${arguments.join(' ')}');
+    cliStartRequests.add(List<String>.unmodifiable(arguments));
+    final process = cliProcessScript.isNotEmpty
+        ? cliProcessScript.removeAt(0)
+        : (FakeBridgeCliProcess()..finish(0));
+    cliStartedProcesses.add(process);
+    return process;
+  }
+
   // -- container domain (T2a) ---------------------------------------------
 
   /// Whether [containerList] throws ("connection invalid") before answering.
@@ -526,5 +557,49 @@ class FakeContainerBridge implements ContainerBridge {
     final config = snapshot['configuration'];
     if (config is Map) return config['id'] as String?;
     return snapshot['id'] as String?;
+  }
+}
+
+/// Scriptable generic CLI process. Single-subscription controllers retain
+/// lines emitted before listeners attach, matching the method-channel adapter.
+class FakeBridgeCliProcess implements BridgeCliProcess {
+  FakeBridgeCliProcess({this.autoFinishOnTerminate = true});
+
+  final bool autoFinishOnTerminate;
+  final StreamController<String> _stdout = StreamController<String>();
+  final StreamController<String> _stderr = StreamController<String>();
+  final Completer<int> _exit = Completer<int>();
+  bool _finished = false;
+  int terminateCalls = 0;
+
+  @override
+  Stream<String> get stdoutLines => _stdout.stream;
+
+  @override
+  Stream<String> get stderrLines => _stderr.stream;
+
+  @override
+  Future<int> get exitCode => _exit.future;
+
+  void addStdoutLine(String line) {
+    if (!_finished) _stdout.add(line);
+  }
+
+  void addStderrLine(String line) {
+    if (!_finished) _stderr.add(line);
+  }
+
+  void finish(int exitCode) {
+    if (_finished) return;
+    _finished = true;
+    _exit.complete(exitCode);
+    unawaited(_stdout.close());
+    unawaited(_stderr.close());
+  }
+
+  @override
+  Future<void> terminate() async {
+    terminateCalls += 1;
+    if (autoFinishOnTerminate) finish(143);
   }
 }

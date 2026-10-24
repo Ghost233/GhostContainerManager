@@ -1,7 +1,7 @@
 import Foundation
 
-/// Result of one CLI invocation, mirrored by the Dart
-/// `BridgeCommandResult.fromMap` on the app side.
+/// Non-zero exit is data (the CLI's business), not a thrown error.
+/// Thrown errors = process-level failures only (binary missing, cannot launch).
 struct CliResult {
   let exitCode: Int32
   let stdout: String
@@ -18,30 +18,36 @@ struct CliResult {
   }
 }
 
-/// Thin `container` CLI runner.
-///
-/// stdout and stderr are drained concurrently on separate queues through a
-/// DispatchGroup: a naive `readDataToEndOfFile()` on one pipe can deadlock
-/// once the other pipe's 64 KB buffer fills.
-///
-/// The runner NEVER infers flags: callers pass the full argument vector
-/// (e.g. system start always carries an explicit --enable/--disable-
-/// kernel-install, otherwise the CLI blocks on readLine and dies with
-/// "failed to read user input").
+enum CliError: Error, CustomStringConvertible {
+  case message(String)
+
+  var description: String {
+    switch self {
+    case .message(let text): return text
+    }
+  }
+}
+
+/// CLI runner. PATH probing is explicit (no shell): Flutter Release strips
+/// the user's login PATH, so we probe known Apple container locations.
 enum CliRunner {
-  /// Locates the `container` binary: custom path first, then the two
-  /// well-known install locations. Returns nil when not installed.
   static func locateBinary(customPath: String? = nil) -> String? {
     let candidates = [
       customPath,
       "/usr/local/bin/container",
       "/opt/homebrew/bin/container",
     ].compactMap { $0 }
-    return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    let fm = FileManager.default
+    for path in candidates where fm.isExecutableFile(atPath: path) {
+      return path
+    }
+    return nil
   }
 
-  /// Runs `container` with [arguments]; finishes with a CliResult exactly
-  /// once (completion or timeout, whichever first).
+  /// Execute `container <arguments>` without a shell. stdin = nullDevice.
+  /// stdout and stderr are drained concurrently; timeout terminates the whole
+  /// isolated process group. The completion runs on a background queue;
+  /// callers hop to MainActor/main queue before touching FlutterResult.
   static func run(
     binary: String,
     arguments: [String],
@@ -49,68 +55,58 @@ enum CliRunner {
     completion: @escaping (CliResult) -> Void
   ) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let process = Process()
-      process.executableURL = URL(fileURLWithPath: binary)
-      process.arguments = arguments
-      // Never inherit a TTY: interactive prompts must fail, not hang.
-      process.standardInput = FileHandle.nullDevice
-
-      let stdoutPipe = Pipe()
-      let stderrPipe = Pipe()
-      process.standardOutput = stdoutPipe
-      process.standardError = stderrPipe
-
-      let group = DispatchGroup()
-      var stdoutData = Data()
-      var stderrData = Data()
-      let stdoutHandle = stdoutPipe.fileHandleForReading
-      let stderrHandle = stderrPipe.fileHandleForReading
-      group.enter()
-      DispatchQueue.global().async {
-        stdoutData = stdoutHandle.readDataToEndOfFile()
-        group.leave()
-      }
-      group.enter()
-      DispatchQueue.global().async {
-        stderrData = stderrHandle.readDataToEndOfFile()
-        group.leave()
-      }
-
       do {
-        try process.run()
+        let process = try CliChildProcess.spawn(binary: binary, arguments: arguments)
+        let ioQueue = DispatchQueue(label: "gcm.cli.io", attributes: .concurrent)
+        let group = DispatchGroup()
+        var stdoutData = Data()
+        var stderrData = Data()
+        var terminationStatus = Int32(-1)
+
+        group.enter()
+        ioQueue.async {
+          stdoutData = process.stdout.readDataToEndOfFile()
+          try? process.stdout.close()
+          group.leave()
+        }
+        group.enter()
+        ioQueue.async {
+          stderrData = process.stderr.readDataToEndOfFile()
+          try? process.stderr.close()
+          group.leave()
+        }
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+          terminationStatus = process.wait()
+          group.leave()
+        }
+
+        let timedOut = group.wait(timeout: .now() + timeout) == .timedOut
+        if timedOut {
+          // fire-and-forget group signal; no async process handle to await.
+          process.terminate()
+        }
+        // Drain whatever was written up to termination.
+        _ = group.wait(timeout: .now() + 5)
+
+        completion(
+          CliResult(
+            exitCode: timedOut ? -1 : terminationStatus,
+            stdout: String(data: stdoutData, encoding: .utf8) ?? "",
+            stderr: String(data: stderrData, encoding: .utf8) ?? "",
+            timedOut: timedOut
+          )
+        )
       } catch {
         completion(
           CliResult(
             exitCode: -1,
             stdout: "",
-            stderr: "failed to launch \(binary): \(error.localizedDescription)",
+            stderr: error.localizedDescription,
             timedOut: false
           )
         )
-        return
       }
-
-      let deadline = DispatchTime.now() + timeout
-      let finished = DispatchGroup()
-      finished.enter()
-      process.terminationHandler = { _ in finished.leave() }
-
-      let waitResult = finished.wait(timeout: deadline)
-      let timedOut = waitResult == .timedOut
-      if timedOut {
-        process.terminate()
-      }
-      // Drain whatever was written up to termination.
-      _ = group.wait(timeout: .now() + 5)
-
-      completion(
-        CliResult(
-          exitCode: timedOut ? -1 : process.terminationStatus,
-          stdout: String(data: stdoutData, encoding: .utf8) ?? "",
-          stderr: String(data: stderrData, encoding: .utf8) ?? "",
-          timedOut: timedOut
-        )
-      )
     }
   }
 }

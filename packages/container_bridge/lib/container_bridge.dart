@@ -1,8 +1,9 @@
 /// Native bridge plugin for Apple container operations.
 ///
 /// This package carries the Swift implementation (ContainerAPIClient over
-/// XPC for system/container/image work, plus the CLI process wrapper used by
-/// network and compose operations) and the Dart channel wrapper used by the
+/// XPC for system/container/image work, plus CLI process wrappers used by
+/// network/compose operations and generic streaming project workflows) and the
+/// Dart channel wrapper used by the
 /// app's `lib/bridge/method_channel_container_bridge.dart`. The abstract
 /// seam (`ContainerBridge`) lives in the app's `lib/bridge/`.
 /// See docs/spec/architecture.md §2/§3.
@@ -18,6 +19,9 @@ abstract final class ContainerBridgeChannels {
 
   /// Event channel for streams (logs, pull progress, stats).
   static const String events = 'com.ghost233.container_bridge/events';
+
+  /// Dedicated event channel for per-handle generic CLI processes.
+  static const String cliEvents = 'com.ghost233.container_bridge/cli-events';
 }
 
 /// Method names accepted by the Swift handler (T1a: system domain,
@@ -42,6 +46,9 @@ abstract final class ContainerBridgeMethods {
   static const String networkInspect = 'network.inspect';
   static const String composeHelp = 'compose.help';
   static const String composeRun = 'compose.run';
+  static const String cliRun = 'cliRun';
+  static const String cliStart = 'cliStart';
+  static const String cliTerminate = 'cliTerminate';
   static const String imageList = 'image.list';
   static const String imageInspect = 'image.inspect';
   static const String imageDelete = 'image.delete';
@@ -59,6 +66,10 @@ abstract final class ContainerBridgeStreams {
   /// consumers filter by the `pullId` payload field.
   /// Arguments: `{'stream': 'image.pull'}`.
   static const String imagePull = 'image.pull';
+
+  /// `cli.process` — stdout/stderr lines and the terminal exit event for one
+  /// generic CLI process; arguments include the client-generated handle.
+  static const String cliProcess = 'cli.process';
 }
 
 /// Typed wrapper over the method channel. Returns raw
@@ -209,6 +220,31 @@ class ContainerBridgeChannel {
     'timeoutSeconds': timeoutSeconds,
   });
 
+  /// Runs a generic CLI argument vector with an optional timeout.
+  Future<Map<String, Object?>> cliRun(
+    List<String> arguments, {
+    Duration? timeout,
+  }) => _invoke(ContainerBridgeMethods.cliRun, <String, Object?>{
+    'arguments': arguments,
+    if (timeout != null)
+      'timeoutSeconds': timeout.inMicroseconds / Duration.microsecondsPerSecond,
+  });
+
+  /// Starts a generic CLI process under a client-generated [handle].
+  Future<Map<String, Object?>> cliStart(
+    List<String> arguments, {
+    required String handle,
+  }) => _invoke(ContainerBridgeMethods.cliStart, <String, Object?>{
+    'arguments': arguments,
+    'handle': handle,
+  });
+
+  /// Terminates a generic CLI process group; unknown handles are a no-op.
+  Future<Map<String, Object?>> cliTerminate(String handle) => _invoke(
+    ContainerBridgeMethods.cliTerminate,
+    <String, Object?>{'handle': handle},
+  );
+
   /// `container network ls --format json`.
   Future<Map<String, Object?>> networkList() =>
       _invoke(ContainerBridgeMethods.networkList);
@@ -277,10 +313,17 @@ class ContainerBridgeChannel {
 
 /// Typed wrapper over the event channel (log streams, pull progress, …).
 class ContainerBridgeEvents {
-  ContainerBridgeEvents({EventChannel? channel})
-    : _channel = channel ?? const EventChannel(ContainerBridgeChannels.events);
+  ContainerBridgeEvents({EventChannel? channel, EventChannel? cliChannel})
+    : _channel = channel ?? const EventChannel(ContainerBridgeChannels.events),
+      // A single injected channel keeps lightweight codec tests convenient;
+      // production uses the dedicated native CLI event channel.
+      _cliChannel =
+          cliChannel ??
+          channel ??
+          const EventChannel(ContainerBridgeChannels.cliEvents);
 
   final EventChannel _channel;
+  final EventChannel _cliChannel;
 
   /// Raw `container.logs` event maps for [id]:
   /// data events carry `source` ('stdio'/'boot') and `data` (Uint8List);
@@ -290,6 +333,16 @@ class ContainerBridgeEvents {
         .receiveBroadcastStream(<String, Object?>{
           'stream': ContainerBridgeStreams.containerLogs,
           'id': id,
+        })
+        .map((event) => (event as Map).cast<String, Object?>());
+  }
+
+  /// Raw stdout/stderr line events and terminal exit event for [handle].
+  Stream<Map<String, Object?>> cliProcess(String handle) {
+    return _cliChannel
+        .receiveBroadcastStream(<String, Object?>{
+          'stream': ContainerBridgeStreams.cliProcess,
+          'id': handle,
         })
         .map((event) => (event as Map).cast<String, Object?>());
   }

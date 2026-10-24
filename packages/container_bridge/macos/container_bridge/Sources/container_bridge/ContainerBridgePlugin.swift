@@ -8,8 +8,9 @@ import FlutterMacOS
 /// Routing (docs/spec/architecture.md §2/§3, research report):
 /// - XPC (ContainerAPIClient): health, container lifecycle, and images.
 ///   Ping doubles as the apiserver liveness probe.
-/// - CLI (`CliRunner`): system start/stop/kernel installation plus network
-///   and compose operations that are outside the XPC API.
+/// - CLI (`CliRunner` / `CliStreamSession`): system start/stop/kernel
+///   installation, network/compose operations, and generic cliRun/cliStart
+///   process execution for project workflows.
 ///
 /// The Dart side (lib/services/) owns all decisions; this layer only
 /// executes and returns raw payloads. Bridge-API probes (binary lookup,
@@ -20,6 +21,7 @@ import FlutterMacOS
 public class ContainerBridgePlugin: NSObject, FlutterPlugin {
   public static let methodsChannelName = "com.ghost233.container_bridge/methods"
   public static let eventsChannelName = "com.ghost233.container_bridge/events"
+  public static let cliEventsChannelName = "com.ghost233.container_bridge/cli-events"
 
   private let pingTimeoutSeconds: TimeInterval = 5
 
@@ -32,6 +34,9 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
   /// answers the Flutter result when the entry is still present.
   /// Mutated on the main queue only.
   private var pullTasks: [String: Task<Void, Never>] = [:]
+
+  /// Streaming CLI processes, keyed by Dart-generated handle. Main queue only.
+  fileprivate var cliSessions: [String: CliStreamSession] = [:]
 
   /// Sink for the "image.pull" event stream (single subscriber — the Dart
   /// side fans out per pullId). Mutated on the main queue only.
@@ -49,11 +54,122 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
       binaryMessenger: registrar.messenger
     )
     events.setStreamHandler(instance)
+    let cliEvents = FlutterEventChannel(
+      name: cliEventsChannelName,
+      binaryMessenger: registrar.messenger
+    )
+    cliEvents.setStreamHandler(CliEventStreamHandler(plugin: instance))
+  }
+
+  public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
+    for session in cliSessions.values { session.cancel() }
+    cliSessions.removeAll()
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     let args = call.arguments as? [String: Any]
     switch call.method {
+    case "cliRun":
+      guard let arguments = args?["arguments"] as? [String], !arguments.isEmpty else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "cliRun requires a non-empty 'arguments' string array.",
+            details: nil
+          )
+        )
+        return
+      }
+      let timeoutSeconds = (args?["timeoutSeconds"] as? NSNumber)?.doubleValue ?? 60
+      guard timeoutSeconds.isFinite, timeoutSeconds > 0 else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "cliRun timeoutSeconds must be a finite positive number.",
+            details: nil
+          )
+        )
+        return
+      }
+      guard let binary = CliRunner.locateBinary() else {
+        result(
+          FlutterError(
+            code: "cliUnavailable",
+            message: "Apple container executable was not found.",
+            details: nil
+          )
+        )
+        return
+      }
+      CliRunner.run(binary: binary, arguments: arguments, timeout: timeoutSeconds) { payload in
+        DispatchQueue.main.async { result(payload.asDictionary) }
+      }
+    case "cliStart":
+      guard let arguments = args?["arguments"] as? [String], !arguments.isEmpty,
+        let handle = args?["handle"] as? String, !handle.isEmpty
+      else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "cliStart requires non-empty 'arguments' and a 'handle'.",
+            details: nil
+          )
+        )
+        return
+      }
+      guard cliSessions[handle] == nil else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "cliStart handle is already active.",
+            details: nil
+          )
+        )
+        return
+      }
+      guard let binary = CliRunner.locateBinary() else {
+        result(
+          FlutterError(
+            code: "cliUnavailable",
+            message: "Apple container executable was not found.",
+            details: nil
+          )
+        )
+        return
+      }
+      let session = CliStreamSession(handle: handle)
+      cliSessions[handle] = session
+      session.onFinish = { [weak self] finished in
+        self?.cliSessions.removeValue(forKey: finished.handle)
+      }
+      do {
+        try session.start(binary: binary, arguments: arguments)
+        result(["handle": handle])
+      } catch {
+        session.cancel()
+        cliSessions.removeValue(forKey: handle)
+        result(
+          FlutterError(
+            code: "launchError",
+            message: error.localizedDescription,
+            details: nil
+          )
+        )
+      }
+    case "cliTerminate":
+      guard let handle = args?["handle"] as? String, !handle.isEmpty else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "cliTerminate requires a 'handle'.",
+            details: nil
+          )
+        )
+        return
+      }
+      // Unknown handles are idempotent no-ops; the process may have exited.
+      cliSessions[handle]?.terminate()
+      result(["handle": handle])
     case "system.version":
       runCli(["system", "version", "--format", "json"], result: result)
     case "system.status":
@@ -608,6 +724,47 @@ extension ContainerBridgePlugin: FlutterStreamHandler {
       if let id = args["id"] as? String {
         logSessions.removeValue(forKey: id)?.cancel()
       }
+    }
+    return nil
+  }
+}
+
+/// Per-handle EventChannel used by MethodChannelContainerBridge.cliStart.
+/// Sessions are created by cliStart; cancelling a subscription terminates and
+/// closes the native process exactly once.
+private final class CliEventStreamHandler: NSObject, FlutterStreamHandler {
+  private weak var plugin: ContainerBridgePlugin?
+
+  init(plugin: ContainerBridgePlugin) {
+    self.plugin = plugin
+  }
+
+  func onListen(
+    withArguments arguments: Any?,
+    eventSink events: @escaping FlutterEventSink
+  ) -> FlutterError? {
+    let args = arguments as? [String: Any]
+    guard args?["stream"] as? String == "cli.process",
+      let handle = args?["handle"] as? String,
+      let session = plugin?.cliSessions[handle]
+    else {
+      return FlutterError(
+        code: "notFound",
+        message: "No active CLI process for the supplied handle.",
+        details: nil
+      )
+    }
+    session.attachSink(events)
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    let args = arguments as? [String: Any]
+    if args?["stream"] as? String == "cli.process",
+      let handle = args?["handle"] as? String,
+      let session = plugin?.cliSessions.removeValue(forKey: handle)
+    {
+      session.cancel()
     }
     return nil
   }

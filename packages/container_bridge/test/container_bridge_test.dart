@@ -14,6 +14,10 @@ void main() {
       ContainerBridgeChannels.events,
       'com.ghost233.container_bridge/events',
     );
+    expect(
+      ContainerBridgeChannels.cliEvents,
+      'com.ghost233.container_bridge/cli-events',
+    );
   });
 
   test('container write methods encode method names and arguments', () async {
@@ -112,5 +116,80 @@ void main() {
     expect(result['exitCode'], 17);
     expect(result['stdout'], 'out');
     expect(result['stderr'], 'err');
+  });
+
+  group('generic cli', () {
+    test('cliRun/cliStart/cliTerminate use the agreed wire contract', () async {
+      const methodChannel = MethodChannel(ContainerBridgeChannels.methods);
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+            calls.add(call);
+            return <String, Object?>{};
+          });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(methodChannel, null);
+      });
+      final channel = ContainerBridgeChannel(channel: methodChannel);
+
+      await channel.cliRun([
+        'compose',
+        'up',
+        '-d',
+      ], timeout: const Duration(milliseconds: 1500));
+      await channel.cliStart(['compose', 'up'], handle: 'handle-1');
+      await channel.cliTerminate('handle-1');
+
+      expect(calls[0].method, 'cliRun');
+      expect(calls[0].arguments, {
+        'arguments': ['compose', 'up', '-d'],
+        'timeoutSeconds': 1.5,
+      });
+      expect(calls[1].method, 'cliStart');
+      expect(calls[1].arguments, {
+        'arguments': ['compose', 'up'],
+        'handle': 'handle-1',
+      });
+      expect(calls[2].method, 'cliTerminate');
+      expect(calls[2].arguments, {'handle': 'handle-1'});
+    });
+
+    test('cliProcess listens and cancels the cli.process stream', () async {
+      const name = ContainerBridgeChannels.cliEvents;
+      const methodChannel = MethodChannel(name);
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, (call) async {
+            calls.add(call);
+            return null;
+          });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(methodChannel, null);
+      });
+      final mainCalls = <MethodCall>[];
+      const mainChannel = MethodChannel(ContainerBridgeChannels.events);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(mainChannel, (call) async {
+            mainCalls.add(call);
+            return null;
+          });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(mainChannel, null);
+      });
+      final events = ContainerBridgeEvents();
+
+      final subscription = events.cliProcess('handle-1').listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      await subscription.cancel();
+
+      expect(calls.map((call) => call.method), ['listen', 'cancel']);
+      expect(mainCalls, isEmpty);
+      for (final call in calls) {
+        expect(call.arguments, {'stream': 'cli.process', 'id': 'handle-1'});
+      }
+    });
   });
 }
