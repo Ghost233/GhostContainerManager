@@ -105,3 +105,13 @@ MCP 全链路在真实运行时验证通过：35 工具 tools/list、system_stat
 总审查（双轴，e75fcfa..4a33da7）：两轴均判可合入、P0=0；P1 两条（network_get 参数 id 化、四工具补 outputSchema）已修于 565ca1e；P2 文档陈旧（ui-ia 端口、lifecycle exec 30s、§3.1 工具数）与 app.dart `_mcp.dispose()`（E04）已修。全量 326 tests 绿（run-5M2po2）。
 
 遗留观察项（v1.1/v2 候选，不阻断）：registry_start 缺 registry:2 时不自动拉取（hint 引导 image_pull）；onRecycle 停止态 restart 语义待 1.6.0 真机确认；菜单栏 D4 完整形态延 v2；readiness_controller 直用 bridge 的 kernel probe（E06 洁癖项）；后台 10s 轮询档未接线；UI 分页视觉走查留人工。
+
+## 正式发布 v1.0.0（2026-10-25）
+
+- 版本由用户手动确定：`1.0.0`（`0.0.0` 占位解除）。发布提交 `25f7162`，附注 tag `v1.0.0`。
+- 本地门禁：`scripts/test-host.sh check` exit 0（357 tests，run-IhYioA）；发布包预检 `scripts/build-release.sh --output-dir .tooling/release-precheck` exit 0（DMG 校验 bundle id/版本/arm64 架构）。
+- `scripts/release.sh --dry-run` 核对通过后正式推送 tag，触发 release.yml run 40122982424（10m35s，success）。
+- Release：https://github.com/Ghost233/GhostContainerManager/releases/tag/v1.0.0（非草稿、非预发布）。
+- 资产：`GhostContainerManager-1.0.0.dmg`（29,428,019 B）、`manifest.json`、`SHA256SUMS`。
+- 同步核验：本地 `v1.0.0` tag、本地 main、origin/main 均为 `25f7162`；tag 提交的 `pubspec.yaml` 版本为 `1.0.0`。
+- 分发方式：未签名、未公证（发布前经用户确认）；后续正式分发需补 Developer ID 签名与公证。
