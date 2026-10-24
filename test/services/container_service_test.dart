@@ -331,8 +331,12 @@ void main() {
           'image': 'nginx:latest',
           'command': const ['nginx', '-g', 'daemon off;'],
           'env': const ['MODE=production'],
-          'ports': const ['127.0.0.1:8080:80/tcp'],
+          'ports': const ['8080:80/tcp'],
           'network': 'frontend',
+          'mounts': const [
+            {'source': '/tmp/gcm-data', 'target': '/data', 'readonly': true},
+          ],
+          'labels': const {'com.ghost233.project': 'demo'},
         });
         gate.complete();
         expect(await future, 'web');
@@ -352,14 +356,157 @@ void main() {
         final creating = service.create(id: 'web', image: 'nginx:latest');
         events.clear();
 
-        await service.refresh();
+        final refreshed = await service.refresh();
         await Future<void>.delayed(Duration.zero);
 
+        expect(refreshed.map((container) => container.id), ['web']);
         expect(events, isNotEmpty);
         expect(events.last.map((container) => container.id), ['web']);
         expect(events.last.single.state, ContainerState.stopped);
         gate.complete();
         await creating;
+      },
+    );
+
+    test(
+      'create start failure exposes the created resource in error details',
+      () async {
+        bridge.writeFailures['start:web'] = 'bootstrap failed';
+
+        Object? failure;
+        try {
+          await service.create(id: 'web', image: 'nginx:latest', start: true);
+        } catch (error) {
+          failure = error;
+        }
+
+        final error = failure as GcmException;
+        final wire = error.toWire()['error']! as Map<String, Object?>;
+        expect(wire['details'], <String, Object?>{
+          'id': 'web',
+          'created': true,
+        });
+        expect(service.currentContainers.single.id, 'web');
+        expect(service.currentContainers.single.state, ContainerState.stopped);
+      },
+    );
+
+    test(
+      'concurrent creates never coalesce, even with different images',
+      () async {
+        bridge.createGate = Completer<void>();
+        final first = service.create(id: 'web', image: 'nginx:latest');
+
+        await expectLater(
+          service.create(id: 'web', image: 'redis:latest'),
+          throwsA(
+            isA<GcmException>().having(
+              (error) => error.code,
+              'code',
+              GcmErrorCode.conflict,
+            ),
+          ),
+        );
+        await expectLater(
+          service.create(id: 'web', image: 'nginx:latest'),
+          throwsA(isA<GcmException>()),
+        );
+        expect(bridge.createRequests, hasLength(1));
+
+        bridge.createGate!.complete();
+        await first;
+      },
+    );
+
+    test('different stop timeouts queue instead of joining', () async {
+      bridge.containers = [snapshotPayload(id: 'web')];
+      bridge.stopGate = Completer<void>();
+      final first = service.stop('web', timeoutSeconds: 5);
+      final second = service.stop('web', timeoutSeconds: 7);
+
+      expect(bridge.stopCalls, 1);
+      bridge.stopGate!.complete();
+      await Future.wait([first, second]);
+      expect(bridge.stopCalls, 2);
+      expect(
+        bridge.calls.where((call) => call.startsWith('containerStop')),
+        <String>['containerStop:web timeout=5', 'containerStop:web timeout=7'],
+      );
+    });
+
+    test('stop and kill return their native result contracts', () async {
+      bridge.containers = [snapshotPayload(id: 'web')];
+      bridge.stoppedGracefully = false;
+      expect(await service.stop('web'), isFalse);
+
+      bridge.containers = [snapshotPayload(id: 'web')];
+      expect(await service.kill('web', signal: 'sigterm'), 'running');
+      expect(bridge.killRequests.single['signal'], 'TERM');
+    });
+
+    test(
+      'local image choices come from the existing bridge without pulling',
+      () async {
+        bridge.images = <Map<String, Object?>>[
+          <String, Object?>{'reference': 'docker.io/library/nginx:latest'},
+        ];
+
+        final images = await service.listLocalImages();
+
+        expect(images.single.reference, 'docker.io/library/nginx:latest');
+        expect(bridge.calls, contains('imageList'));
+        expect(
+          bridge.calls.where((call) => call.startsWith('imagePull')),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'create and kill reject invalid ids, ports, mounts, and signals',
+      () async {
+        Future<void> expectInvalid(Future<dynamic> Function() body) async {
+          try {
+            await body();
+            fail('Expected INVALID_ARGUMENT');
+          } on GcmException catch (error) {
+            expect(error.code, GcmErrorCode.invalidArgument);
+          }
+        }
+
+        await expectInvalid(
+          () => service.create(
+            id: List.filled(65, 'a').join(),
+            image: 'nginx:latest',
+          ),
+        );
+        for (final port in <String>[
+          '',
+          '8080',
+          '0:80',
+          '8080:65536',
+          '8080:80/sctp',
+          '127.0.0.1:8080:80/tcp',
+        ]) {
+          await expectInvalid(
+            () =>
+                service.create(id: 'web', image: 'nginx:latest', ports: [port]),
+          );
+        }
+        await expectInvalid(
+          () => service.create(
+            id: 'web',
+            image: 'nginx:latest',
+            mounts: const [
+              {'source': '/tmp/data', 'target': 'relative/data'},
+            ],
+          ),
+        );
+        for (final signal in <String>['', '9', 'BOGUS', 'KILL -9']) {
+          await expectInvalid(() => service.kill('web', signal: signal));
+        }
+        expect(bridge.createRequests, isEmpty);
+        expect(bridge.killRequests, isEmpty);
       },
     );
 
@@ -632,6 +779,46 @@ void main() {
         expect(await first, isEmpty);
         expect(blocking.listCalls, 1);
         await blockingService.dispose();
+      },
+    );
+  });
+
+  group('task-30 error mapping regressions', () {
+    test('timeout and invalid port/signal/network map to stable codes', () {
+      final cases = <(String, GcmErrorCode)>[
+        ('operation timed out', GcmErrorCode.timeout),
+        ('invalid published port 70000', GcmErrorCode.invalidArgument),
+        ('unknown signal BOGUS', GcmErrorCode.invalidArgument),
+        ('network "frontend" not found', GcmErrorCode.invalidArgument),
+      ];
+
+      for (final (message, code) in cases) {
+        final error = mapContainerFailure(
+          BridgeCallException(message),
+          operation: 'create',
+          id: 'web',
+        );
+        expect(error.code, code, reason: message);
+      }
+    });
+
+    test(
+      'create identifies a missing local image and points to image_pull',
+      () {
+        final error = mapContainerFailure(
+          const BridgeCallException(
+            'image with reference nginx:latest not found',
+          ),
+          operation: 'create',
+          id: 'web',
+          image: 'nginx:latest',
+        );
+
+        expect(error.code, GcmErrorCode.notFound);
+        expect(error.message, contains('nginx:latest'));
+        expect(error.message, contains('locally'));
+        expect(error.message, isNot(contains('Container "web" was not found')));
+        expect(error.hint, '先在镜像页拉取或调用 image_pull');
       },
     );
   });

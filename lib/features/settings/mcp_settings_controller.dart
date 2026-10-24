@@ -41,7 +41,8 @@ class McpSettingsController extends ChangeNotifier {
        _mountService = mountService,
        _networkService = networkService,
        _composeService = composeService,
-       _auditor = auditor ?? McpToolAuditor() {
+       _auditor = auditor ?? McpToolAuditor(),
+       _ownsAuditor = auditor == null {
     _auditorSub = _auditor.changes.listen((_) {
       if (!_disposed) notifyListeners();
     });
@@ -54,6 +55,9 @@ class McpSettingsController extends ChangeNotifier {
   final NetworkService? _networkService;
   final ComposeService? _composeService;
   final McpToolAuditor _auditor;
+
+  /// 缺省自建 auditor 时由本控制器负责释放（E04）。
+  final bool _ownsAuditor;
   StreamSubscription<void>? _auditorSub;
   bool _disposed = false;
   GcmMcpServer? _server;
@@ -134,6 +138,7 @@ class McpSettingsController extends ChangeNotifier {
     _disposed = true;
     _auditorSub?.cancel();
     _auditorSub = null;
+    if (_ownsAuditor) _auditor.dispose();
     super.dispose();
   }
 }

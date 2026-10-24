@@ -24,7 +24,8 @@ ToolAnnotations _writeAnnotations(
 
 /// Container tools read an external runtime — open world per the spec's
 /// annotation contract.
-const _readOnlyOpenWorld = ToolAnnotations(
+ToolAnnotations _readOnlyOpenWorld(String title) => ToolAnnotations(
+  title: title,
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,
@@ -58,7 +59,7 @@ Map<String, Object?> _containerSummaryJson(ContainerSnapshotInfo c) {
 void registerContainerTools(McpServer server, ContainerService service) {
   server.registerTool(
     'container_list',
-    title: '列出容器',
+    title: 'List Containers',
     description:
         '列出 Apple container 容器（id/镜像/状态/标签/网络）。'
         'label 参数为精确 key=value 过滤（如 com.ghost233.compose.project=web）；'
@@ -93,7 +94,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
       },
       required: ['containers'],
     ),
-    annotations: _readOnlyOpenWorld,
+    annotations: _readOnlyOpenWorld('List Containers'),
     callback: (args, extra) => guardToolCall(() async {
       final statusArg = args['status'] as String?;
       final query = ContainerQuery(
@@ -117,7 +118,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
 
   server.registerTool(
     'container_inspect',
-    title: '容器详情',
+    title: 'Inspect Container',
     description:
         '返回单个容器的完整详情：状态、镜像、标签、网络、入口命令、环境变量、'
         '端口映射、停止信号与原始 configuration。',
@@ -132,7 +133,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
       properties: <String, JsonSchema>{'container': const JsonObject()},
       required: ['container'],
     ),
-    annotations: _readOnlyOpenWorld,
+    annotations: _readOnlyOpenWorld('Inspect Container'),
     callback: (args, extra) => guardToolCall(() async {
       final id = args['id'] as String;
       final c = await service.inspect(id);
@@ -166,7 +167,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
 
   server.registerTool(
     'container_stats',
-    title: '容器资源快照',
+    title: 'Container Stats',
     description:
         '返回单个运行中容器的一次性资源快照（内存/CPU 微秒/网络/块设备/进程数）。'
         '需要速率时请自行轮询本工具（建议 2 秒间隔）。容器未运行时返回 CONFLICT 错误。',
@@ -197,7 +198,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
       },
       required: ['stats'],
     ),
-    annotations: _readOnlyOpenWorld,
+    annotations: _readOnlyOpenWorld('Container Stats'),
     callback: (args, extra) => guardToolCall(() async {
       final id = args['id'] as String;
       final stats = await service.stats(id);
@@ -235,7 +236,8 @@ void registerContainerTools(McpServer server, ContainerService service) {
     title: 'Create Container',
     description:
         '从本地镜像创建容器，默认只创建不启动。镜像不存在时不会自动拉取；'
-        'name 重名会返回 CONFLICT。env 是键值对象，ports 是 host/container 端口对象数组。',
+        'name 重名会返回 CONFLICT。env 是键值对象，ports 是 host/container 端口对象数组。'
+        'mounts 定义主机目录挂载，labels 是字符串标签对象。',
     inputSchema: JsonObject(
       properties: <String, JsonSchema>{
         'name': const JsonString(description: '容器名称；省略时生成名称'),
@@ -261,6 +263,25 @@ void registerContainerTools(McpServer server, ContainerService service) {
           ),
         ),
         'network': const JsonString(description: '目标网络名称'),
+        'mounts': const JsonArray(
+          description: '主机目录挂载；target 必须是容器内绝对路径',
+          items: JsonObject(
+            properties: <String, JsonSchema>{
+              'source': JsonString(description: '主机目录绝对路径'),
+              'target': JsonString(description: '容器内挂载点绝对路径'),
+              'readonly': JsonBoolean(
+                description: '是否只读挂载',
+                defaultValue: false,
+              ),
+            },
+            required: ['source', 'target'],
+            additionalProperties: false,
+          ),
+        ),
+        'labels': const JsonObject(
+          description: '容器标签；键和值均为字符串',
+          additionalProperties: JsonString(),
+        ),
         'start': const JsonBoolean(description: '创建后立即启动', defaultValue: false),
       },
       required: ['image'],
@@ -288,6 +309,14 @@ void registerContainerTools(McpServer server, ContainerService service) {
             return '${port['host']}:${port['container']}/${port['proto'] ?? 'tcp'}';
           })
           .toList(growable: false);
+      final mounts = (args['mounts'] as List? ?? const <Object?>[])
+          .map((raw) => (raw as Map).cast<String, Object?>())
+          .toList(growable: false);
+      final labels =
+          (args['labels'] as Map?)?.map(
+            (key, value) => MapEntry(key as String, value as String),
+          ) ??
+          const <String, String>{};
       final start = args['start'] == true;
       final id = await service.create(
         id: args['name'] as String?,
@@ -296,6 +325,8 @@ void registerContainerTools(McpServer server, ContainerService service) {
         env: environment,
         ports: ports,
         network: args['network'] as String?,
+        mounts: mounts,
+        labels: labels,
         start: start,
       );
       return (
@@ -342,7 +373,10 @@ void registerContainerTools(McpServer server, ContainerService service) {
   server.registerTool(
     'container_stop',
     title: 'Stop Container',
-    description: '优雅停止容器；默认等待 5 秒，超时由 runtime 发送 SIGKILL。',
+    description:
+        '优雅停止容器；默认等待 5 秒，超时由 runtime 发送 SIGKILL。'
+        'stoppedGracefully 按已停止状态或停止调用是否短于 timeout 保守推导，'
+        'runtime 不直接报告实际是否发生 SIGKILL 升级。',
     inputSchema: JsonObject(
       properties: <String, JsonSchema>{
         'id': const JsonString(description: '容器 id'),
@@ -360,16 +394,24 @@ void registerContainerTools(McpServer server, ContainerService service) {
       properties: <String, JsonSchema>{
         'id': const JsonString(),
         'status': const JsonString(),
+        'stoppedGracefully': const JsonBoolean(),
       },
-      required: ['id', 'status'],
+      required: ['id', 'status', 'stoppedGracefully'],
     ),
     annotations: _writeAnnotations('Stop Container'),
     callback: (args, extra) => guardToolCall(() async {
       final id = args['id'] as String;
       final timeout = args['timeoutSeconds'] as int? ?? 5;
-      await service.stop(id, timeoutSeconds: timeout);
+      final stoppedGracefully = await service.stop(
+        id,
+        timeoutSeconds: timeout,
+      );
       return (
-        data: <String, Object?>{'id': id, 'status': 'stopped'},
+        data: <String, Object?>{
+          'id': id,
+          'status': 'stopped',
+          'stoppedGracefully': stoppedGracefully,
+        },
         summary: '容器 $id 已停止',
       );
     }),
@@ -432,8 +474,9 @@ void registerContainerTools(McpServer server, ContainerService service) {
       properties: <String, JsonSchema>{
         'id': const JsonString(),
         'signal': const JsonString(),
+        'status': const JsonString(),
       },
-      required: ['id', 'signal'],
+      required: ['id', 'signal', 'status'],
     ),
     annotations: _writeAnnotations('Kill Container', destructive: true),
     callback: (args, extra) => guardToolCall(() async {

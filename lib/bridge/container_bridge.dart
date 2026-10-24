@@ -248,8 +248,10 @@ abstract interface class ContainerBridge {
   Future<Map<String, Object?>> containerStats(String id);
 
   /// `ContainerClient.create(configuration:options:kernel:)` using a local
-  /// image. [command], [env] and [ports] retain Apple container's CLI-shaped
-  /// values; validation happens before this boundary.
+  /// image. [command] and [env] retain Apple container's CLI-shaped values;
+  /// [mounts] contains source/target/readonly dictionaries. The Service
+  /// validates and normalizes input; the native boundary still parses and
+  /// validates runtime-specific port and mount configuration.
   Future<void> containerCreate({
     required String id,
     required String image,
@@ -257,6 +259,8 @@ abstract interface class ContainerBridge {
     List<String> env = const [],
     List<String> ports = const [],
     String? network,
+    List<Map<String, Object?>> mounts = const [],
+    Map<String, String> labels = const {},
   });
 
   /// `ContainerClient.bootstrap` + `ClientProcess.start`; already-running
@@ -264,15 +268,18 @@ abstract interface class ContainerBridge {
   Future<void> containerStart(String id);
 
   /// `ContainerClient.stop` with [timeoutSeconds] of grace (default five),
-  /// after which Apple container sends SIGKILL.
-  Future<void> containerStop(String id, {int timeoutSeconds = 5});
+  /// after which Apple container sends SIGKILL. The returned bool is a
+  /// conservative derivation: true only when the container was already
+  /// stopped or the stop call completed in less than [timeoutSeconds].
+  Future<bool> containerStop(String id, {int timeoutSeconds = 5});
 
   /// `ContainerClient.delete(id:force:)`. Running containers require force;
   /// native stopping containers are rejected regardless of force.
   Future<void> containerDelete(String id, {bool force = false});
 
-  /// `ContainerClient.kill(id:signal:)`; [signal] defaults to KILL.
-  Future<void> containerKill(String id, {String signal = 'KILL'});
+  /// `ContainerClient.kill(id:signal:)`, followed by an inspect. Returns the
+  /// container's observed runtime status after the signal was delivered.
+  Future<String> containerKill(String id, {String signal = 'KILL'});
 
   /// Execute a one-shot non-TTY process. Output is captured independently and
   /// the process exit code is data, not a bridge failure.

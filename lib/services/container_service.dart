@@ -1,5 +1,6 @@
-/// Container read service (T2a): list/inspect/stats plus adaptive polling
-/// and log streams, built on the container-domain bridge seam.
+/// Container lifecycle service (T2a/T3): read/write operations, list/inspect/
+/// stats, adaptive polling, local-image choices for create, and log streams,
+/// built on the container-domain bridge seam.
 ///
 /// UI and MCP adaptors consume this service; raw XPC/CLI concerns never
 /// cross this boundary (docs/spec/architecture.md §3/§5). Filtering
@@ -19,6 +20,7 @@ import '../bridge/container_bridge.dart';
 import 'container_logs_parser.dart';
 import 'container_models.dart';
 import 'errors.dart';
+import 'image_models.dart';
 
 /// Filter applied to container lists (Service-layer semantics).
 ///
@@ -104,13 +106,23 @@ class ContainerService {
   Timer? _pollTimer;
   bool _refreshInFlight = false;
   List<ContainerSnapshotInfo> _lastSnapshot = const [];
+  final Map<String, ContainerSnapshotInfo> _pendingCreates =
+      <String, ContainerSnapshotInfo>{};
 
   /// Broadcast stream of parsed snapshots, one event per successful refresh.
   Stream<List<ContainerSnapshotInfo>> get snapshots => _snapshots.stream;
 
-  /// Latest parsed or optimistically reconciled snapshots.
-  List<ContainerSnapshotInfo> get currentContainers =>
-      List<ContainerSnapshotInfo>.unmodifiable(_lastSnapshot);
+  /// Latest runtime snapshots with pending-create overlays applied. Native
+  /// four-state facts remain separate from transient activity metadata.
+  List<ContainerSnapshotInfo> get currentContainers {
+    final result = <ContainerSnapshotInfo>[..._lastSnapshot];
+    for (final entry in _pendingCreates.entries) {
+      if (!_lastSnapshot.any((container) => container.id == entry.key)) {
+        result.add(entry.value);
+      }
+    }
+    return List<ContainerSnapshotInfo>.unmodifiable(result);
+  }
 
   /// Current transient writes keyed by container id.
   Map<String, ContainerActivity> get currentActivities =>
@@ -147,25 +159,33 @@ class ContainerService {
   /// Skips concurrent refreshes (returns the last good snapshot) so a slow
   /// apiserver cannot stack up XPC calls.
   Future<List<ContainerSnapshotInfo>> refresh() async {
-    if (_refreshInFlight) return _lastSnapshot;
+    if (_refreshInFlight) return currentContainers;
     _refreshInFlight = true;
     try {
       final raw = await _bridge.containerList();
-      final parsed = raw
+      _lastSnapshot = raw
           .map(ContainerSnapshotInfo.fromMap)
           .toList(growable: false);
-      final pendingCreates = _lastSnapshot.where(
-        (container) =>
-            _activities[container.id] == ContainerActivity.creating &&
-            !parsed.any((candidate) => candidate.id == container.id),
-      );
-      _lastSnapshot = <ContainerSnapshotInfo>[...parsed, ...pendingCreates];
       if (!_snapshots.isClosed) _snapshots.add(currentContainers);
-      return parsed;
+      return currentContainers;
     } on BridgeCallException catch (e) {
       throw mapContainerFailure(e, operation: 'list');
     } finally {
       _refreshInFlight = false;
+    }
+  }
+
+  /// Local image choices for the create form. This is read-only and never
+  /// pulls; an absent reference must be resolved on the Images page first.
+  Future<List<ImageInfo>> listLocalImages() async {
+    try {
+      final raw = await _bridge.imageList();
+      return raw
+          .map(ImageInfo.fromMap)
+          .where((image) => image.reference.isNotEmpty)
+          .toList(growable: false);
+    } on BridgeCallException catch (error) {
+      throw mapContainerFailure(error, operation: 'image list');
     }
   }
 
@@ -330,6 +350,8 @@ class ContainerService {
     List<String> env = const [],
     List<String> ports = const [],
     String? network,
+    List<Map<String, Object?>> mounts = const [],
+    Map<String, String> labels = const {},
     bool start = false,
   }) {
     final containerId = id == null ? _generatedContainerId() : _validId(id);
@@ -350,48 +372,131 @@ class ContainerService {
         );
       }
     }
-    if (ports.any((port) => port.trim().isEmpty) ||
-        (network != null && network.trim().isEmpty)) {
+    final normalizedPorts = <String>[];
+    try {
+      for (final port in ports) {
+        normalizedPorts.add(_validPort(port));
+      }
+    } on GcmException catch (error) {
+      return Future<String>.error(error);
+    }
+    final normalizedNetwork = network?.trim();
+    if (network != null && normalizedNetwork!.isEmpty) {
       return Future<String>.error(
         const GcmException(
           GcmErrorCode.invalidArgument,
-          'Ports and network must not be blank.',
+          'Network must not be blank.',
         ),
       );
     }
-
-    final previous = _containerOrNull(containerId);
-    if (previous == null) {
-      _upsertContainer(containerId, ContainerState.stopped, image: reference);
+    final normalizedMounts = <Map<String, Object?>>[];
+    for (final mount in mounts) {
+      final source = mount['source'];
+      final target = mount['target'];
+      final readonly = mount['readonly'] ?? false;
+      if (source is! String ||
+          source.trim().isEmpty ||
+          target is! String ||
+          !target.startsWith('/') ||
+          readonly is! bool) {
+        return Future<String>.error(
+          const GcmException(
+            GcmErrorCode.invalidArgument,
+            'Each mount needs a source and an absolute target; readonly '
+            'must be a boolean.',
+          ),
+        );
+      }
+      normalizedMounts.add(<String, Object?>{
+        'source': source.trim(),
+        'target': target,
+        'readonly': readonly,
+      });
     }
+    final normalizedLabels = <String, String>{};
+    for (final entry in labels.entries) {
+      final key = entry.key.trim();
+      if (key.isEmpty) {
+        return Future<String>.error(
+          const GcmException(
+            GcmErrorCode.invalidArgument,
+            'Label keys must not be blank.',
+          ),
+        );
+      }
+      normalizedLabels[key] = entry.value;
+    }
+
     var created = false;
     return _enqueue<String>(
       id: containerId,
       kind: _ContainerWriteKind.create,
       activity: ContainerActivity.creating,
+      image: reference,
       action: () async {
+        final previous = _containerOrNull(containerId);
+        if (previous == null) {
+          _pendingCreates[containerId] = ContainerSnapshotInfo.fromMap(
+            <String, Object?>{
+              'status': ContainerState.stopped.wireName,
+              'configuration': <String, Object?>{
+                'id': containerId,
+                'image': <String, Object?>{'reference': reference},
+                'labels': normalizedLabels,
+                'mounts': normalizedMounts,
+              },
+              'networks': normalizedNetwork == null
+                  ? const <Object?>[]
+                  : <Object?>[
+                      <String, Object?>{'network': normalizedNetwork},
+                    ],
+              'ports': const <Object?>[],
+            },
+          );
+        }
         try {
           await _bridge.containerCreate(
             id: containerId,
             image: reference,
-            command: command,
-            env: env,
-            ports: ports,
-            network: network?.trim(),
+            command: List<String>.unmodifiable(command),
+            env: List<String>.unmodifiable(env),
+            ports: List<String>.unmodifiable(normalizedPorts),
+            network: normalizedNetwork,
+            mounts: List<Map<String, Object?>>.unmodifiable(normalizedMounts),
+            labels: Map<String, String>.unmodifiable(normalizedLabels),
           );
           created = true;
+          _pendingCreates.remove(containerId);
+          await refresh();
           if (start) {
             _setActivity(containerId, ContainerActivity.starting);
             await _bridge.containerStart(containerId);
+            await refresh();
           }
-          _upsertContainer(
-            containerId,
-            start ? ContainerState.running : ContainerState.stopped,
-            image: reference,
-          );
           return containerId;
-        } catch (_) {
-          if (!created && previous == null) _removeContainer(containerId);
+        } catch (error) {
+          if (!created && previous == null) {
+            _pendingCreates.remove(containerId);
+            if (!_snapshots.isClosed) _snapshots.add(currentContainers);
+          }
+          if (created) {
+            final mapped = switch (error) {
+              GcmException failure => failure,
+              BridgeCallException failure => mapContainerFailure(
+                failure,
+                operation: 'create',
+                id: containerId,
+                image: reference,
+              ),
+              _ => GcmException(
+                GcmErrorCode.internal,
+                'Container "$containerId" was created, but follow-up failed: '
+                '$error',
+                cause: error,
+              ),
+            };
+            throw _CreatedContainerFailure(containerId, mapped);
+          }
           rethrow;
         }
       },
@@ -411,16 +516,21 @@ class ContainerService {
     );
   }
 
-  Future<void> stop(String id, {int timeoutSeconds = 5}) {
+  Future<bool> stop(String id, {int timeoutSeconds = 5}) {
     final containerId = _validId(id);
     final timeout = _validTimeout(timeoutSeconds);
-    return _enqueue<void>(
+    return _enqueue<bool>(
       id: containerId,
       kind: _ContainerWriteKind.stop,
       activity: ContainerActivity.stopping,
+      parameters: timeout,
       action: () async {
-        await _bridge.containerStop(containerId, timeoutSeconds: timeout);
+        final stoppedGracefully = await _bridge.containerStop(
+          containerId,
+          timeoutSeconds: timeout,
+        );
         _upsertContainer(containerId, ContainerState.stopped);
+        return stoppedGracefully;
       },
     );
   }
@@ -434,6 +544,7 @@ class ContainerService {
       id: containerId,
       kind: _ContainerWriteKind.restart,
       activity: ContainerActivity.restarting,
+      parameters: timeout,
       action: () async {
         await _bridge.containerStop(containerId, timeoutSeconds: timeout);
         _upsertContainer(containerId, ContainerState.stopped);
@@ -449,6 +560,7 @@ class ContainerService {
       id: containerId,
       kind: _ContainerWriteKind.delete,
       activity: ContainerActivity.deleting,
+      parameters: force,
       action: () async {
         ContainerSnapshotInfo? current = _containerOrNull(containerId);
         if (current == null) {
@@ -487,25 +599,21 @@ class ContainerService {
     );
   }
 
-  Future<void> kill(String id, {String signal = 'KILL'}) {
+  Future<String> kill(String id, {String signal = 'KILL'}) {
     final containerId = _validId(id);
-    final normalizedSignal = signal.trim();
-    if (normalizedSignal.isEmpty) {
-      return Future<void>.error(
-        const GcmException(GcmErrorCode.invalidArgument, 'Signal is required.'),
-      );
-    }
-    return _enqueue<void>(
+    final normalizedSignal = _validSignal(signal);
+    return _enqueue<String>(
       id: containerId,
       kind: _ContainerWriteKind.kill,
       activity: null,
+      parameters: normalizedSignal,
       action: () async {
-        await _bridge.containerKill(containerId, signal: normalizedSignal);
-        if (normalizedSignal == 'KILL' ||
-            normalizedSignal == 'SIGKILL' ||
-            normalizedSignal == '9') {
-          _upsertContainer(containerId, ContainerState.stopped);
-        }
+        final status = await _bridge.containerKill(
+          containerId,
+          signal: normalizedSignal,
+        );
+        _upsertContainer(containerId, ContainerState.fromWire(status));
+        return status;
       },
     );
   }
@@ -515,13 +623,27 @@ class ContainerService {
     required _ContainerWriteKind kind,
     required ContainerActivity? activity,
     required Future<T> Function() action,
+    Object? parameters,
+    String? image,
   }) {
     final queue = _operations.putIfAbsent(
       id,
       () => <_PendingContainerOperation<dynamic>>[],
     );
     for (final pending in queue) {
-      if (pending.kind == kind && kind != _ContainerWriteKind.exec) {
+      if (kind == _ContainerWriteKind.create &&
+          pending.kind == _ContainerWriteKind.create) {
+        return Future<T>.error(
+          GcmException(
+            GcmErrorCode.conflict,
+            'A create for container "$id" is already in progress.',
+            hint: 'Wait for the existing create to finish before retrying.',
+          ),
+        );
+      }
+      if (pending.kind == kind &&
+          kind != _ContainerWriteKind.exec &&
+          pending.parameters == parameters) {
         return pending.future as Future<T>;
       }
     }
@@ -534,7 +656,11 @@ class ContainerService {
       return Future<T>.error(_stoppingConflict(id));
     }
 
-    final pending = _PendingContainerOperation<T>(kind);
+    final pending = _PendingContainerOperation<T>(
+      kind,
+      parameters,
+      image: image,
+    );
     final previous = queue.isEmpty ? null : queue.last;
     queue.add(pending);
     if (previous == null) {
@@ -574,7 +700,12 @@ class ContainerService {
       pending.completer.completeError(error, stackTrace);
     } on BridgeCallException catch (error, stackTrace) {
       pending.completer.completeError(
-        mapContainerFailure(error, operation: pending.kind.name, id: id),
+        mapContainerFailure(
+          error,
+          operation: pending.kind.name,
+          id: id,
+          image: pending.image,
+        ),
         stackTrace,
       );
     } catch (error, stackTrace) {
@@ -597,7 +728,7 @@ class ContainerService {
   }
 
   ContainerSnapshotInfo? _containerOrNull(String id) {
-    for (final container in _lastSnapshot) {
+    for (final container in currentContainers) {
       if (container.id == id) return container;
     }
     return null;
@@ -654,11 +785,85 @@ class ContainerService {
   static String _validId(String id) {
     final value = id.trim();
     if (value.isEmpty ||
+        value.length > 63 ||
         !RegExp(r'^[A-Za-z0-9][A-Za-z0-9_.-]*$').hasMatch(value)) {
       throw GcmException(
         GcmErrorCode.invalidArgument,
-        'Container id must start with an alphanumeric character and contain '
-        'only letters, numbers, dot, underscore, or dash.',
+        'Container id must be 1-63 characters, start with an alphanumeric '
+        'character, and contain only letters, numbers, dot, underscore, or '
+        'dash.',
+      );
+    }
+    return value;
+  }
+
+  static String _validPort(String raw) {
+    final value = raw.trim();
+    final match = RegExp(
+      r'^(\d{1,5}):(\d{1,5})(?:/(tcp|udp))?$',
+      caseSensitive: false,
+    ).firstMatch(value);
+    final host = int.tryParse(match?.group(1) ?? '');
+    final container = int.tryParse(match?.group(2) ?? '');
+    if (match == null ||
+        host == null ||
+        container == null ||
+        host < 1 ||
+        host > 65535 ||
+        container < 1 ||
+        container > 65535) {
+      throw GcmException(
+        GcmErrorCode.invalidArgument,
+        'Invalid published port "$raw". Use host:container[/tcp|udp] with '
+        'ports between 1 and 65535.',
+      );
+    }
+    final protocol = match.group(3)?.toLowerCase();
+    return '$host:$container${protocol == null ? '' : '/$protocol'}';
+  }
+
+  static const _allowedSignals = <String>{
+    'HUP',
+    'INT',
+    'QUIT',
+    'ILL',
+    'TRAP',
+    'ABRT',
+    'EMT',
+    'FPE',
+    'KILL',
+    'BUS',
+    'SEGV',
+    'SYS',
+    'PIPE',
+    'ALRM',
+    'TERM',
+    'URG',
+    'STOP',
+    'TSTP',
+    'CONT',
+    'CHLD',
+    'TTIN',
+    'TTOU',
+    'IO',
+    'XCPU',
+    'XFSZ',
+    'VTALRM',
+    'PROF',
+    'WINCH',
+    'INFO',
+    'USR1',
+    'USR2',
+  };
+
+  static String _validSignal(String raw) {
+    var value = raw.trim().toUpperCase();
+    if (value.startsWith('SIG')) value = value.substring(3);
+    if (!_allowedSignals.contains(value)) {
+      throw GcmException(
+        GcmErrorCode.invalidArgument,
+        'Unsupported signal "$raw". Use a Unix signal name such as KILL, '
+        'TERM, or HUP.',
       );
     }
     return value;
@@ -708,12 +913,40 @@ class ContainerService {
 }
 
 class _PendingContainerOperation<T> {
-  _PendingContainerOperation(this.kind);
+  _PendingContainerOperation(this.kind, this.parameters, {this.image});
 
   final _ContainerWriteKind kind;
+  final Object? parameters;
+  final String? image;
   final Completer<T> completer = Completer<T>();
 
   Future<T> get future => completer.future;
+}
+
+/// The create succeeded, so callers must receive the resource id even when a
+/// subsequent refresh or optional start fails.
+class _CreatedContainerFailure extends GcmException {
+  _CreatedContainerFailure(String id, GcmException error)
+    : _id = id,
+      super(
+        error.code,
+        error.message,
+        hint: error.hint,
+        source: error.source,
+        cause: error.cause,
+      );
+
+  final String _id;
+
+  @override
+  Map<String, Object?> toWire() {
+    final wire = super.toWire();
+    (wire['error']! as Map<String, Object?>)['details'] = <String, Object?>{
+      'id': _id,
+      'created': true,
+    };
+    return wire;
+  }
 }
 
 /// Feature-fingerprint classification of raw bridge error text (same
@@ -722,6 +955,7 @@ GcmException mapContainerFailure(
   BridgeCallException error, {
   required String operation,
   String? id,
+  String? image,
 }) {
   final message = error.message;
   final lower = message.toLowerCase();
@@ -753,7 +987,49 @@ GcmException mapContainerFailure(
       cause: error,
     );
   }
+  if (lower.contains('timed out') ||
+      lower.contains('timeout') ||
+      lower.contains('deadline exceeded')) {
+    return GcmException(
+      GcmErrorCode.timeout,
+      'Container $operation timed out: $message',
+      hint:
+          'Check the runtime state before retrying; the operation may '
+          'still be in progress.',
+      source: 'xpc',
+      cause: error,
+    );
+  }
+  final invalidSignal =
+      lower.contains('signal') &&
+      (lower.contains('invalid') ||
+          lower.contains('unknown') ||
+          lower.contains('unsupported') ||
+          lower.contains('not valid'));
+  if (invalidSignal ||
+      lower.contains('network') ||
+      RegExp(r'\bports?\b').hasMatch(lower) ||
+      lower.contains('published')) {
+    return GcmException(
+      GcmErrorCode.invalidArgument,
+      'Invalid container $operation argument: $message',
+      hint: 'Correct the port, signal, or network value and retry.',
+      source: 'xpc',
+      cause: error,
+    );
+  }
   if (lower.contains('not found') || lower.contains('does not exist')) {
+    if (operation == 'create' &&
+        image != null &&
+        (lower.contains('image') || lower.contains('reference'))) {
+      return GcmException(
+        GcmErrorCode.notFound,
+        'Image "$image" was not found locally.',
+        hint: '先在镜像页拉取或调用 image_pull',
+        source: 'xpc',
+        cause: error,
+      );
+    }
     return GcmException(
       GcmErrorCode.notFound,
       'Container "${id ?? ''}" was not found.',

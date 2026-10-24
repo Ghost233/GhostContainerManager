@@ -126,6 +126,17 @@ void main() {
     );
     expect(names, isNot(contains('container_logs'))); // #13: UI 专属
 
+    const readTitles = <String, String>{
+      'container_list': 'List Containers',
+      'container_inspect': 'Inspect Container',
+      'container_stats': 'Container Stats',
+    };
+    for (final entry in readTitles.entries) {
+      final tool = tools.cast<Map>().singleWhere((t) => t['name'] == entry.key);
+      expect(tool['title'], entry.value);
+      expect((tool['annotations'] as Map)['title'], entry.value);
+    }
+
     const writeTitles = <String, String>{
       'container_create': 'Create Container',
       'container_start': 'Start Container',
@@ -304,6 +315,14 @@ void main() {
         <String, Object>{'host': 8080, 'container': 80},
       ],
       'network': 'default',
+      'mounts': <Map<String, Object>>[
+        <String, Object>{
+          'source': '/tmp/api-data',
+          'target': '/var/lib/api',
+          'readonly': true,
+        },
+      ],
+      'labels': <String, String>{'app': 'api', 'tier': 'backend'},
       'start': true,
     });
 
@@ -315,6 +334,14 @@ void main() {
       'env': <String>['MODE=production'],
       'ports': <String>['8080:80/tcp'],
       'network': 'default',
+      'mounts': <Map<String, Object?>>[
+        <String, Object?>{
+          'source': '/tmp/api-data',
+          'target': '/var/lib/api',
+          'readonly': true,
+        },
+      ],
+      'labels': <String, String>{'app': 'api', 'tier': 'backend'},
     });
     expect(bridge.startCalls, 1);
     expect(result['structuredContent'], <String, Object?>{
@@ -328,6 +355,7 @@ void main() {
   test('六个写工具经过 Service 并返回权威 structuredContent', () async {
     await initialize();
 
+    bridge.stoppedGracefully = false;
     final stopped = await callTool('container_stop', <String, dynamic>{
       'id': 'web',
       'timeoutSeconds': 7,
@@ -335,6 +363,7 @@ void main() {
     expect(stopped['structuredContent'], <String, Object?>{
       'id': 'web',
       'status': 'stopped',
+      'stoppedGracefully': false,
     });
     expect(bridge.calls, contains('containerStop:web timeout=7'));
 
@@ -361,6 +390,7 @@ void main() {
     expect(killed['structuredContent'], <String, Object?>{
       'id': 'web',
       'signal': 'KILL',
+      'status': 'stopped',
     });
 
     final deleted = await callTool('container_delete', <String, dynamic>{
@@ -372,6 +402,40 @@ void main() {
       'deleted': true,
     });
     expect(bridge.deleteCalls, 1);
+  });
+
+  test('create start failure preserves id and created details over MCP', () async {
+    bridge.writeFailures['start:api'] = 'bootstrap failed';
+    await initialize();
+
+    final result = await callTool('container_create', <String, dynamic>{
+      'name': 'api',
+      'image': 'nginx:latest',
+      'start': true,
+    });
+
+    expect(result['isError'], isTrue);
+    final error =
+        (result['structuredContent'] as Map<String, dynamic>)['error'] as Map;
+    expect(error['details'], <String, Object?>{'id': 'api', 'created': true});
+  });
+
+  test('create missing local image returns actionable NOT_FOUND', () async {
+    bridge.writeFailures['create:api'] =
+        'image with reference missing:latest not found';
+    await initialize();
+
+    final result = await callTool('container_create', <String, dynamic>{
+      'name': 'api',
+      'image': 'missing:latest',
+    });
+
+    expect(result['isError'], isTrue);
+    final error =
+        (result['structuredContent'] as Map<String, dynamic>)['error'] as Map;
+    expect(error['code'], 'NOT_FOUND');
+    expect(error['message'], contains('missing:latest'));
+    expect(error['hint'], '先在镜像页拉取或调用 image_pull');
   });
 
   test('写工具业务错误沿用统一 guard 和 CONFLICT', () async {

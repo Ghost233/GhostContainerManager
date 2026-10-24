@@ -109,6 +109,8 @@ class MethodChannelContainerBridge implements seam.ContainerBridge {
     List<String> env = const [],
     List<String> ports = const [],
     String? network,
+    List<Map<String, Object?>> mounts = const [],
+    Map<String, String> labels = const {},
   }) async {
     try {
       await _channel.containerCreate(
@@ -118,6 +120,8 @@ class MethodChannelContainerBridge implements seam.ContainerBridge {
         env: env,
         ports: ports,
         network: network,
+        mounts: mounts,
+        labels: labels,
       );
     } on PlatformException catch (e) {
       throw seam.BridgeCallException(e.message ?? e.code);
@@ -134,9 +138,13 @@ class MethodChannelContainerBridge implements seam.ContainerBridge {
   }
 
   @override
-  Future<void> containerStop(String id, {int timeoutSeconds = 5}) async {
+  Future<bool> containerStop(String id, {int timeoutSeconds = 5}) async {
     try {
-      await _channel.containerStop(id, timeoutSeconds: timeoutSeconds);
+      final result = await _channel.containerStop(
+        id,
+        timeoutSeconds: timeoutSeconds,
+      );
+      return result['stoppedGracefully'] == true;
     } on PlatformException catch (e) {
       throw seam.BridgeCallException(e.message ?? e.code);
     }
@@ -152,9 +160,10 @@ class MethodChannelContainerBridge implements seam.ContainerBridge {
   }
 
   @override
-  Future<void> containerKill(String id, {String signal = 'KILL'}) async {
+  Future<String> containerKill(String id, {String signal = 'KILL'}) async {
     try {
-      await _channel.containerKill(id, signal: signal);
+      final result = await _channel.containerKill(id, signal: signal);
+      return result['status'] as String? ?? 'unknown';
     } on PlatformException catch (e) {
       throw seam.BridgeCallException(e.message ?? e.code);
     }

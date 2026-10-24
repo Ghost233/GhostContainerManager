@@ -196,6 +196,7 @@ class FakeContainerBridge implements ContainerBridge {
   int startCalls = 0;
   int stopCalls = 0;
   int deleteCalls = 0;
+  bool stoppedGracefully = true;
 
   @override
   Future<void> containerCreate({
@@ -205,6 +206,8 @@ class FakeContainerBridge implements ContainerBridge {
     List<String> env = const [],
     List<String> ports = const [],
     String? network,
+    List<Map<String, Object?>> mounts = const [],
+    Map<String, String> labels = const {},
   }) async {
     calls.add('containerCreate:$id');
     createRequests.add(<String, Object?>{
@@ -214,6 +217,8 @@ class FakeContainerBridge implements ContainerBridge {
       'env': env,
       'ports': ports,
       'network': network,
+      'mounts': mounts,
+      'labels': labels,
     });
     _throwWriteFailure('create', id);
     if (createGate != null) await createGate!.future;
@@ -225,7 +230,8 @@ class FakeContainerBridge implements ContainerBridge {
       'configuration': <String, Object?>{
         'id': id,
         'image': <String, Object?>{'reference': image},
-        'labels': <String, Object?>{},
+        'labels': labels,
+        'mounts': mounts,
         'initProcess': <String, Object?>{
           'arguments': command,
           'environment': env,
@@ -250,12 +256,13 @@ class FakeContainerBridge implements ContainerBridge {
   }
 
   @override
-  Future<void> containerStop(String id, {int timeoutSeconds = 5}) async {
+  Future<bool> containerStop(String id, {int timeoutSeconds = 5}) async {
     calls.add('containerStop:$id timeout=$timeoutSeconds');
     stopCalls++;
     _throwWriteFailure('stop', id);
     if (stopGate != null) await stopGate!.future;
     _setContainerState(id, 'stopped');
+    return stoppedGracefully;
   }
 
   @override
@@ -279,7 +286,7 @@ class FakeContainerBridge implements ContainerBridge {
   }
 
   @override
-  Future<void> containerKill(String id, {String signal = 'KILL'}) async {
+  Future<String> containerKill(String id, {String signal = 'KILL'}) async {
     calls.add('containerKill:$id signal=$signal');
     killRequests.add(<String, Object?>{'id': id, 'signal': signal});
     _throwWriteFailure('kill', id);
@@ -287,9 +294,10 @@ class FakeContainerBridge implements ContainerBridge {
     if (_indexOf(id) < 0) {
       throw BridgeCallException('container "$id" not found');
     }
-    if (signal == 'KILL' || signal == 'SIGKILL' || signal == '9') {
+    if (signal == 'KILL') {
       _setContainerState(id, 'stopped');
     }
+    return containers[_indexOf(id)]['status'] as String? ?? 'unknown';
   }
 
   @override

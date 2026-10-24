@@ -145,6 +145,8 @@ class ContainerBridgeChannel {
     List<String> env = const [],
     List<String> ports = const [],
     String? network,
+    List<Map<String, Object?>> mounts = const [],
+    Map<String, String> labels = const {},
   }) => _invoke(ContainerBridgeMethods.containerCreate, <String, Object?>{
     'id': id,
     'image': image,
@@ -152,6 +154,8 @@ class ContainerBridgeChannel {
     'env': env,
     'ports': ports,
     'network': ?network,
+    'mounts': mounts,
+    'labels': labels,
   });
 
   /// `ContainerClient.bootstrap` + process start (idempotent upstream).
