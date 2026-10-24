@@ -121,6 +121,14 @@ FakeContainerBridge _twoContainers() {
     ];
 }
 
+class _StreamingLogsBridge extends FakeContainerBridge {
+  final StreamController<BridgeLogEvent> logsController =
+      StreamController<BridgeLogEvent>();
+
+  @override
+  Stream<BridgeLogEvent> containerLogs(String id) => logsController.stream;
+}
+
 void main() {
   testWidgets('列表：名称/镜像/状态/端口齐全，com.ghost233.* 带「本应用创建」标记', (tester) async {
     await _pumpPage(tester, _twoContainers());
@@ -490,7 +498,9 @@ void main() {
       'pending-api',
     );
     await tester.tap(find.widgetWithText(FilledButton, '创建'));
-    await tester.pumpAndSettle();
+    // 创建挂起期间乐观行的 spinner 持续动画，不能用 pumpAndSettle。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.text('pending-api'), findsOneWidget);
     expect(find.text('创建中'), findsOneWidget);
@@ -540,7 +550,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('停止容器'), findsOneWidget);
     await tester.tap(find.widgetWithText(FilledButton, '停止'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
 
     expect(find.text('停止中'), findsOneWidget);
     final stoppingContext = tester.element(find.text('停止中'));
@@ -558,11 +569,47 @@ void main() {
       find.byKey(const Key('container-actions-web-frontend')),
     );
     expect(menu.enabled, isFalse);
+    final rowSpinner = find.descendant(
+      of: find.byKey(const Key('container-actions-web-frontend')),
+      matching: find.byType(CircularProgressIndicator),
+    );
+    expect(rowSpinner, findsOneWidget);
+    expect(tester.getSize(rowSpinner), const Size(16, 16));
+    expect(tester.widget<CircularProgressIndicator>(rowSpinner).strokeWidth, 2);
 
     fake.stopGate!.complete();
     await tester.pumpAndSettle();
     expect(find.text('停止中'), findsNothing);
     expect(find.text('已停止'), findsWidgets);
+  });
+
+  testWidgets('详情停止操作显示 spinner 并禁止重复操作', (tester) async {
+    final fake = _twoContainers()..stopGate = Completer<void>();
+    await _pumpPage(tester, fake);
+    await tester.tap(find.byKey(const Key('container-row-web-frontend')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.byKey(const Key('container-detail-toggle')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    final button = tester.widget<FilledButton>(
+      find.byKey(const Key('container-detail-toggle')),
+    );
+    expect(button.onPressed, isNull);
+    expect(find.text('停止中'), findsWidgets);
+    final spinner = find.descendant(
+      of: find.byKey(const Key('container-detail-toggle')),
+      matching: find.byType(CircularProgressIndicator),
+    );
+    expect(spinner, findsOneWidget);
+    expect(tester.getSize(spinner), const Size(16, 16));
+    expect(tester.widget<CircularProgressIndicator>(spinner).strokeWidth, 2);
+
+    fake.stopGate!.complete();
+    await tester.pumpAndSettle();
+    expect(spinner, findsNothing);
   });
 
   testWidgets('停止等待超时只提示，后台操作仍继续', (tester) async {
@@ -677,6 +724,62 @@ void main() {
       find.byKey(const Key('container-terminal-run')),
     );
     expect(run.onPressed, isNotNull);
+  });
+
+  testWidgets('日志跟随平滑滚动，用户上滚后新增日志不抢滚动位置', (tester) async {
+    final fake = _StreamingLogsBridge();
+    final service = ContainerService(bridge: fake);
+    addTearDown(service.dispose);
+    addTearDown(fake.logsController.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            height: 240,
+            child: ContainerLogTab(service: service, containerId: 'web'),
+          ),
+        ),
+      ),
+    );
+
+    fake.logsController.add(
+      BridgeLogEvent.data(
+        source: 'stdio',
+        bytes: utf8.encode(
+          List.generate(200, (index) => 'line-$index').join('\n'),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    final scroll = tester.widget<ListView>(find.byType(ListView)).controller!;
+    expect(scroll.position.maxScrollExtent, greaterThan(0));
+    expect(scroll.position.pixels, lessThan(scroll.position.maxScrollExtent));
+
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(scroll.position.pixels, greaterThan(0));
+    expect(scroll.position.pixels, lessThan(scroll.position.maxScrollExtent));
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(
+      scroll.position.pixels,
+      closeTo(scroll.position.maxScrollExtent, 0.01),
+    );
+
+    await tester.drag(find.byType(ListView), const Offset(0, 120));
+    await tester.pumpAndSettle();
+    expect(find.text('回到底部并跟随'), findsOneWidget);
+    final pausedPixels = scroll.position.pixels;
+    fake.logsController.add(
+      BridgeLogEvent.data(
+        source: 'stdio',
+        bytes: utf8.encode(
+          List.generate(20, (index) => 'paused-$index').join('\n'),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(scroll.position.pixels, closeTo(pausedPixels, 0.01));
   });
 
   testWidgets('日志视图只保留尾部 5000 行', (tester) async {

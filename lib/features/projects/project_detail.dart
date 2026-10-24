@@ -12,6 +12,7 @@ import '../../services/container_service.dart';
 import '../../services/errors.dart';
 import '../../services/image_service.dart';
 import '../../services/project_service.dart';
+import '../../ui/motion.dart';
 import '../../ui/text.dart';
 import '../containers/container_detail.dart' show ContainerLogTab;
 import '../containers/containers_page.dart' show ContainerStateDot;
@@ -77,15 +78,18 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
     super.dispose();
   }
 
-  /// 日志追加后滚动到底部（自动跟随最新输出）。
+  /// 日志追加后平滑跟随最新输出。
   void _scrollLogToBottom() {
-    if (!_logScrollController.hasClients) return;
+    if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_logScrollController.hasClients) {
-        _logScrollController.jumpTo(
+      if (!mounted || !_logScrollController.hasClients) return;
+      unawaited(
+        _logScrollController.animateTo(
           _logScrollController.position.maxScrollExtent,
-        );
-      }
+          duration: GcmMotion.scrollFollowDuration,
+          curve: GcmMotion.scrollFollowCurve,
+        ),
+      );
     });
   }
 

@@ -19,6 +19,7 @@ import '../../services/image_models.dart';
 import '../../services/image_service.dart';
 import '../../ui/colors.dart';
 import '../../ui/components.dart';
+import '../../ui/motion.dart';
 import '../../ui/text.dart';
 import '../system/readiness_controller.dart';
 
@@ -47,6 +48,7 @@ class _ImagesPageState extends State<ImagesPage> {
   Object? _error;
   String _search = '';
   String? _selectedReference;
+  final Set<String> _deleting = <String>{};
 
   bool get _ready => widget.controller.readiness?.ready ?? false;
 
@@ -141,11 +143,14 @@ class _ImagesPageState extends State<ImagesPage> {
       ),
     );
     if (confirmed != true || !mounted) return;
+    setState(() => _deleting.add(image.reference));
     try {
       await widget.service.delete(image.reference);
       await _refresh();
     } on GcmException catch (e) {
+      // 先清行内 spinner 再弹错误对话框（弹窗期间不能留着无限动画）。
       if (!mounted) return;
+      setState(() => _deleting.remove(image.reference));
       // 被容器引用等失败以对话框呈现完整错误码与提示（验收 3）。
       await showDialog<void>(
         context: context,
@@ -166,6 +171,8 @@ class _ImagesPageState extends State<ImagesPage> {
           ],
         ),
       );
+    } finally {
+      if (mounted) setState(() => _deleting.remove(image.reference));
     }
   }
 
@@ -262,6 +269,7 @@ class _ImagesPageState extends State<ImagesPage> {
         final image = rows[index];
         return _ImageRow(
           image: image,
+          deleting: _deleting.contains(image.reference),
           onTap: () => setState(() => _selectedReference = image.reference),
           onDelete: () => _confirmDelete(image),
         );
@@ -273,11 +281,13 @@ class _ImagesPageState extends State<ImagesPage> {
 class _ImageRow extends StatelessWidget {
   const _ImageRow({
     required this.image,
+    required this.deleting,
     required this.onTap,
     required this.onDelete,
   });
 
   final ImageInfo image;
+  final bool deleting;
   final VoidCallback onTap;
   final VoidCallback onDelete;
 
@@ -320,9 +330,11 @@ class _ImageRow extends StatelessWidget {
           ),
         ),
         trailing: IconButton(
-          tooltip: '删除',
-          icon: const Icon(Icons.delete_outline, size: 18),
-          onPressed: onDelete,
+          tooltip: deleting ? '删除中' : '删除',
+          icon: deleting
+              ? const GcmInlineSpinner()
+              : const Icon(Icons.delete_outline, size: 18),
+          onPressed: deleting ? null : onDelete,
         ),
       ),
     );

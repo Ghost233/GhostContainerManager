@@ -16,8 +16,10 @@ import '../../services/container_models.dart';
 import '../../services/container_service.dart';
 import '../../ui/colors.dart';
 import '../../ui/components.dart';
+import '../../ui/motion.dart';
 import '../../ui/text.dart';
-import 'containers_page.dart' show ContainerStateDot;
+import 'containers_page.dart'
+    show ContainerActivityLabel, ContainerStateDot, ContainerStateLabel;
 import 'stats_chart.dart';
 
 /// 容器详情：标题栏（返回 + 名称 + 状态 + 操作组）+ 三标签页。
@@ -41,16 +43,26 @@ class _ContainerDetailViewState extends State<ContainerDetailView> {
   late final Future<ContainerSnapshotInfo> _detail = widget.service.inspect(
     widget.containerId,
   );
+  late final StreamSubscription<Map<String, ContainerActivity>>
+  _activitySubscription;
+  ContainerActivity? _activity;
 
   @override
   void initState() {
     super.initState();
+    _activity = widget.service.currentActivities[widget.containerId];
+    _activitySubscription = widget.service.activityChanges.listen((activities) {
+      final next = activities[widget.containerId];
+      if (!mounted || next == _activity) return;
+      setState(() => _activity = next);
+    });
     // 进入详情即把该容器设为前台 stats 采样目标（task-40 接缝）。
     widget.service.setStatsTarget(widget.containerId);
   }
 
   @override
   void dispose() {
+    unawaited(_activitySubscription.cancel());
     widget.service.setStatsTarget(null);
     super.dispose();
   }
@@ -75,6 +87,8 @@ class _ContainerDetailViewState extends State<ContainerDetailView> {
       builder: (context, snapshot) {
         final info = snapshot.data;
         final running = info?.state == ContainerState.running;
+        final activity = _activity;
+        final busy = activity != null || info?.state == ContainerState.stopping;
         return DefaultTabController(
           length: 3,
           child: Column(
@@ -113,12 +127,14 @@ class _ContainerDetailViewState extends State<ContainerDetailView> {
                           foregroundColor: Colors.white,
                           minimumSize: const Size(88, 32),
                         ),
-                        onPressed: () => _toggle(info),
-                        icon: Icon(
-                          running ? Icons.stop : Icons.play_arrow,
-                          size: 16,
-                        ),
-                        label: Text(running ? '停止' : '启动'),
+                        onPressed: busy ? null : () => _toggle(info),
+                        icon: busy
+                            ? const GcmInlineSpinner()
+                            : Icon(
+                                running ? Icons.stop : Icons.play_arrow,
+                                size: 16,
+                              ),
+                        label: Text(activity?.label ?? info.state.label),
                       ),
                     ],
                   ],
@@ -1087,12 +1103,19 @@ class _ContainerLogTabState extends State<ContainerLogTab>
       }
     });
     if (_follow) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scroll.hasClients) {
-          _scroll.jumpTo(_scroll.position.maxScrollExtent);
-        }
-      });
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToLatest());
     }
+  }
+
+  void _scrollToLatest() {
+    if (!mounted || !_scroll.hasClients) return;
+    unawaited(
+      _scroll.animateTo(
+        _scroll.position.maxScrollExtent,
+        duration: GcmMotion.scrollFollowDuration,
+        curve: GcmMotion.scrollFollowCurve,
+      ),
+    );
   }
 
   bool _onScroll(ScrollNotification notification) {
@@ -1149,9 +1172,7 @@ class _ContainerLogTabState extends State<ContainerLogTab>
                   child: FilledButton.tonalIcon(
                     onPressed: () {
                       setState(() => _follow = true);
-                      if (_scroll.hasClients) {
-                        _scroll.jumpTo(_scroll.position.maxScrollExtent);
-                      }
+                      _scrollToLatest();
                     },
                     icon: const Icon(Icons.arrow_downward, size: 16),
                     label: const Text('回到底部并跟随'),

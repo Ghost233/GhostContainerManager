@@ -30,6 +30,7 @@ import '../../services/project_service.dart';
 import '../../services/system_service.dart';
 import '../ui/colors.dart';
 import '../ui/components.dart';
+import '../ui/motion.dart';
 import 'menu_bar_controller.dart';
 import 'placeholders.dart';
 
@@ -178,7 +179,17 @@ class _AppShellState extends State<AppShell> {
                           () => _selected = kSidebarItems.indexOf('运行时'),
                         ),
                       ),
-                    Expanded(child: _page(context)),
+                    Expanded(
+                      child: AnimatedSwitcher(
+                        duration: GcmMotion.pageSwitchDuration,
+                        switchInCurve: GcmMotion.pageSwitchCurve,
+                        switchOutCurve: GcmMotion.pageSwitchCurve,
+                        child: KeyedSubtree(
+                          key: ValueKey(kSidebarItems[_selected]),
+                          child: _page(context),
+                        ),
+                      ),
+                    ),
                   ],
                 );
               },

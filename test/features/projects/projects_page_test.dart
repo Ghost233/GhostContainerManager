@@ -224,7 +224,7 @@ void main() {
     expect(find.text('mysite-debug-run'), findsOneWidget);
   });
 
-  testWidgets('构建新版本：底部日志面板实时滚动，成功后收尾', (tester) async {
+  testWidgets('构建新版本：底部日志面板平滑跟随，成功后收尾', (tester) async {
     final fixture = _mysiteFixture();
     final buildProcess = FakeProjectCliProcess();
     fixture.cli.onStart = (args) {
@@ -268,13 +268,43 @@ void main() {
       expect(find.textContaining('构建 mysite-go'), findsOneWidget);
       expect(find.text('进行中'), findsOneWidget);
 
-      buildProcess.stdout.add('#1 [1/2] FROM scratch\n#2 exporting layers\n');
+      buildProcess.stdout.add(
+        '${<String>['#1 [1/2] FROM scratch', '#2 exporting layers', for (var index = 3; index <= 200; index++) '#$index exporting layer $index'].join('\n')}\n',
+      );
       await tester.pump();
       // onProgress 有 100ms 合并节流（task-34）：第二行等节流窗口补发。
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump();
       expect(find.textContaining('#1 [1/2] FROM scratch'), findsOneWidget);
       expect(find.textContaining('#2 exporting layers'), findsOneWidget);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await tester.pump();
+      final logScroll = tester
+          .widget<ListView>(
+            find.ancestor(
+              of: find.textContaining('#200 exporting layer 200'),
+              matching: find.byType(ListView),
+            ),
+          )
+          .controller!;
+      expect(logScroll.position.maxScrollExtent, greaterThan(0));
+      expect(
+        logScroll.position.pixels,
+        lessThan(logScroll.position.maxScrollExtent),
+      );
+      expect(
+        logScroll.position.isScrollingNotifier.value,
+        isTrue,
+        reason:
+            'pixels=${logScroll.position.pixels}, '
+            'max=${logScroll.position.maxScrollExtent}, '
+            'activity=${logScroll.position.activity}',
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(
+        logScroll.position.pixels,
+        closeTo(logScroll.position.maxScrollExtent, 0.01),
+      );
 
       await buildProcess.finish(0);
       await tester.pump();

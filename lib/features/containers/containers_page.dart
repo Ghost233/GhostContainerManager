@@ -15,6 +15,7 @@ import '../../services/container_service.dart';
 import '../../services/errors.dart';
 import '../../ui/colors.dart';
 import '../../ui/components.dart';
+import '../../ui/motion.dart';
 import '../../ui/text.dart';
 import '../system/readiness_controller.dart';
 import 'container_detail.dart';
@@ -576,8 +577,9 @@ class _ContainerRow extends StatelessWidget {
               width: 40,
               child: PopupMenuButton<String>(
                 key: Key('container-actions-${container.id}'),
-                tooltip: '容器操作',
+                tooltip: _busy ? _status : '容器操作',
                 enabled: !_busy,
+                icon: _busy ? const GcmInlineSpinner() : null,
                 onSelected: onAction,
                 itemBuilder: (context) => [
                   PopupMenuItem(
