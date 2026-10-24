@@ -5,6 +5,7 @@ import 'package:ghost_container_manager/app/menu_bar_controller.dart';
 import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
 import 'package:ghost_container_manager/features/settings/mcp_settings_controller.dart';
 import 'package:ghost_container_manager/features/settings/settings_page.dart';
+import 'package:ghost_container_manager/mcp/tool_audit.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
 
@@ -155,5 +156,43 @@ void main() {
       find.byKey(const Key('settings-language')),
     );
     expect(language.onChanged, isNull);
+  });
+
+  testWidgets('最近调用简表：有记录时显示工具名/时间/耗时', (tester) async {
+    final auditor = McpToolAuditor();
+    auditor.record(
+      tool: 'container_list',
+      startedAt: DateTime(2026, 10, 24, 9, 8, 7),
+      succeeded: true,
+      duration: const Duration(milliseconds: 42),
+    );
+    auditor.record(
+      tool: 'container_delete',
+      startedAt: DateTime(2026, 10, 24, 9, 9, 10),
+      succeeded: false,
+      duration: const Duration(milliseconds: 5),
+    );
+    final bridge = FakeContainerBridge();
+    final mcp = McpSettingsController(
+      systemService: SystemService(bridge: bridge),
+      containerService: ContainerService(bridge: bridge),
+      auditor: auditor,
+    )..enabled = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsPage(mcp: mcp, menuBar: _menuBar()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('暂无 MCP 调用记录'), findsNothing);
+    expect(find.text('container_delete'), findsOneWidget);
+    expect(find.text('container_list'), findsOneWidget);
+    expect(find.text('09:09:10'), findsOneWidget);
+    expect(find.text('42ms'), findsOneWidget);
+    expect(find.text('5ms'), findsOneWidget);
   });
 }

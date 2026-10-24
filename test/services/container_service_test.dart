@@ -312,8 +312,12 @@ void main() {
           image: 'nginx:latest',
           command: const ['nginx', '-g', 'daemon off;'],
           env: const ['MODE=production'],
-          ports: const ['127.0.0.1:8080:80/tcp'],
+          ports: const ['8080:80/tcp'],
           network: 'frontend',
+          mounts: const [
+            {'source': '/tmp/gcm-data', 'target': '/data', 'readonly': true},
+          ],
+          labels: const {'com.ghost233.project': 'demo'},
         );
 
         expect(service.activityFor('web'), ContainerActivity.creating);

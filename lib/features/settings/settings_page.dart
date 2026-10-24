@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../app/menu_bar_controller.dart';
+import '../../mcp/tool_audit.dart';
 import 'mcp_settings_controller.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -209,13 +210,73 @@ class _McpSection extends StatelessWidget {
             const SizedBox(height: 16),
             Text('最近调用', style: theme.textTheme.titleSmall),
             const SizedBox(height: 8),
-            Text(
-              mcp.recentCalls.isEmpty ? '暂无 MCP 调用记录' : '',
-              style: theme.textTheme.bodySmall,
-            ),
+            if (mcp.recentCalls.isEmpty)
+              Text('暂无 MCP 调用记录', style: theme.textTheme.bodySmall)
+            else
+              _RecentCallsList(records: mcp.recentCalls),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 最近 MCP 调用简表（issue #16）：工具名、时间、成败与耗时。
+/// 数据来自 [McpToolAuditor]，有界（默认 20 条），不记录参数与结果。
+class _RecentCallsList extends StatelessWidget {
+  const _RecentCallsList({required this.records});
+
+  final List<McpCallRecord> records;
+
+  static String _two(int v) => v.toString().padLeft(2, '0');
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final mono = theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final record in records)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              children: [
+                Icon(
+                  record.succeeded
+                      ? Icons.check_circle_outline
+                      : Icons.error_outline,
+                  size: 14,
+                  color: record.succeeded
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.error,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    record.tool,
+                    style: mono,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${_two(record.startedAt.hour)}:'
+                  '${_two(record.startedAt.minute)}:'
+                  '${_two(record.startedAt.second)}',
+                  style: theme.textTheme.bodySmall,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${record.duration.inMilliseconds}ms',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.outline,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }

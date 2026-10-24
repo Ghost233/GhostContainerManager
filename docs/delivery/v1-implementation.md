@@ -23,12 +23,12 @@
 | #16 T1 | 运行时通路与 MCP 骨架（onboarding + system_* + MCP server） | task-15 mcp-architect（服务侧）/ task-16 platform-analyst（UI 侧） | — / task-15 | 完成（merge 2508965） |
 | #17 T2 | 容器只读通路（列表/详情/日志 + 只读工具） | task-17 lifecycle-analyst / task-18 ui-prototyper | task-15 / +task-16 | 完成（2508965 + 085b9b7） |
 | #18 T3 | 容器写操作全栈 | task-19 lifecycle-builder | task-17、task-18 | 完成（4f1cb2b；双轴审查进行中） |
-| #19 T4 | exec 终端与菜单栏 | task-20 terminal-builder | task-19 | 进行中 |
+| #19 T4 | exec 终端与菜单栏 | task-20 terminal-builder | task-19 | 完成（a683b2e） |
 | #20 T5 | 镜像通路全栈 | task-21 mcp-architect / task-27 mcp-fixer | task-15、task-16 | 已实现（085b9b7），审查修复中 |
 | #21 T6 | 挂载/网络/Compose 通路 | task-22 platform-analyst / task-28 platform-fixer | task-15、task-16 | 已实现（085b9b7），审查修复与构建验证中 |
 | #22 T7 | 项目工作流与 registry（服务层 + 11 工具） | task-23 mcp-architect | task-19、task-21 | 待 T3、T5 |
 | #23 T8 | 项目页 UI（D11 终轮版） | task-24 ui-prototyper | task-23 | 待 T7 |
-| #24 T9 | MacLauncher 集成 | task-25 platform-fixer | task-19 | 进行中 |
+| #24 T9 | MacLauncher 集成 | task-25 platform-fixer | task-19 | 已实现（a683b2e + Lead 接线）；审查修复 task-31 |
 
 审查点：T1 完成后阶段审查（Standards+Spec）；其后按 T2/T5/T6、T3/T4、T7/T8、T9 分批审查；最终总审查覆盖 e75fcfa..总候选。
 
@@ -70,3 +70,13 @@
   2. **create 不自动 pull** 定为正式语义：镜像须本地已有，缺失 NOT_FOUND 且文案指名 image + 提示先 image_pull；pulling 合成态随之取消；lifecycle:69 已由「缺时 fetch」改为本地镜像-only。
 - 延期记录（不随 v1 修）：日志初始 500 行/筛选/导出/暂停、bootlog 来源切换、UI stop 高级 timeout/signal、deleting 行置灰、cpus/memoryBytes。
 - 并行边界：T4 与 T9 启动；T7 与 T4 共用容器桥接文件，待 T4 定型后启动，T8 继续等待 T7。
+
+### 2026-10-24 11:xx T4 + T9 + MCP 审计（a683b2e + Lead 收尾批）
+
+- T4（task-20，terminal-builder）：一次性非 TTY exec 全链路（ExecOps.swift best-effort SIGKILL 超时 + 64KiB/流截断 + 3s drain）、container_exec 工具（timeout 默认 60/上限 600）、菜单栏（运行中 ≤5 + 快捷停止 + 空态，原生 MenuBarController.swift + Dart MenuBarController）、设置页通用区块（D9）。228/228 tests（run-hjnh0B + Lead 复验 run-x2LFwt）。
+- T9（task-25，platform-fixer）：MacLauncherBridge 适配层（四回调、仅 com.ghost233.* 注册、断连不动容器、onLogs 批式映射）+ 9 测试；连带修复 eventTransformed 日志取消根因（container_logs_parser.dart，Lead 授权扩域）。
+- task-29（Lead）：MCP 调用审计层（tool_audit.dart：McpToolAuditor 环形 20 条 + AuditedMcpServer override registerTool，finally 记录工具名/时间/成败/耗时，不记参数）+ GcmMcpServer/controller 接线 + 设置页「最近调用」非空简表（_RecentCallsList）+ e2e（真实 HTTP tools/call 落记录）+ widget 测试。issue #16 验收项「最近调用简表」由占位转实装。
+- Lead 集成：MacLauncherBridge 挂到 app.dart composition root（enableLauncher 参数、connect 失败降级 debugPrint、dispose 先于 ContainerService，E04）；app_shell_test 补 enableLauncher:false。
+- 证据：`test-host.sh check` exit 0（229 tests，run-QfGWiy）。
+- Spec 轴审查（537c2360，范围 4f1cb2b..a683b2e）：#19 五条中四条代码级满足；#24 P0-1 桥未接线（Lead 收尾批已补 app.dart 接线）→ 转 P1/P2 修复任务 task-31：P1-1 onLogs 等 EOF 对运行中容器挂起、P1-2 注册静态快照（新容器不自动注册）、P2-1 lifecycle exec 默认 30→60 漂移、P2-3 maclauncher.json services 空（需裁决动态注册下的写法）、P2-4 LogStream stdio→unknown 归因复核。P2-2 菜单栏 D4 完整形态（状态行/▣n/启停运行时/MCP 项）记录为 v2 延期。
+- Standards 轴审查（b90c57b0）待收。

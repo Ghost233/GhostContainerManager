@@ -14,6 +14,7 @@ import '../bridge/method_channel_container_bridge.dart';
 import '../features/settings/mcp_settings_controller.dart';
 import '../features/system/onboarding_page.dart';
 import '../features/system/readiness_controller.dart';
+import '../launcher/maclauncher_bridge.dart';
 import '../services/compose_service.dart';
 import '../services/container_service.dart';
 import '../services/image_service.dart';
@@ -29,6 +30,7 @@ class GhostContainerManagerApp extends StatefulWidget {
     this.bridge,
     this.debugBypass = false,
     this.enableMcp = true,
+    this.enableLauncher = true,
     this.menuBarChannel,
   });
 
@@ -40,6 +42,9 @@ class GhostContainerManagerApp extends StatefulWidget {
 
   /// 是否按设置启动 MCP server（测试关闭以避免绑定真实端口）。
   final bool enableMcp;
+
+  /// 是否连接 MacLauncher（测试关闭以避免触碰真实 SDK/主机进程）。
+  final bool enableLauncher;
 
   /// 测试注入点；生产环境由 macOS AppKit 实现状态栏和偏好持久化。
   final MenuBarChannel? menuBarChannel;
@@ -59,6 +64,7 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
   late final ReadinessController _readiness;
   late final McpSettingsController _mcp;
   late final MenuBarController _menuBar;
+  MacLauncherBridge? _launcher;
   late final Future<void> _menuInitialization;
 
   /// 「跳过并仅查看设置」出口（本次会话内有效，不持久化）。
@@ -107,6 +113,16 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
     if (widget.enableMcp) {
       unawaited(_mcp.sync());
     }
+    if (widget.enableLauncher) {
+      // MacLauncher 是可选集成：未安装或连接失败不影响主功能。
+      final launcher = MacLauncherBridge(containers: _containerService);
+      _launcher = launcher;
+      unawaited(
+        launcher.connect().catchError((Object error, StackTrace stack) {
+          debugPrint('MacLauncher connect failed (ignored): $error');
+        }),
+      );
+    }
   }
 
   @override
@@ -117,6 +133,8 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
     // the public switch stops the server without reaching into settings.
     unawaited(_mcp.setEnabled(false));
     _menuBar.dispose();
+    // 先断开 MacLauncher（取消在飞日志、关闭 SDK），再停容器服务。
+    unawaited(_launcher?.dispose());
     unawaited(_containerService.dispose());
     _readiness.dispose();
     super.dispose();
