@@ -8,6 +8,7 @@ import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/errors.dart';
 import 'package:ghost_container_manager/services/image_service.dart';
+import 'package:ghost_container_manager/services/project_build_log_store.dart';
 import 'package:ghost_container_manager/services/project_service.dart';
 
 import 'container_service_test.dart' show snapshotPayload;
@@ -68,6 +69,38 @@ class FakeProjectCli implements ProjectCli {
   }
 }
 
+class _FakeProjectBuildLogStore implements ProjectBuildLogStore {
+  int writes = 0;
+  String? project;
+  String? imageName;
+  String? dockerfile;
+  String? stage;
+  String? reason;
+  String? logTail;
+  Object? error;
+
+  @override
+  Future<String> write({
+    required String project,
+    required String imageName,
+    required String dockerfile,
+    required String stage,
+    required String reason,
+    required String logTail,
+  }) async {
+    writes += 1;
+    this.project = project;
+    this.imageName = imageName;
+    this.dockerfile = dockerfile;
+    this.stage = stage;
+    this.reason = reason;
+    this.logTail = logTail;
+    final error = this.error;
+    if (error != null) throw error;
+    return 'memory-log';
+  }
+}
+
 void addImage(
   FakeContainerBridge bridge,
   String reference, {
@@ -96,6 +129,12 @@ BridgeCommandResult diskUsageResult(int bytes) => BridgeCommandResult(
   ]),
   stderr: '',
 );
+
+Future<String> writeDockerfile(Directory root) async {
+  final file = File('${root.path}/Dockerfile');
+  await file.writeAsString('FROM scratch\n');
+  return file.path;
+}
 
 void main() {
   late Directory temp;
@@ -364,7 +403,99 @@ void main() {
     );
   });
 
+  test(
+    'build throttles progress to 100ms and flushes the final line',
+    () async {
+      final dockerfile = await writeDockerfile(temp);
+      final process = FakeProjectCliProcess();
+      final started = Completer<void>();
+      cli.onStart = (_) {
+        started.complete();
+        return process;
+      };
+      final progress = <String>[];
+      final running = service.buildProject(
+        project: 'myapp',
+        name: 'go1',
+        dockerfile: dockerfile,
+        context: temp.path,
+        onProgress: progress.add,
+      );
+      await started.future;
+
+      process.stdout.add('#1');
+      await Future<void>.delayed(Duration.zero);
+      process.stdout.add('#2');
+      process.stdout.add('#3');
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(progress, ['#1', '#3']);
+
+      process.stdout.add('#4');
+      await Future<void>.delayed(Duration.zero);
+      await process.finish(0);
+      await running;
+      expect(progress, ['#1', '#3', '#4']);
+    },
+  );
+
+  test('build flushes pending progress when the output stream fails', () async {
+    final dockerfile = await writeDockerfile(temp);
+    final process = FakeProjectCliProcess();
+    final started = Completer<void>();
+    cli.onStart = (_) {
+      started.complete();
+      return process;
+    };
+    final progress = <String>[];
+    final running = service.buildProject(
+      project: 'myapp',
+      name: 'go1',
+      dockerfile: dockerfile,
+      context: temp.path,
+      onProgress: progress.add,
+    );
+    await started.future;
+
+    process.stdout.add('#1');
+    await Future<void>.delayed(Duration.zero);
+    process.stdout.add('#2');
+    await Future<void>.delayed(Duration.zero);
+    final expectation = expectLater(
+      running,
+      throwsA(
+        isA<GcmException>()
+            .having((e) => e.code, 'code', GcmErrorCode.internal)
+            .having((e) => e.message, 'message', contains('stream failed')),
+      ),
+    );
+    process.stdout.addError(StateError('stream failed'));
+    await process.finish(0);
+    await expectation;
+
+    expect(progress, ['#1', '#2']);
+  });
+
+  test(
+    'build rejects a missing project path instead of using the CWD',
+    () async {
+      final process = FakeProjectCliProcess();
+      cli.onStart = (_) => process;
+      unawaited(process.finish(0));
+
+      await expectLater(
+        service.buildProject(project: 'myapp', name: 'go1'),
+        throwsA(
+          isA<GcmException>()
+              .having((e) => e.code, 'code', GcmErrorCode.invalidArgument)
+              .having((e) => e.hint, 'hint', contains('path')),
+        ),
+      );
+      expect(cli.starts, isEmpty);
+    },
+  );
+
   test('failed build returns exit code and writes only bounded logs', () async {
+    final dockerfile = await writeDockerfile(temp);
     final process = FakeProjectCliProcess();
     cli.onStart = (_) => process;
     for (var i = 1; i <= 1100; i += 1) {
@@ -372,7 +503,12 @@ void main() {
     }
     unawaited(process.finish(2));
 
-    final result = await service.buildProject(project: 'myapp', name: 'go1');
+    final result = await service.buildProject(
+      project: 'myapp',
+      name: 'go1',
+      dockerfile: dockerfile,
+      context: temp.path,
+    );
 
     expect(result.exitCode, 2);
     expect(result.output, contains('line1100'));
@@ -387,7 +523,83 @@ void main() {
     expect(log, isNot(contains('line1\n')));
   });
 
+  test(
+    'build writes bounded failure logs through the injected store',
+    () async {
+      final dockerfile = await writeDockerfile(temp);
+      final store = _FakeProjectBuildLogStore();
+      service = ProjectService(
+        cli: cli,
+        containerService: containers,
+        imageService: ImageService(
+          bridge: bridge,
+          containerService: containers,
+        ),
+        projectPaths: [temp.path],
+        buildLogDirectory: '${temp.path}/build-logs',
+        buildLogStore: store,
+      );
+      final process = FakeProjectCliProcess();
+      cli.onStart = (_) => process;
+      for (var i = 1; i <= 1005; i += 1) {
+        process.stdout.add('line$i');
+      }
+      unawaited(process.finish(2));
+
+      final result = await service.buildProject(
+        project: 'myapp',
+        name: 'go1',
+        dockerfile: dockerfile,
+        context: temp.path,
+      );
+
+      expect(result.exitCode, 2);
+      expect(store.writes, 1);
+      expect(store.project, 'myapp');
+      expect(store.imageName, 'go1');
+      expect(store.dockerfile, dockerfile);
+      expect(store.stage, 'build');
+      expect(store.reason, 'exit code 2');
+      expect(
+        store.logTail,
+        '${List.generate(1000, (i) => 'line${i + 6}').join('\n')}\n',
+      );
+      expect(result.failureLogPath, 'memory-log');
+      expect(await Directory('${temp.path}/build-logs').exists(), isFalse);
+    },
+  );
+
+  test('build preserves the failed result when the log store throws', () async {
+    final dockerfile = await writeDockerfile(temp);
+    final store = _FakeProjectBuildLogStore()..error = StateError('disk full');
+    service = ProjectService(
+      cli: cli,
+      containerService: containers,
+      imageService: ImageService(bridge: bridge, containerService: containers),
+      projectPaths: [temp.path],
+      buildLogDirectory: '${temp.path}/build-logs',
+      buildLogStore: store,
+    );
+    final process = FakeProjectCliProcess();
+    cli.onStart = (_) => process;
+    process.stdout.add('compiler failed');
+    unawaited(process.finish(2));
+
+    final result = await service.buildProject(
+      project: 'myapp',
+      name: 'go1',
+      dockerfile: dockerfile,
+      context: temp.path,
+    );
+
+    expect(result.exitCode, 2);
+    expect(result.output, 'compiler failed\n');
+    expect(result.failureLogPath, isNull);
+    expect(store.writes, 1);
+  });
+
   test('build runs tests only when an explicit command is supplied', () async {
+    final dockerfile = await writeDockerfile(temp);
     final build = FakeProjectCliProcess();
     final testRun = FakeProjectCliProcess();
     cli.onStart = (args) {
@@ -404,6 +616,8 @@ void main() {
     final result = await service.buildProject(
       project: 'myapp',
       name: 'go1',
+      dockerfile: dockerfile,
+      context: temp.path,
       skipTests: false,
       testCommand: const ['go', 'test', './...'],
       onProgress: progress.add,
@@ -438,16 +652,27 @@ void main() {
   });
 
   test('same project work conflicts while another project can run', () async {
+    final dockerfile = await writeDockerfile(temp);
     final first = FakeProjectCliProcess();
     final other = FakeProjectCliProcess();
     cli.onStart = (args) => args.contains('myapp-go1:latest') ? first : other;
-    final running = service.buildProject(project: 'myapp', name: 'go1');
+    final running = service.buildProject(
+      project: 'myapp',
+      name: 'go1',
+      dockerfile: dockerfile,
+      context: temp.path,
+    );
     while (cli.starts.isEmpty) {
       await Future<void>.delayed(Duration.zero);
     }
 
     await expectLater(
-      service.buildProject(project: 'myapp', name: 'go2'),
+      service.buildProject(
+        project: 'myapp',
+        name: 'go2',
+        dockerfile: dockerfile,
+        context: temp.path,
+      ),
       throwsA(
         isA<GcmException>().having(
           (e) => e.code,
@@ -456,7 +681,12 @@ void main() {
         ),
       ),
     );
-    final otherRun = service.buildProject(project: 'other', name: 'go2');
+    final otherRun = service.buildProject(
+      project: 'other',
+      name: 'go2',
+      dockerfile: dockerfile,
+      context: temp.path,
+    );
     while (cli.starts.length < 2) {
       await Future<void>.delayed(Duration.zero);
     }
@@ -469,12 +699,15 @@ void main() {
   test(
     'build cancellation terminates the CLI and records one failure',
     () async {
+      final dockerfile = await writeDockerfile(temp);
       final process = FakeProjectCliProcess();
       final cancellation = StreamController<void>();
       cli.onStart = (_) => process;
       final running = service.buildProject(
         project: 'myapp',
         name: 'go1',
+        dockerfile: dockerfile,
+        context: temp.path,
         cancellation: cancellation.stream,
       );
       while (cli.starts.isEmpty) {
@@ -543,7 +776,48 @@ void main() {
     expect(cli.starts, isEmpty);
   });
 
+  test(
+    'build validates Dockerfiles for explicit context and dockerfile paths',
+    () async {
+      final process = FakeProjectCliProcess();
+      cli.onStart = (_) => process;
+      unawaited(process.finish(0));
+      final context = Directory('${temp.path}/context')..createSync();
+      final contextDockerfile = '${context.path}/Dockerfile';
+
+      await expectLater(
+        service.buildProject(
+          project: 'myapp',
+          name: 'go1',
+          context: context.path,
+        ),
+        throwsA(
+          isA<GcmException>()
+              .having((e) => e.code, 'code', GcmErrorCode.notFound)
+              .having((e) => e.message, 'message', contains(contextDockerfile)),
+        ),
+      );
+
+      final missingDockerfile = '${temp.path}/missing/Dockerfile';
+      await expectLater(
+        service.buildProject(
+          project: 'myapp',
+          name: 'go1',
+          context: temp.path,
+          dockerfile: missingDockerfile,
+        ),
+        throwsA(
+          isA<GcmException>()
+              .having((e) => e.code, 'code', GcmErrorCode.notFound)
+              .having((e) => e.message, 'message', contains(missingDockerfile)),
+        ),
+      );
+      expect(cli.starts, isEmpty);
+    },
+  );
+
   test('build failure logs retain only the newest twenty', () async {
+    final dockerfile = await writeDockerfile(temp);
     cli.onStart = (_) {
       final process = FakeProjectCliProcess();
       process.stdout.add('failure');
@@ -552,7 +826,12 @@ void main() {
     };
     final paths = <String>[];
     for (var i = 0; i < 21; i += 1) {
-      final result = await service.buildProject(project: 'myapp', name: 'go1');
+      final result = await service.buildProject(
+        project: 'myapp',
+        name: 'go1',
+        dockerfile: dockerfile,
+        context: temp.path,
+      );
       paths.add(result.failureLogPath!);
     }
 
@@ -632,6 +911,27 @@ void main() {
       ]);
     },
   );
+
+  test('publish maps a timed out CLI tag to TIMEOUT', () async {
+    addImage(bridge, 'myapp-go1:latest', project: 'myapp');
+    cli.onRun = (_) async => const BridgeCommandResult(
+      exitCode: -1,
+      stdout: '',
+      stderr: 'deadline exceeded',
+      timedOut: true,
+    );
+
+    await expectLater(
+      service.publishProject(project: 'myapp', name: 'go1'),
+      throwsA(
+        isA<GcmException>()
+            .having((e) => e.code, 'code', GcmErrorCode.timeout)
+            .having((e) => e.source, 'source', 'cli')
+            .having((e) => e.message, 'message', contains('超时')),
+      ),
+    );
+    expect(cli.starts, isEmpty);
+  });
 
   test(
     'publish propagates CLI failure without deleting local images',

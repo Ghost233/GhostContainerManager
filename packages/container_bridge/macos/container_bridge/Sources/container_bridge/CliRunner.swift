@@ -18,7 +18,7 @@ struct CliResult {
   }
 }
 
-enum CliError: Error, CustomStringConvertible {
+enum CliError: LocalizedError, CustomStringConvertible {
   case message(String)
 
   var description: String {
@@ -26,6 +26,8 @@ enum CliError: Error, CustomStringConvertible {
     case .message(let text): return text
     }
   }
+
+  var errorDescription: String? { description }
 }
 
 /// CLI runner. PATH probing is explicit (no shell): Flutter Release strips
@@ -83,10 +85,13 @@ enum CliRunner {
 
         let timedOut = group.wait(timeout: .now() + timeout) == .timedOut
         if timedOut {
-          // fire-and-forget group signal; no async process handle to await.
           process.terminate()
+          if group.wait(timeout: .now() + 2) == .timedOut {
+            // Stubborn children may ignore SIGTERM; never leave the group up.
+            process.kill()
+          }
         }
-        // Drain whatever was written up to termination.
+        // Drain whatever was written up to termination or SIGKILL escalation.
         _ = group.wait(timeout: .now() + 5)
 
         completion(
@@ -102,7 +107,7 @@ enum CliRunner {
           CliResult(
             exitCode: -1,
             stdout: "",
-            stderr: error.localizedDescription,
+            stderr: "failed to launch \(binary): \(error.localizedDescription)",
             timedOut: false
           )
         )

@@ -68,7 +68,8 @@ abstract final class ContainerBridgeStreams {
   static const String imagePull = 'image.pull';
 
   /// `cli.process` — stdout/stderr lines and the terminal exit event for one
-  /// generic CLI process; arguments include the client-generated handle.
+  /// generic CLI process. Swift reads the subscription key `handle`:
+  /// `{'stream': 'cli.process', 'handle': <client-generated id>}`.
   static const String cliProcess = 'cli.process';
 }
 
@@ -342,7 +343,7 @@ class ContainerBridgeEvents {
     return _cliChannel
         .receiveBroadcastStream(<String, Object?>{
           'stream': ContainerBridgeStreams.cliProcess,
-          'id': handle,
+          'handle': handle,
         })
         .map((event) => (event as Map).cast<String, Object?>());
   }

@@ -188,7 +188,7 @@ void main() {
       expect(calls.map((call) => call.method), ['listen', 'cancel']);
       expect(mainCalls, isEmpty);
       for (final call in calls) {
-        expect(call.arguments, {'stream': 'cli.process', 'id': 'handle-1'});
+        expect(call.arguments, {'stream': 'cli.process', 'handle': 'handle-1'});
       }
     });
   });

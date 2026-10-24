@@ -49,6 +49,107 @@ void main() {
     expect(connector.services?['worker']?.name, 'worker');
   });
 
+  test('connect follows managed container additions and removals', () async {
+    containerBridge.containers = [
+      snapshot(id: 'web', labels: const {'com.ghost233.managed': 'true'}),
+    ];
+    final factory = _FakeSdkFactory();
+    final launcher = MacLauncherBridge(
+      containers: containerService,
+      sdkConnector: factory.call,
+    );
+    addTearDown(() async {
+      await launcher.dispose();
+      await factory.close();
+    });
+    await launcher.connect();
+    expect(factory.registrations.single.services.keys, ['web']);
+
+    containerBridge.containers = [
+      ...containerBridge.containers,
+      snapshot(id: 'worker', labels: const {'com.ghost233.role': 'test'}),
+      snapshot(id: 'outside', labels: const {'com.example.managed': 'true'}),
+    ];
+    await containerService.listContainers(const ContainerQuery());
+    await _flushAsync();
+
+    expect(factory.registrations, hasLength(2));
+    expect(factory.registrations[0].sdk.disposeCalls, 1);
+    expect(
+      factory.registrations[1].services.keys,
+      unorderedEquals(['web', 'worker']),
+    );
+
+    containerBridge.containers.removeWhere(
+      (container) => (container['configuration'] as Map)['id'] == 'worker',
+    );
+    await containerService.listContainers(const ContainerQuery());
+    await _flushAsync();
+
+    expect(factory.registrations, hasLength(3));
+    expect(factory.registrations[1].sdk.disposeCalls, 1);
+    expect(factory.registrations[2].services.keys, ['web']);
+    expect(containerBridge.startCalls, 0);
+    expect(containerBridge.stopCalls, 0);
+
+    await containerService.listContainers(const ContainerQuery());
+    await _flushAsync();
+    expect(factory.registrations, hasLength(3));
+  });
+
+  test('concurrent connect shares one SDK registration', () async {
+    containerBridge.containers = [
+      snapshot(id: 'web', labels: const {'com.ghost233.managed': 'true'}),
+    ];
+    final factory = _FakeSdkFactory();
+    final launcher = MacLauncherBridge(
+      containers: containerService,
+      sdkConnector: factory.call,
+    );
+    addTearDown(() async {
+      await launcher.dispose();
+      await factory.close();
+    });
+
+    await Future.wait([launcher.connect(), launcher.connect()]);
+    await launcher.connect();
+
+    expect(factory.registrations, hasLength(1));
+  });
+
+  test(
+    'dispose during initial discovery prevents late SDK connection',
+    () async {
+      final gatedBridge = _GatedListBridge();
+      gatedBridge.containers = [
+        snapshot(id: 'web', labels: const {'com.ghost233.managed': 'true'}),
+      ];
+      final gatedService = ContainerService(bridge: gatedBridge);
+      addTearDown(() async {
+        if (!gatedBridge.gate.isCompleted) gatedBridge.gate.complete();
+        gatedService.stopPolling();
+        await gatedService.dispose();
+      });
+      final factory = _FakeSdkFactory();
+      final launcher = MacLauncherBridge(
+        containers: gatedService,
+        sdkConnector: factory.call,
+      );
+
+      final pending = launcher.connect();
+      final outcome = pending.then<Object?>(
+        (_) => null,
+        onError: (Object error) => error,
+      );
+      await _flushAsync();
+      await launcher.dispose();
+      gatedBridge.gate.complete();
+
+      expect(await outcome, isA<StateError>());
+      expect(factory.registrations, isEmpty);
+    },
+  );
+
   test('disconnect and dispose never write containers', () async {
     containerBridge.containers = [
       snapshot(
@@ -281,6 +382,55 @@ void main() {
     expect(logBridge.logsCancelled, isTrue);
   });
 
+  test('onLogs bounds a continuous stream without EOF', () async {
+    final logBridge = _TrackingLogsBridge();
+    logBridge.containers = [
+      snapshot(id: 'web', labels: const {'com.ghost233.managed': 'true'}),
+    ];
+    final logService = ContainerService(bridge: logBridge);
+    final connector = FakeSdkConnector(sdk);
+    final launcher = MacLauncherBridge(
+      containers: logService,
+      sdkConnector: connector.call,
+    );
+    addTearDown(() async {
+      await launcher.dispose();
+      logService.stopPolling();
+      await logService.dispose();
+      if (logBridge.logEvents.hasListener || logBridge.logsCancelled) {
+        await logBridge.logEvents.close();
+      }
+    });
+    await launcher.connect();
+
+    final onLogs = connector.services!['web']!.onLogs!;
+    final pending = onLogs(LogQuery(limit: 500));
+    await logBridge.listened.future;
+
+    var sequence = 0;
+    final timer = Timer.periodic(const Duration(milliseconds: 5), (_) {
+      if (logBridge.logsCancelled) return;
+      logBridge.logEvents.add(
+        BridgeLogEvent.data(
+          source: 'stdio',
+          bytes: utf8.encode('line ${sequence++}\n'),
+        ),
+      );
+    });
+    try {
+      final batch = await pending.timeout(const Duration(seconds: 1));
+      timer.cancel();
+
+      expect(batch.entries, isNotEmpty);
+      expect(batch.entries.length, lessThan(500));
+      expect(batch.truncated, isNull);
+      expect(batch.observedAt, isNotNull);
+      expect(logBridge.logsCancelled, isTrue);
+    } finally {
+      timer.cancel();
+    }
+  });
+
   test('dispose cancels an in-flight log read', () async {
     final logBridge = _TrackingLogsBridge();
     logBridge.containers = [
@@ -366,6 +516,17 @@ Map<String, Object?> snapshot({
   };
 }
 
+class _GatedListBridge extends FakeContainerBridge {
+  final gate = Completer<void>();
+
+  @override
+  Future<List<Map<String, Object?>>> containerList() async {
+    calls.add('containerList');
+    await gate.future;
+    return containers;
+  }
+}
+
 class _TrackingLogsBridge extends FakeContainerBridge {
   _TrackingLogsBridge() {
     logEvents.onListen = () {
@@ -384,6 +545,40 @@ class _TrackingLogsBridge extends FakeContainerBridge {
   Stream<BridgeLogEvent> containerLogs(String id) {
     calls.add('containerLogs:$id');
     return logEvents.stream;
+  }
+}
+
+Future<void> _flushAsync() async {
+  for (var i = 0; i < 20; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+}
+
+class _SdkRegistration {
+  _SdkRegistration(this.sdk, this.services);
+
+  final FakeMacLauncherSdk sdk;
+  final Map<String, ServiceCallbacks> services;
+}
+
+class _FakeSdkFactory {
+  final registrations = <_SdkRegistration>[];
+
+  MacLauncherSdk call({
+    required String projectId,
+    required String projectName,
+    required SdkEntry? entry,
+    required Map<String, ServiceCallbacks> services,
+  }) {
+    final sdk = FakeMacLauncherSdk();
+    registrations.add(_SdkRegistration(sdk, services));
+    return sdk;
+  }
+
+  Future<void> close() async {
+    for (final registration in registrations) {
+      await registration.sdk.close();
+    }
   }
 }
 

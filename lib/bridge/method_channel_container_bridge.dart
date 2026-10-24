@@ -418,6 +418,11 @@ class _MethodChannelBridgeCliProcess implements seam.BridgeCliProcess {
   void _fail(seam.BridgeCallException error) {
     if (_finished) return;
     _finished = true;
+    if (!_launchFailed) {
+      unawaited(
+        _channel.cliTerminate(_handle).then((_) {}, onError: (Object _) {}),
+      );
+    }
     _exit.completeError(error);
     if (!_stdout.isClosed) _stdout.addError(error);
     if (!_stderr.isClosed) _stderr.addError(error);

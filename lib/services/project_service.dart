@@ -13,11 +13,13 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../bridge/container_bridge.dart';
+import 'app_constants.dart';
 import 'container_models.dart';
 import 'container_service.dart';
 import 'errors.dart';
 import 'image_models.dart';
 import 'image_service.dart';
+import 'project_build_log_store.dart';
 
 const projectLabel = 'com.ghost233.project';
 const projectTestRoleLabel = 'com.ghost233.role';
@@ -333,6 +335,7 @@ class ProjectService {
     required ImageService imageService,
     Iterable<String> projectPaths = const <String>[],
     String? buildLogDirectory,
+    ProjectBuildLogStore? buildLogStore,
     DateTime Function()? clock,
   }) => ProjectService._(
     cli,
@@ -340,6 +343,7 @@ class ProjectService {
     imageService,
     projectPaths: projectPaths,
     buildLogDirectory: buildLogDirectory,
+    buildLogStore: buildLogStore,
     clock: clock,
   );
 
@@ -349,24 +353,27 @@ class ProjectService {
     this._imageService, {
     Iterable<String> projectPaths = const <String>[],
     String? buildLogDirectory,
+    ProjectBuildLogStore? buildLogStore,
     DateTime Function()? clock,
   }) : _projectPaths = <String>{...projectPaths},
-       _buildLogDirectory = buildLogDirectory ?? _defaultBuildLogDirectory(),
-       _clock = clock ?? DateTime.now;
+       _buildLogStore =
+           buildLogStore ??
+           FileProjectBuildLogStore(
+             directory: buildLogDirectory ?? _defaultBuildLogDirectory(),
+             clock: clock,
+           );
 
   final ProjectCli _cli;
   final ContainerService _containerService;
   final ImageService _imageService;
   final Set<String> _projectPaths;
-  final String _buildLogDirectory;
-  final DateTime Function() _clock;
+  final ProjectBuildLogStore _buildLogStore;
   final Set<String> _lockedProjects = <String>{};
-  int _buildLogSequence = 0;
 
   static String _defaultBuildLogDirectory() {
     final home = Platform.environment['HOME'] ?? '.';
     return '$home/Library/Application Support/'
-        'com.ghost233.ghostcontainermanager/build-logs';
+        '$applicationBundleId/build-logs';
   }
 
   Future<ProjectInitResult> initProject({
@@ -487,7 +494,13 @@ class ProjectService {
     final resolved = await _resolveProject(project: project, path: path);
     final stopwatch = Stopwatch()..start();
     return _withProjectLock(resolved.project, () async {
-      final basePath = resolved.path ?? '.';
+      if (resolved.path == null && context == null && dockerfile == null) {
+        _invalid(
+          '项目 ${resolved.project} 没有可用的项目目录',
+          hint: '请使用 path 参数定位项目目录；应用重启后可能需要重新提供。',
+        );
+      }
+      final basePath = resolved.path ?? context ?? '.';
       final actualDockerfile = dockerfile ?? _join(basePath, 'Dockerfile');
       await _validateDockerfile(actualDockerfile);
       final image = _projectImage(resolved.project, name);
@@ -885,6 +898,15 @@ class ProjectService {
     Duration? timeout,
   }) async {
     final result = await _cli.run(args, timeout: timeout);
+    if (result.timedOut && result.exitCode == -1) {
+      throw GcmException(
+        GcmErrorCode.timeout,
+        'container ${args.join(' ')} 超时',
+        hint: '运行时可能卡住；重试或检查 container CLI 日志。',
+        source: 'cli',
+        cause: result.combinedOutput,
+      );
+    }
     if (result.exitCode != 0) {
       _throwCliFailure('container ${args.join(' ')}', result.stderr);
     }
@@ -945,6 +967,39 @@ class ProjectService {
     final stderrDone = Completer<void>();
     var cancelled = false;
     var exited = false;
+    const progressInterval = Duration(milliseconds: 100);
+    Timer? progressTimer;
+    String? pendingProgress;
+    var progressWindowOpen = false;
+
+    void emitProgress(String line) {
+      final callback = onProgress;
+      if (callback == null) return;
+      if (progressWindowOpen) {
+        pendingProgress = line;
+        return;
+      }
+      callback(line);
+      progressWindowOpen = true;
+      progressTimer = Timer(progressInterval, () {
+        progressWindowOpen = false;
+        progressTimer = null;
+        final pending = pendingProgress;
+        if (pending != null) {
+          pendingProgress = null;
+          emitProgress(pending);
+        }
+      });
+    }
+
+    void flushProgress() {
+      progressTimer?.cancel();
+      progressTimer = null;
+      progressWindowOpen = false;
+      final pending = pendingProgress;
+      pendingProgress = null;
+      if (pending != null) onProgress?.call(pending);
+    }
 
     void addLine(String line, _BoundedOutput target) {
       lines.addLast(line);
@@ -952,7 +1007,7 @@ class ProjectService {
         lines.removeFirst();
       }
       target.addLine(line);
-      onProgress?.call(line);
+      emitProgress(line);
     }
 
     final stdoutSubscription = process.stdoutLines.listen(
@@ -1000,13 +1055,14 @@ class ProjectService {
         cancelled: cancelled,
       );
     } finally {
+      flushProgress();
       await cancellationSubscription?.cancel();
       await stdoutSubscription.cancel();
       await stderrSubscription.cancel();
     }
   }
 
-  Future<String> _writeBuildFailure({
+  Future<String?> _writeBuildFailure({
     required String project,
     required String name,
     required String dockerfile,
@@ -1014,33 +1070,19 @@ class ProjectService {
     required String reason,
     required List<String> lines,
   }) async {
-    final directory = Directory(_buildLogDirectory);
-    await directory.create(recursive: true);
-    final now = _clock().toUtc();
-    final sequence = (_buildLogSequence++).toString().padLeft(6, '0');
-    final file = File(
-      '${directory.path}/${now.microsecondsSinceEpoch}-$sequence-$project-$name.log',
-    );
-    final content = StringBuffer()
-      ..writeln('project: $project')
-      ..writeln('name: $name')
-      ..writeln('dockerfile: $dockerfile')
-      ..writeln('timestamp: ${now.toIso8601String()}')
-      ..writeln('stage: $stage')
-      ..writeln('reason: $reason')
-      ..writeln('--- output tail (up to 1000 lines) ---')
-      ..write(_lastLines(lines, 1000));
-    await file.writeAsString(content.toString(), flush: true);
-
-    final logs = <File>[];
-    await for (final entity in directory.list(followLinks: false)) {
-      if (entity is File && entity.path.endsWith('.log')) logs.add(entity);
+    try {
+      return await _buildLogStore.write(
+        project: project,
+        imageName: name,
+        dockerfile: dockerfile,
+        stage: stage,
+        reason: reason,
+        logTail: _lastLines(lines, 1000),
+      );
+    } catch (_) {
+      // Failure diagnostics must not replace the original build result/error.
+      return null;
     }
-    logs.sort((a, b) => a.path.compareTo(b.path));
-    while (logs.length > 20) {
-      await logs.removeAt(0).delete();
-    }
-    return file.path;
   }
 
   Future<T> _withProjectLock<T>(
@@ -1063,7 +1105,14 @@ class ProjectService {
 
   static Future<void> _validateDockerfile(String path) async {
     final file = File(path);
-    if (await file.exists() && await file.length() > 16 * 1024) {
+    if (!await file.exists()) {
+      throw GcmException(
+        GcmErrorCode.notFound,
+        'Dockerfile 不存在：$path',
+        hint: '请检查 path、context 或 dockerfile 参数。',
+      );
+    }
+    if (await file.length() > 16 * 1024) {
       _invalid('Dockerfile 超过 16 KiB 上限：$path', hint: '上游限制为 16 KiB。');
     }
   }

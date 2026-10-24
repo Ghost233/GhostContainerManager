@@ -64,6 +64,8 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
   late final MountService _mountService;
   late final NetworkService _networkService;
   late final ComposeService _composeService;
+  late final ProjectService _projectService;
+  late final RegistryService _registryService;
   late final ReadinessController _readiness;
   late final McpSettingsController _mcp;
   late final MenuBarController _menuBar;
@@ -99,12 +101,12 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
       systemService: _systemService,
       bridge: bridge,
     );
-    final projectService = ProjectService(
+    _projectService = ProjectService(
       cli: BridgeProjectCli(bridge),
       containerService: _containerService,
       imageService: _imageService,
     );
-    final registryService = RegistryService(
+    _registryService = RegistryService(
       containers: _containerService,
       images: _imageService,
       cli: BridgeProjectCli(bridge),
@@ -116,8 +118,8 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
       mountService: _mountService,
       networkService: _networkService,
       composeService: _composeService,
-      projectService: projectService,
-      registryService: registryService,
+      projectService: _projectService,
+      registryService: _registryService,
     );
     unawaited(_readiness.refresh());
     _menuBar = MenuBarController(
@@ -203,6 +205,7 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
                 mounts: _mountService,
                 networks: _networkService,
                 compose: _composeService,
+                projects: _projectService,
                 initialIndex: kSidebarItems.indexOf(startPage),
               );
             },

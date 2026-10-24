@@ -15,6 +15,7 @@ import '../features/containers/containers_page.dart';
 import '../features/images/images_page.dart';
 import '../features/mounts/mounts_page.dart';
 import '../features/networks/networks_page.dart';
+import '../features/projects/projects_page.dart';
 import '../features/settings/mcp_settings_controller.dart';
 import '../features/settings/settings_page.dart';
 import '../features/system/readiness_controller.dart';
@@ -24,6 +25,7 @@ import '../../services/container_service.dart';
 import '../../services/image_service.dart';
 import '../../services/mount_service.dart';
 import '../../services/network_service.dart';
+import '../../services/project_service.dart';
 import '../../services/system_service.dart';
 import 'menu_bar_controller.dart';
 import 'placeholders.dart';
@@ -52,6 +54,7 @@ class AppShell extends StatefulWidget {
     required this.mounts,
     required this.networks,
     required this.compose,
+    required this.projects,
     this.initialIndex = 0,
   });
 
@@ -71,6 +74,9 @@ class AppShell extends StatefulWidget {
   final MountService mounts;
   final NetworkService networks;
   final ComposeService compose;
+
+  /// T8 项目工作流通路（项目页：镜像列表/构建/回收/registry）。
+  final ProjectService projects;
 
   /// 初始选中项（跳过引导进入设置时使用 kSidebarItems.indexOf('设置')）。
   final int initialIndex;
@@ -196,6 +202,15 @@ class _AppShellState extends State<AppShell> {
       case '网络':
         return NetworksPage(
           service: widget.networks,
+          controller: widget.readiness,
+          onOpenRuntime: () =>
+              setState(() => _selected = kSidebarItems.indexOf('运行时')),
+        );
+      case '项目':
+        return ProjectsPage(
+          service: widget.projects,
+          containerService: widget.containers,
+          imageService: widget.images,
           controller: widget.readiness,
           onOpenRuntime: () =>
               setState(() => _selected = kSidebarItems.indexOf('运行时')),

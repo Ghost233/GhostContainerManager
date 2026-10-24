@@ -10,6 +10,9 @@ final class CliChildProcess {
   let stdout: FileHandle
   let stderr: FileHandle
 
+  private let stateLock = NSLock()
+  private var reaped = false
+
   private init(processIdentifier: pid_t, stdout: FileHandle, stderr: FileHandle) {
     self.processIdentifier = processIdentifier
     self.stdout = stdout
@@ -100,6 +103,9 @@ final class CliChildProcess {
     repeat {
       result = waitpid(processIdentifier, &status, 0)
     } while result < 0 && errno == EINTR
+    stateLock.lock()
+    reaped = true
+    stateLock.unlock()
     guard result == processIdentifier else { return -1 }
     if (status & 0x7f) == 0 {
       return (status >> 8) & 0xff
@@ -109,8 +115,21 @@ final class CliChildProcess {
 
   /// Sends SIGTERM to the entire process group, not just the immediate child.
   func terminate() {
+    signalGroup(SIGTERM)
+  }
+
+  /// Escalates a timed-out run after its SIGTERM grace period expires.
+  func kill() {
+    signalGroup(SIGKILL)
+  }
+
+  private func signalGroup(_ signal: Int32) {
     guard processIdentifier > 0 else { return }
-    _ = kill(-processIdentifier, SIGTERM)
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    // Never signal a process group after waitpid has reaped its leader.
+    guard !reaped else { return }
+    _ = Darwin.kill(-processIdentifier, signal)
   }
 }
 
@@ -145,12 +164,17 @@ struct CliLineBuffer {
 /// Native side of one `cli.process` EventChannel. State is confined to the
 /// main queue; output is buffered until Dart attaches its event sink.
 final class CliStreamSession {
+  private static let maximumPendingLines = 1000
+
   let handle: String
   var onFinish: ((CliStreamSession) -> Void)?
+  private(set) var hasAttachedSink = false
 
   private var child: CliChildProcess?
   private var sink: FlutterEventSink?
   private var pendingEvents: [[String: Any]] = []
+  private var pendingOutputLineCount = 0
+  private var droppedOutputLineCount = 0
   private var openSources: Set<String> = []
   private var stdoutBuffer = CliLineBuffer()
   private var stderrBuffer = CliLineBuffer()
@@ -179,12 +203,24 @@ final class CliStreamSession {
     }
   }
 
-  /// Main queue. Replays any output produced before the Dart subscription.
+  /// Main queue. Replays at most the latest 1000 buffered output lines. If
+  /// older lines were dropped, an explicit stderr marker precedes the replay.
   func attachSink(_ sink: @escaping FlutterEventSink) {
     guard !cancelled else { return }
+    hasAttachedSink = true
     self.sink = sink
+    if droppedOutputLineCount > 0 {
+      sink([
+        "event": "stderr",
+        "line": "[container_bridge] dropped \(droppedOutputLineCount) older "
+          + "output line(s) before subscription; showing the latest "
+          + "\(Self.maximumPendingLines) buffered lines.",
+      ])
+    }
     let events = pendingEvents
     pendingEvents.removeAll()
+    pendingOutputLineCount = 0
+    droppedOutputLineCount = 0
     for event in events { sink(event) }
     if finished {
       sink(FlutterEndOfEventStream)
@@ -256,19 +292,33 @@ final class CliStreamSession {
     }
     finished = true
     emit(["event": "exit", "exitCode": pendingExitCode ?? -1])
-    if let sink {
-      sink(FlutterEndOfEventStream)
-      onFinish?(self)
-    }
+    if let sink { sink(FlutterEndOfEventStream) }
+    // Completion must also release sessions whose Dart side never subscribed.
+    onFinish?(self)
   }
 
   private func emit(_ event: [String: Any]) {
     guard !cancelled else { return }
     if let sink {
       sink(event)
-    } else {
-      pendingEvents.append(event)
+      return
     }
+    let kind = event["event"] as? String
+    let isOutputLine = kind == "stdout" || kind == "stderr"
+    if isOutputLine, pendingOutputLineCount >= Self.maximumPendingLines {
+      guard
+        let oldestOutput = pendingEvents.firstIndex(where: {
+          let pendingKind = $0["event"] as? String
+          return pendingKind == "stdout" || pendingKind == "stderr"
+        })
+      else { return }
+      pendingEvents.remove(at: oldestOutput)
+      droppedOutputLineCount += 1
+    } else if isOutputLine {
+      pendingOutputLineCount += 1
+    }
+    // The terminal exit event is never dropped, even at the output-line cap.
+    pendingEvents.append(event)
   }
 
   private func detachReaders() {

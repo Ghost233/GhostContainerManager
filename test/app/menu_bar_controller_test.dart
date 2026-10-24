@@ -20,22 +20,32 @@ class _FakeMenuBarChannel implements MenuBarChannel {
   final List<Map<String, Object?>> updates = <Map<String, Object?>>[];
   final List<bool> visibilityWrites = <bool>[];
   final List<String> startPageWrites = <String>[];
+  MenuBarPreferences preferences = const MenuBarPreferences();
+  Object? visibilityError;
+  Object? startPageError;
+  var loadPreferencesCalls = 0;
 
   @override
   Stream<MenuBarAction> get actions => actionController.stream;
 
   @override
-  Future<MenuBarPreferences> loadPreferences() async =>
-      const MenuBarPreferences();
+  Future<MenuBarPreferences> loadPreferences() async {
+    loadPreferencesCalls++;
+    return preferences;
+  }
 
   @override
   Future<void> setDefaultStartPage(String page) async {
     startPageWrites.add(page);
+    final error = startPageError;
+    if (error != null) throw error;
   }
 
   @override
   Future<void> setVisible(bool visible) async {
     visibilityWrites.add(visible);
+    final error = visibilityError;
+    if (error != null) throw error;
   }
 
   @override
@@ -56,6 +66,53 @@ class _FakeMenuBarChannel implements MenuBarChannel {
 }
 
 void main() {
+  test('初始化幂等：偏好与容器快照只加载一次', () async {
+    final bridge = FakeContainerBridge();
+    final service = ContainerService(bridge: bridge);
+    final channel = _FakeMenuBarChannel()
+      ..preferences = const MenuBarPreferences(
+        visible: false,
+        defaultStartPage: '设置',
+      );
+    final controller = MenuBarController(containers: service, channel: channel);
+    addTearDown(service.dispose);
+    addTearDown(controller.dispose);
+
+    await Future.wait([controller.initialize(), controller.initialize()]);
+    await controller.initialize();
+
+    expect(channel.loadPreferencesCalls, 1);
+    expect(bridge.calls.where((call) => call == 'containerList'), hasLength(1));
+    expect(controller.visible, isFalse);
+    expect(controller.defaultStartPage, '设置');
+  });
+
+  test('偏好原生写失败：乐观更新后回滚并保留错误', () async {
+    final bridge = FakeContainerBridge();
+    final service = ContainerService(bridge: bridge);
+    final channel = _FakeMenuBarChannel()
+      ..visibilityError = StateError('visibility failed')
+      ..startPageError = StateError('start page failed');
+    final controller = MenuBarController(containers: service, channel: channel);
+    addTearDown(service.dispose);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    final visibility = controller.setVisible(false);
+    expect(controller.visible, isFalse);
+    await visibility;
+    expect(controller.visible, isTrue);
+    expect(controller.lastError, contains('visibility failed'));
+
+    final startPage = controller.setDefaultStartPage('设置');
+    expect(controller.defaultStartPage, '设置');
+    await startPage;
+    expect(controller.defaultStartPage, '容器');
+    expect(controller.lastError, contains('start page failed'));
+    expect(channel.visibilityWrites, [false]);
+    expect(channel.startPageWrites, ['设置']);
+  });
+
   test('菜单状态：空态、最多 5 项与快捷停止均经过 Service', () async {
     final bridge = FakeContainerBridge();
     final service = ContainerService(bridge: bridge);

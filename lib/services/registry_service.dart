@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'app_constants.dart';
 import 'container_models.dart';
 import 'container_service.dart';
 import 'errors.dart';
@@ -343,7 +344,7 @@ class RegistryService {
       throw StateError('Cannot determine the application support directory');
     }
     return '$home/Library/Application Support/'
-        'com.ghost233.ghostcontainermanager/registry';
+        '$applicationBundleId/registry';
   }
 
   static Future<bool> _httpProbe(int port) async {

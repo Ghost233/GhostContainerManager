@@ -432,6 +432,28 @@ void main() {
       },
     );
 
+    test('generic cli stream failure terminates the native process', () async {
+      final channel = _ScriptedChannel();
+      final events = _ScriptedEvents(const Stream.empty());
+      final bridge = MethodChannelContainerBridge(
+        channel: channel,
+        events: events,
+      );
+      final process = bridge.cliStart(['compose', 'up']);
+      final handle = channel.cliStartCalls.single['handle']! as String;
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      final failedExit = expectLater(
+        process.exitCode,
+        throwsA(isA<BridgeCallException>()),
+      );
+
+      events.cliController(handle).addError(StateError('stream broke'));
+
+      await failedExit;
+      expect(channel.cliTerminateCalls, [handle]);
+    });
+
     test('generic cliStart surfaces launch failures on exitCode', () async {
       final channel = _ScriptedChannel()
         ..cliStartError = PlatformException(

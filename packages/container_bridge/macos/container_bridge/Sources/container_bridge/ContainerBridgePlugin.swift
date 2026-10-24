@@ -140,7 +140,21 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
       let session = CliStreamSession(handle: handle)
       cliSessions[handle] = session
       session.onFinish = { [weak self] finished in
-        self?.cliSessions.removeValue(forKey: finished.handle)
+        guard let self else { return }
+        if finished.hasAttachedSink {
+          self.cliSessions.removeValue(forKey: finished.handle)
+          return
+        }
+        // A fast-exiting process can finish before Dart subscribes. Keep its
+        // bounded replay briefly, then reclaim a session nobody attaches to.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+          [weak self, weak finished] in
+          guard let self, let finished, !finished.hasAttachedSink,
+            self.cliSessions[finished.handle] === finished
+          else { return }
+          self.cliSessions.removeValue(forKey: finished.handle)
+          finished.cancel()
+        }
       }
       do {
         try session.start(binary: binary, arguments: arguments)
@@ -151,7 +165,7 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
         result(
           FlutterError(
             code: "launchError",
-            message: error.localizedDescription,
+            message: "failed to launch \(binary): \(error.localizedDescription)",
             details: nil
           )
         )

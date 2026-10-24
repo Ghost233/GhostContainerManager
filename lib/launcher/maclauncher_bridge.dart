@@ -30,21 +30,50 @@ class MacLauncherBridge {
   static const projectId = 'com.ghost233.ghostcontainermanager';
   static const projectName = 'GhostContainerManager';
   static const managedLabelPrefix = 'com.ghost233.';
+  // A fixed window, not an idle timeout: continuous producers cannot starve it.
+  static const _logBatchWindow = Duration(milliseconds: 250);
 
   final ContainerService _containers;
   final MacLauncherSdkConnector _sdkConnector;
   final _activeLogReads = <_LogRead>{};
 
   MacLauncherSdk? _sdk;
+  Future<void>? _connectFuture;
+  StreamSubscription<List<ContainerSnapshotInfo>>? _snapshotSubscription;
+  List<ContainerSnapshotInfo>? _pendingSnapshots;
+  var _registeredServiceIds = <String>{};
+  var _synchronizing = false;
   var _disposed = false;
 
-  /// Announces the current managed containers to MacLauncher.
-  Future<void> connect() async {
-    if (_disposed) throw StateError('MacLauncherBridge is disposed');
-    if (_sdk != null) return;
+  /// Announces current containers. Concurrent callers share one connection.
+  Future<void> connect() {
+    if (_disposed) {
+      return Future<void>.error(StateError('MacLauncherBridge is disposed'));
+    }
+    return _connectFuture ??= _connectOnce();
+  }
 
-    final snapshots = await _containers.listContainers(const ContainerQuery());
-    final services = <String, ServiceCallbacks>{
+  Future<void> _connectOnce() async {
+    try {
+      if (_sdk != null) return;
+
+      final snapshots = await _containers.listContainers(
+        const ContainerQuery(),
+      );
+      if (_disposed) throw StateError('MacLauncherBridge is disposed');
+      await _replaceRegistrations(snapshots);
+      if (_disposed) throw StateError('MacLauncherBridge is disposed');
+      _snapshotSubscription ??= _containers.snapshots.listen(_queueSync);
+    } on Object {
+      _connectFuture = null;
+      rethrow;
+    }
+  }
+
+  Map<String, ServiceCallbacks> _servicesFor(
+    List<ContainerSnapshotInfo> snapshots,
+  ) {
+    return <String, ServiceCallbacks>{
       for (final container in snapshots)
         if (container.labels.keys.any(
           (key) => key.startsWith(managedLabelPrefix),
@@ -57,6 +86,46 @@ class MacLauncherBridge {
             onLogs: (query) => _logsFor(container.id, query),
           ),
     };
+  }
+
+  void _queueSync(List<ContainerSnapshotInfo> snapshots) {
+    _pendingSnapshots = snapshots;
+    if (_synchronizing || _disposed) return;
+    _synchronizing = true;
+    unawaited(_drainSync());
+  }
+
+  Future<void> _drainSync() async {
+    try {
+      while (!_disposed) {
+        final snapshots = _pendingSnapshots;
+        if (snapshots == null) break;
+        _pendingSnapshots = null;
+        try {
+          await _replaceRegistrations(snapshots);
+        } on Object {
+          // Keep the last healthy registration. A later snapshot retries.
+        }
+      }
+    } finally {
+      _synchronizing = false;
+      if (_pendingSnapshots != null && !_disposed) {
+        _queueSync(_pendingSnapshots!);
+      }
+    }
+  }
+
+  Future<void> _replaceRegistrations(
+    List<ContainerSnapshotInfo> snapshots,
+  ) async {
+    final services = _servicesFor(snapshots);
+    final serviceIds = services.keys.toSet();
+    if (_sdk != null && _sameIds(serviceIds, _registeredServiceIds)) return;
+
+    final previous = _sdk;
+    _sdk = null;
+    await previous?.dispose();
+    if (_disposed) return;
 
     _sdk = _sdkConnector(
       projectId: projectId,
@@ -64,6 +133,11 @@ class MacLauncherBridge {
       entry: SdkEntry.currentAppBundle() ?? SdkEntry.currentExecutable(),
       services: services,
     );
+    _registeredServiceIds = serviceIds;
+  }
+
+  bool _sameIds(Set<String> left, Set<String> right) {
+    return left.length == right.length && left.containsAll(right);
   }
 
   Future<ServiceStatus> _statusFor(String id) async {
@@ -108,6 +182,8 @@ class MacLauncherBridge {
     final read = _LogRead();
     var chunkSequence = 0;
     var truncated = false;
+    var reachedEnd = false;
+    Timer? window;
 
     void addLine(String text, String source) {
       if (text.endsWith('\r')) {
@@ -117,12 +193,7 @@ class MacLauncherBridge {
         entries.removeFirst();
         truncated = true;
       }
-      entries.add(
-        LogEntry(
-          text: text,
-          stream: source == 'boot' ? LogStream.app : LogStream.unknown,
-        ),
-      );
+      entries.add(LogEntry(text: text, stream: _logStreamFor(source)));
     }
 
     try {
@@ -133,6 +204,7 @@ class MacLauncherBridge {
               if (read.done.isCompleted) return;
               try {
                 if (event.kind == 'eof') {
+                  reachedEnd = true;
                   read.done.complete();
                   return;
                 }
@@ -164,9 +236,15 @@ class MacLauncherBridge {
               }
             },
             onDone: () {
-              if (!read.done.isCompleted) read.done.complete();
+              if (!read.done.isCompleted) {
+                reachedEnd = true;
+                read.done.complete();
+              }
             },
           );
+      window = Timer(_logBatchWindow, () {
+        if (!read.done.isCompleted) read.done.complete();
+      });
       _activeLogReads.add(read);
       await read.done.future;
       if (_disposed) throw StateError('MacLauncherBridge is disposed');
@@ -180,14 +258,22 @@ class MacLauncherBridge {
 
       return LogBatch(
         entries: entries.toList(),
-        truncated: truncated,
+        // A time-window read cannot know whether more history exists.
+        truncated: truncated ? true : (reachedEnd ? false : null),
         observedAt: DateTime.now().toUtc(),
       );
     } finally {
+      window?.cancel();
       if (_activeLogReads.remove(read)) {
         await read.subscription.cancel();
       }
     }
+  }
+
+  LogStream _logStreamFor(String source) {
+    // Apple container stdio cannot reliably split stdout from stderr.
+    // Runtime/VM boot diagnostics use the SDK's non-stdio app channel.
+    return source == 'boot' ? LogStream.app : LogStream.unknown;
   }
 
   /// Releases launcher resources; container writes are left untouched.
@@ -195,10 +281,16 @@ class MacLauncherBridge {
     _disposed = true;
     final sdk = _sdk;
     _sdk = null;
+    final subscription = _snapshotSubscription;
+    _snapshotSubscription = null;
+    _pendingSnapshots = null;
     final reads = _activeLogReads.toList();
     _activeLogReads.clear();
     try {
-      await Future.wait(reads.map((read) => read.cancel()));
+      await Future.wait([
+        ...reads.map((read) => read.cancel()),
+        if (subscription != null) subscription.cancel(),
+      ]);
     } finally {
       await sdk?.dispose();
     }
