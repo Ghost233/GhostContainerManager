@@ -434,6 +434,40 @@ void main() {
       );
     });
 
+    test('dispose completes in-flight writes instead of hanging', () async {
+      bridge.containers = [snapshotPayload(id: 'web')];
+      bridge.stopGate = Completer<void>();
+      final pending = service.stop('web');
+      expect(bridge.stopCalls, 1);
+      final expectation = expectLater(
+        pending.timeout(const Duration(milliseconds: 100)),
+        throwsA(isA<GcmException>()),
+      );
+
+      await service.dispose();
+
+      await expectation;
+      bridge.stopGate!.complete();
+    });
+
+    test(
+      'different delete force values never share an operation future',
+      () async {
+        bridge.containers = [snapshotPayload(id: 'web')];
+        bridge.deleteGate = Completer<void>();
+
+        final forced = service.delete('web', force: true);
+        final unforced = service.delete('web');
+
+        expect(identical(forced, unforced), isFalse);
+        await Future<void>.delayed(Duration.zero);
+        expect(bridge.deleteCalls, 1);
+        bridge.deleteGate!.complete();
+        await Future.wait([forced, unforced]);
+        expect(bridge.deleteCalls, 1);
+      },
+    );
+
     test('stop and kill return their native result contracts', () async {
       bridge.containers = [snapshotPayload(id: 'web')];
       bridge.stoppedGracefully = false;

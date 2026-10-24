@@ -117,7 +117,10 @@ class _ContainersPageState extends State<ContainersPage> {
   }
 
   Future<void> _createContainer() async {
-    final draft = await showContainerCreateDialog(context);
+    final draft = await showContainerCreateDialog(
+      context,
+      loadLocalImages: widget.service.listLocalImages,
+    );
     if (draft == null) return;
     try {
       await widget.service.create(
@@ -127,6 +130,8 @@ class _ContainersPageState extends State<ContainersPage> {
         env: draft.env,
         ports: draft.ports,
         network: draft.network,
+        mounts: draft.mounts,
+        labels: draft.labels,
         start: draft.start,
       );
     } catch (error) {

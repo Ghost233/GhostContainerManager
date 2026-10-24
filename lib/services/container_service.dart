@@ -105,6 +105,7 @@ class ContainerService {
 
   Timer? _pollTimer;
   bool _refreshInFlight = false;
+  bool _disposed = false;
   List<ContainerSnapshotInfo> _lastSnapshot = const [];
   final Map<String, ContainerSnapshotInfo> _pendingCreates =
       <String, ContainerSnapshotInfo>{};
@@ -453,6 +454,7 @@ class ContainerService {
               'ports': const <Object?>[],
             },
           );
+          if (!_snapshots.isClosed) _snapshots.add(currentContainers);
         }
         try {
           await _bridge.containerCreate(
@@ -626,6 +628,8 @@ class ContainerService {
     Object? parameters,
     String? image,
   }) {
+    if (_disposed) return Future<T>.error(_disposedError(id));
+
     final queue = _operations.putIfAbsent(
       id,
       () => <_PendingContainerOperation<dynamic>>[],
@@ -695,21 +699,29 @@ class ContainerService {
   ) async {
     _setActivity(id, activity);
     try {
-      pending.completer.complete(await action());
+      if (_disposed) throw _disposedError(id);
+      final result = await action();
+      if (!pending.completer.isCompleted) pending.completer.complete(result);
     } on GcmException catch (error, stackTrace) {
-      pending.completer.completeError(error, stackTrace);
+      if (!pending.completer.isCompleted) {
+        pending.completer.completeError(error, stackTrace);
+      }
     } on BridgeCallException catch (error, stackTrace) {
-      pending.completer.completeError(
-        mapContainerFailure(
-          error,
-          operation: pending.kind.name,
-          id: id,
-          image: pending.image,
-        ),
-        stackTrace,
-      );
+      if (!pending.completer.isCompleted) {
+        pending.completer.completeError(
+          mapContainerFailure(
+            error,
+            operation: pending.kind.name,
+            id: id,
+            image: pending.image,
+          ),
+          stackTrace,
+        );
+      }
     } catch (error, stackTrace) {
-      pending.completer.completeError(error, stackTrace);
+      if (!pending.completer.isCompleted) {
+        pending.completer.completeError(error, stackTrace);
+      }
     } finally {
       final queue = _operations[id];
       queue?.remove(pending);
@@ -905,8 +917,23 @@ class ContainerService {
   Stream<ContainerLogEvent> logs(String id) =>
       decodeContainerLogs(_bridge.containerLogs(id));
 
+  static GcmException _disposedError(String id) => GcmException(
+    GcmErrorCode.internal,
+    'Container service was disposed before the operation for "$id" completed.',
+    hint: 'Retry with a live ContainerService.',
+  );
+
   Future<void> dispose() async {
+    if (_disposed) return;
     stopPolling();
+    _disposed = true;
+    for (final entry in _operations.entries) {
+      for (final pending in entry.value) {
+        if (!pending.completer.isCompleted) {
+          pending.completer.completeError(_disposedError(entry.key));
+        }
+      }
+    }
     await _snapshots.close();
     await _activityChanges.close();
   }

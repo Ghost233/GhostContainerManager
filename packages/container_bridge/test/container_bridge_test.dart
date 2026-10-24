@@ -37,6 +37,10 @@ void main() {
       env: ['MODE=prod'],
       ports: ['8080:80/tcp'],
       network: 'default',
+      mounts: [
+        {'source': '/tmp/data', 'target': '/data', 'readonly': true},
+      ],
+      labels: {'role': 'web'},
     );
     await bridge.containerStart('web');
     await bridge.containerStop('web', timeoutSeconds: 7);
@@ -57,6 +61,10 @@ void main() {
       'env': ['MODE=prod'],
       'ports': ['8080:80/tcp'],
       'network': 'default',
+      'mounts': [
+        {'source': '/tmp/data', 'target': '/data', 'readonly': true},
+      ],
+      'labels': {'role': 'web'},
     });
     expect(calls[1].arguments, {'id': 'web'});
     expect(calls[2].arguments, {'id': 'web', 'timeoutSeconds': 7});

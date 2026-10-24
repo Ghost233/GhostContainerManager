@@ -141,6 +141,8 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
       let command = args?["command"] as? [String] ?? []
       let env = args?["env"] as? [String] ?? []
       let ports = args?["ports"] as? [String] ?? []
+      let mounts = args?["mounts"] as? [[String: Any]] ?? []
+      let labels = args?["labels"] as? [String: String] ?? [:]
       containerWrite(result: result) {
         try await ContainerOps.create(
           id: id,
@@ -148,7 +150,9 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
           command: command,
           env: env,
           ports: ports,
-          network: args?["network"] as? String
+          network: args?["network"] as? String,
+          mounts: mounts,
+          labels: labels
         )
       }
     case "container.start":
@@ -175,6 +179,16 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
         return
       }
       let timeoutSeconds = args?["timeoutSeconds"] as? Int ?? 5
+      guard timeoutSeconds >= 0 && timeoutSeconds <= Int(Int32.max) else {
+        result(
+          FlutterError(
+            code: "invalidArgument",
+            message: "container.stop timeoutSeconds is outside the Int32 runtime range.",
+            details: nil
+          )
+        )
+        return
+      }
       containerWrite(result: result) {
         try await ContainerOps.stop(id: id, timeoutSeconds: Int32(timeoutSeconds))
       }

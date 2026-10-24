@@ -402,10 +402,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     callback: (args, extra) => guardToolCall(() async {
       final id = args['id'] as String;
       final timeout = args['timeoutSeconds'] as int? ?? 5;
-      final stoppedGracefully = await service.stop(
-        id,
-        timeoutSeconds: timeout,
-      );
+      final stoppedGracefully = await service.stop(id, timeoutSeconds: timeout);
       return (
         data: <String, Object?>{
           'id': id,
@@ -482,9 +479,9 @@ void registerContainerTools(McpServer server, ContainerService service) {
     callback: (args, extra) => guardToolCall(() async {
       final id = args['id'] as String;
       final signal = args['signal'] as String? ?? 'KILL';
-      await service.kill(id, signal: signal);
+      final status = await service.kill(id, signal: signal);
       return (
-        data: <String, Object?>{'id': id, 'signal': signal},
+        data: <String, Object?>{'id': id, 'signal': signal, 'status': status},
         summary: '已向容器 $id 发送 $signal 信号',
       );
     }),

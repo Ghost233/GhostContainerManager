@@ -61,7 +61,9 @@ enum ContainerOps {
     command: [String],
     env: [String],
     ports: [String],
-    network: String?
+    network: String?,
+    mounts: [[String: Any]],
+    labels: [String: String]
   ) async throws -> [String: Any] {
     let systemConfig = try await ClientHealthCheck.loadContainerSystemConfig()
     let image = try await ClientImage.get(
@@ -82,6 +84,30 @@ enum ContainerOps {
       )
     )
     configuration.publishedPorts = try Parser.publishPorts(ports)
+    configuration.mounts = try mounts.map { raw in
+      guard let source = raw["source"] as? String,
+        let target = raw["target"] as? String,
+        !source.isEmpty,
+        source.hasPrefix("/"),
+        target.hasPrefix("/")
+      else {
+        throw NSError(
+          domain: "container_bridge",
+          code: 5,
+          userInfo: [
+            NSLocalizedDescriptionKey:
+              "invalid mount: source and target must be absolute paths"
+          ]
+        )
+      }
+      let readonly = raw["readonly"] as? Bool ?? false
+      return Filesystem.virtiofs(
+        source: source,
+        destination: target,
+        options: readonly ? ["ro"] : []
+      )
+    }
+    configuration.labels = labels
 
     let networkClient = NetworkClient()
     let attachment: NetworkResource
@@ -129,13 +155,21 @@ enum ContainerOps {
   }
 
   /// Apple container enforces this graceful stop and then sends SIGKILL.
-  /// A Dart-side timer would race the runtime and is not used.
+  /// The runtime does not report escalation, so `stoppedGracefully` is the
+  /// conservative timing derivation agreed for the v1 wire contract.
   static func stop(id: String, timeoutSeconds: Int32) async throws -> [String: Any] {
-    try await ContainerClient().stop(
+    let client = ContainerClient()
+    let snapshot = try await client.get(id: id)
+    let wasStopped = snapshot.status == .stopped
+    let started = ContinuousClock.now
+    try await client.stop(
       id: id,
       opts: ContainerStopOptions(timeoutInSeconds: timeoutSeconds, signal: nil)
     )
-    return ["id": id]
+    let elapsed = started.duration(to: ContinuousClock.now)
+    let stoppedGracefully =
+      wasStopped || (timeoutSeconds > 0 && elapsed < .seconds(Int64(timeoutSeconds)))
+    return ["id": id, "stoppedGracefully": stoppedGracefully]
   }
 
   /// Force deletes running containers, but never bypasses the stopping state.
@@ -165,8 +199,10 @@ enum ContainerOps {
   }
 
   static func kill(id: String, signal: String) async throws -> [String: Any] {
-    try await ContainerClient().kill(id: id, signal: signal)
-    return ["id": id, "signal": signal]
+    let client = ContainerClient()
+    try await client.kill(id: id, signal: signal)
+    let snapshot = try await client.get(id: id)
+    return ["id": id, "signal": signal, "status": snapshot.status.rawValue]
   }
 }
 

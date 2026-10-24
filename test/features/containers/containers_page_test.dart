@@ -55,6 +55,22 @@ Map<String, Object?> snapshotPayload({
   };
 }
 
+Map<String, Object?> imagePayload(String reference) => <String, Object?>{
+  'reference': reference,
+  'digest':
+      'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+  'mediaType': 'application/vnd.oci.image.index.v1+json',
+  'sizeBytes': 1024,
+  'createdAt': '2026-10-20T08:00:00Z',
+};
+
+Future<void> _selectLocalImage(WidgetTester tester, String reference) async {
+  await tester.tap(find.byKey(const Key('create-image-field')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(reference).last);
+  await tester.pumpAndSettle();
+}
+
 Future<(FakeContainerBridge, ContainerService)> _pumpPage(
   WidgetTester tester,
   FakeContainerBridge fake,
@@ -83,6 +99,10 @@ Future<(FakeContainerBridge, ContainerService)> _pumpPage(
 
 FakeContainerBridge _twoContainers() {
   return FakeContainerBridge()
+    ..images = <Map<String, Object?>>[
+      imagePayload('docker.io/library/nginx:latest'),
+      imagePayload('docker.io/library/redis:7'),
+    ]
     ..containers = [
       snapshotPayload(
         id: 'web-frontend',
@@ -245,7 +265,11 @@ void main() {
   });
 
   testWidgets('空态主操作打开创建表单并创建容器', (tester) async {
-    final (fake, _) = await _pumpPage(tester, FakeContainerBridge());
+    final (fake, _) = await _pumpPage(
+      tester,
+      FakeContainerBridge()
+        ..images = [imagePayload('docker.io/library/nginx:latest')],
+    );
 
     expect(find.text('暂无容器'), findsOneWidget);
     await tester.tap(find.byKey(const Key('empty-create-container-button')));
@@ -254,23 +278,111 @@ void main() {
 
     await tester.tap(find.widgetWithText(FilledButton, '创建'));
     await tester.pumpAndSettle();
-    expect(find.text('请输入本地镜像引用'), findsOneWidget);
+    expect(find.text('请选择本地镜像'), findsOneWidget);
 
     await tester.enterText(
       find.byKey(const Key('create-name-field')),
       'new-api',
     );
-    await tester.enterText(
-      find.byKey(const Key('create-image-field')),
-      'nginx:latest',
-    );
+    await _selectLocalImage(tester, 'docker.io/library/nginx:latest');
     await tester.tap(find.widgetWithText(FilledButton, '创建'));
     await tester.pumpAndSettle();
 
     expect(fake.createRequests.single['id'], 'new-api');
-    expect(fake.createRequests.single['image'], 'nginx:latest');
+    expect(
+      fake.createRequests.single['image'],
+      'docker.io/library/nginx:latest',
+    );
     expect(find.text('new-api'), findsOneWidget);
     expect(find.text('已停止'), findsOneWidget);
+  });
+
+  testWidgets('创建表单支持挂载、标签、逐行环境与带引号命令', (tester) async {
+    final (fake, _) = await _pumpPage(tester, _twoContainers());
+
+    await tester.tap(find.byKey(const Key('create-container-button')));
+    await tester.pumpAndSettle();
+    await _selectLocalImage(tester, 'docker.io/library/nginx:latest');
+    await tester.enterText(
+      find.byKey(const Key('create-name-field')),
+      'extended-api',
+    );
+    await tester.enterText(
+      find.byKey(const Key('create-ports-field')),
+      '8080:80,0:81',
+    );
+    await tester.pump();
+    expect(find.textContaining('第 2 个端口无效'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('create-ports-field')),
+      '8080:80,8443:443/udp',
+    );
+    await tester.ensureVisible(find.text('高级'));
+    await tester.tap(find.text('高级'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('create-command-field')),
+      '"/bin/sh" -c "echo hello world" \'tail -f\'',
+    );
+    await tester.enterText(
+      find.byKey(const Key('create-env-field')),
+      'A=1,B=2\nC=3',
+    );
+    await tester.ensureVisible(find.byKey(const Key('create-mounts-field')));
+    await tester.enterText(
+      find.byKey(const Key('create-mounts-field')),
+      '/tmp/data:/data:ro\n/tmp/logs:/logs',
+    );
+    await tester.ensureVisible(find.byKey(const Key('create-labels-field')));
+    await tester.enterText(
+      find.byKey(const Key('create-labels-field')),
+      'com.example.role=web\ncom.example.tier=frontend',
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, '创建'));
+    await tester.pumpAndSettle();
+
+    final request = fake.createRequests.single;
+    expect(request['image'], 'docker.io/library/nginx:latest');
+    expect(request['ports'], ['8080:80', '8443:443/udp']);
+    expect(request['env'], ['A=1,B=2', 'C=3']);
+    expect(request['command'], [
+      '/bin/sh',
+      '-c',
+      'echo hello world',
+      'tail -f',
+    ]);
+    expect(request['mounts'], [
+      {'source': '/tmp/data', 'target': '/data', 'readonly': true},
+      {'source': '/tmp/logs', 'target': '/logs', 'readonly': false},
+    ]);
+    expect(request['labels'], {
+      'com.example.role': 'web',
+      'com.example.tier': 'frontend',
+    });
+  });
+
+  testWidgets('创建中原生调用未返回时也立即显示乐观容器行', (tester) async {
+    final fake = _twoContainers()..createGate = Completer<void>();
+    await _pumpPage(tester, fake);
+
+    await tester.tap(find.byKey(const Key('create-container-button')));
+    await tester.pumpAndSettle();
+    await _selectLocalImage(tester, 'docker.io/library/nginx:latest');
+    await tester.enterText(
+      find.byKey(const Key('create-name-field')),
+      'pending-api',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, '创建'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('pending-api'), findsOneWidget);
+    expect(find.text('创建中'), findsOneWidget);
+
+    fake.createGate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('创建中'), findsNothing);
+    expect(find.text('pending-api'), findsOneWidget);
   });
 
   testWidgets('启动和重启均有确认弹窗并经过 Service', (tester) async {
@@ -281,6 +393,12 @@ void main() {
     await tester.tap(find.text('启动'));
     await tester.pumpAndSettle();
     expect(find.text('启动容器'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is SizedBox && widget.width == 480,
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.widgetWithText(FilledButton, '启动'));
     await tester.pumpAndSettle();
     expect(fake.startCalls, 1);

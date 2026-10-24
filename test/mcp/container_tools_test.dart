@@ -404,21 +404,24 @@ void main() {
     expect(bridge.deleteCalls, 1);
   });
 
-  test('create start failure preserves id and created details over MCP', () async {
-    bridge.writeFailures['start:api'] = 'bootstrap failed';
-    await initialize();
+  test(
+    'create start failure preserves id and created details over MCP',
+    () async {
+      bridge.writeFailures['start:api'] = 'bootstrap failed';
+      await initialize();
 
-    final result = await callTool('container_create', <String, dynamic>{
-      'name': 'api',
-      'image': 'nginx:latest',
-      'start': true,
-    });
+      final result = await callTool('container_create', <String, dynamic>{
+        'name': 'api',
+        'image': 'nginx:latest',
+        'start': true,
+      });
 
-    expect(result['isError'], isTrue);
-    final error =
-        (result['structuredContent'] as Map<String, dynamic>)['error'] as Map;
-    expect(error['details'], <String, Object?>{'id': 'api', 'created': true});
-  });
+      expect(result['isError'], isTrue);
+      final error =
+          (result['structuredContent'] as Map<String, dynamic>)['error'] as Map;
+      expect(error['details'], <String, Object?>{'id': 'api', 'created': true});
+    },
+  );
 
   test('create missing local image returns actionable NOT_FOUND', () async {
     bridge.writeFailures['create:api'] =

@@ -12,6 +12,7 @@ class _ScriptedChannel extends ContainerBridgeChannel {
   final Map<String, Object> getResponses = {};
   final Map<String, Object> statsResponses = {};
   final Map<String, Map<String, Object?>> writeCalls = {};
+  final Map<String, Map<String, Object?>> writeResponses = {};
   Object? writeError;
   Map<String, Object?> execResponse = {
     'exitCode': 0,
@@ -28,7 +29,7 @@ class _ScriptedChannel extends ContainerBridgeChannel {
     final error = writeError;
     if (error != null) throw error;
     writeCalls[method] = arguments;
-    return const {};
+    return writeResponses[method] ?? const {};
   }
 
   @override
@@ -39,6 +40,8 @@ class _ScriptedChannel extends ContainerBridgeChannel {
     List<String> env = const [],
     List<String> ports = const [],
     String? network,
+    List<Map<String, Object?>> mounts = const [],
+    Map<String, String> labels = const {},
   }) async {
     return _recordWrite('create', {
       'id': id,
@@ -47,6 +50,8 @@ class _ScriptedChannel extends ContainerBridgeChannel {
       'env': env,
       'ports': ports,
       'network': network,
+      'mounts': mounts,
+      'labels': labels,
     });
   }
 
@@ -180,7 +185,9 @@ void main() {
     });
 
     test('write operations forward all lifecycle arguments', () async {
-      final channel = _ScriptedChannel();
+      final channel = _ScriptedChannel()
+        ..writeResponses['stop'] = {'stoppedGracefully': false}
+        ..writeResponses['kill'] = {'status': 'running'};
       final bridge = MethodChannelContainerBridge(channel: channel);
 
       await bridge.containerCreate(
@@ -190,11 +197,21 @@ void main() {
         env: ['MODE=prod'],
         ports: ['8080:80/tcp'],
         network: 'default',
+        mounts: [
+          {'source': '/tmp/data', 'target': '/data', 'readonly': true},
+        ],
+        labels: {'role': 'web'},
       );
       await bridge.containerStart('web');
-      await bridge.containerStop('web', timeoutSeconds: 7);
-      await bridge.containerKill('web', signal: 'TERM');
+      final stoppedGracefully = await bridge.containerStop(
+        'web',
+        timeoutSeconds: 7,
+      );
+      final status = await bridge.containerKill('web', signal: 'TERM');
       await bridge.containerDelete('web', force: true);
+
+      expect(stoppedGracefully, isFalse);
+      expect(status, 'running');
 
       expect(channel.writeCalls, {
         'create': {
@@ -204,6 +221,10 @@ void main() {
           'env': ['MODE=prod'],
           'ports': ['8080:80/tcp'],
           'network': 'default',
+          'mounts': [
+            {'source': '/tmp/data', 'target': '/data', 'readonly': true},
+          ],
+          'labels': {'role': 'web'},
         },
         'start': {'id': 'web'},
         'stop': {'id': 'web', 'timeoutSeconds': 7},
