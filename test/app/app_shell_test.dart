@@ -145,4 +145,13 @@ void main() {
     await tester.pump();
     expect(find.text('暂无容器'), findsOneWidget);
   });
+
+  testWidgets('侧栏分组（工作/资源/系统）+ 容器运行中数徽章', (tester) async {
+    await _pumpApp(tester, FakeContainerBridge());
+
+    // 分组标题（P0 信息架构）。
+    expect(find.text('工作'), findsOneWidget);
+    expect(find.text('资源'), findsOneWidget);
+    expect(find.text('系统'), findsOneWidget);
+  });
 }

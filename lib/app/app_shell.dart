@@ -21,12 +21,15 @@ import '../features/settings/settings_page.dart';
 import '../features/system/readiness_controller.dart';
 import '../features/system/runtime_page.dart';
 import '../../services/compose_service.dart';
+import '../../services/container_models.dart';
 import '../../services/container_service.dart';
 import '../../services/image_service.dart';
 import '../../services/mount_service.dart';
 import '../../services/network_service.dart';
 import '../../services/project_service.dart';
 import '../../services/system_service.dart';
+import '../ui/colors.dart';
+import '../ui/components.dart';
 import 'menu_bar_controller.dart';
 import 'placeholders.dart';
 
@@ -103,6 +106,17 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
+  /// 侧栏项（带可选计数徽章）。
+  Widget _sidebarItem(int index, {int? badge}) {
+    return ListTile(
+      title: Text(kSidebarItems[index]),
+      dense: true,
+      selected: index == _selected,
+      trailing: badge == null ? null : CountBadge(count: badge),
+      onTap: () => setState(() => _selected = index),
+    );
+  }
+
   @override
   void dispose() {
     unawaited(_navigationSubscription.cancel());
@@ -123,17 +137,30 @@ class _AppShellState extends State<AppShell> {
                 ),
               ),
               child: Material(
-                color: Theme.of(context).colorScheme.surfaceContainerLow,
-                child: ListView(
-                  children: [
-                    for (var i = 0; i < kSidebarItems.length; i++)
-                      ListTile(
-                        title: Text(kSidebarItems[i]),
-                        dense: true,
-                        selected: i == _selected,
-                        onTap: () => setState(() => _selected = i),
-                      ),
-                  ],
+                color: GcmColors.surfaceSidebar(context),
+                child: StreamBuilder<List<ContainerSnapshotInfo>>(
+                  stream: widget.containers.snapshots,
+                  builder: (context, snapshot) {
+                    final runningCount = (snapshot.data ?? const [])
+                        .where((c) => c.state == ContainerState.running)
+                        .length;
+                    return ListView(
+                      children: [
+                        const SidebarSection(title: '工作'),
+                        _sidebarItem(0, badge: runningCount),
+                        _sidebarItem(1),
+                        _sidebarItem(2),
+                        const SidebarSection(title: '资源'),
+                        _sidebarItem(3),
+                        _sidebarItem(4),
+                        _sidebarItem(5),
+                        const SidebarSection(title: '系统'),
+                        _sidebarItem(6),
+                        _sidebarItem(7),
+                        _sidebarItem(8),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),
