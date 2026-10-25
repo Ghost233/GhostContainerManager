@@ -115,3 +115,16 @@ MCP 全链路在真实运行时验证通过：35 工具 tools/list、system_stat
 - 资产：`GhostContainerManager-1.0.0.dmg`（29,428,019 B）、`manifest.json`、`SHA256SUMS`。
 - 同步核验：本地 `v1.0.0` tag、本地 main、origin/main 均为 `25f7162`；tag 提交的 `pubspec.yaml` 版本为 `1.0.0`。
 - 分发方式：未签名、未公证（发布前经用户确认）；后续正式分发需补 Developer ID 签名与公证。
+
+## 正式发布 v1.0.1（2026-10-25）
+
+- 名称与品牌：应用显示名由 `GhostContainerManager` 改为 `Ghost Container Manager`（`PRODUCT_NAME`、窗口标题、访达、关于页、`maclauncher.json` 项目名与入口路径）；打包资产名保持 `GhostContainerManager-<版本>.dmg` 不变。
+- 图标：用户提供的新图标替换 `AppIcon.appiconset` → `GhostContainerManager.appiconset`（`ASSETCATALOG_COMPILER_APPICON_NAME` 指向新集），旧图集移除；`flutter clean` 全新构建确认产物仅含新 `GhostContainerManager.icns`。
+- 关于页改为读取构建期 `--dart-define=GCM_APP_VERSION`（`scripts/build-release.sh` 注入实际版本），本地开发构建显示“开发版”。
+- 版本由用户确定并累加：`1.0.0` → `1.0.1`。发布提交 `578b567`，附注 tag `v1.0.1`。
+- 本地门禁：`scripts/test-host.sh check` exit 0（357 tests，run-JnvE4t）；`scripts/build-release.sh` 全新构建 exit 0（产物 `Ghost Container Manager.app`，bundle id `com.ghost233.ghostcontainermanager`，版本 `1.0.1`，arm64）。
+- `scripts/release.sh --dry-run` 核对通过后正式推送 tag，触发 release.yml run 40163677685（success）。
+- Release：https://github.com/Ghost233/GhostContainerManager/releases/tag/v1.0.1（非草稿、非预发布）。
+- 资产：`GhostContainerManager-1.0.1.dmg`（31,454,304 B，sha256 `7753ac23…`）、`manifest.json`、`SHA256SUMS`。
+- 同步核验：远端 tag 指向 `578b567`，本地 main 与 origin/main 均为 `578b567`；manifest 记录版本 `1.0.1`。
+- 分发方式：仍未签名、未公证（沿用 v1.0.0 的用户确认）。
