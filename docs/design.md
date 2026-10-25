@@ -1,6 +1,6 @@
 # Ghost Container Manager 设计基线
 
-版本：2026-10-24（P0–P2 与走查修复，issue #26）。适用范围：全部 9 页与 `lib/ui/` 共享组件。
+版本：2026-10-24（P0–P3 与走查修复，issue #26）。适用范围：全部 9 页与 `lib/ui/` 共享组件。
 本文是本项目的**单一设计事实来源**：语义色、间距、字体、组件与页面模板在此定义，
 页面实现引用而非各自重定义。通用 macOS 原则见
 `~/.agents/skills/macos-ui-standards/references/standard.md`；本文只记录**项目自定度量**
@@ -139,6 +139,16 @@ P0 交付的共享组件，API 小而稳（P1 详情页重做复用）：
   都固定显示完整窗口，不随样本数量缩放；X 轴刻度分别每 2m/5m，格式为 `HH:mm`。
 - 采样空段超过 6 秒（3 × 默认 2 秒）时拆成独立 `LineChartBarData`，不得跨空段连线；
   单点段不伪装成趋势线，所有段不足两点时显示「数据不足」。
+
+### 操作反馈与动效（P3）
+
+- 容器/镜像行与详情操作按钮在异步写操作期间显示 16×16、strokeWidth 2 的
+  `GcmInlineSpinner`，同时禁用同一操作入口，防止重复提交；容器状态继续由
+  `currentActivities` 合成态驱动。页面级加载仍使用现有空/加载/失败结构，不以行内 spinner 替代。
+- AppShell 主内容页面切换使用 `AnimatedSwitcher`：180ms、`easeInOut` fade；
+  侧栏高亮立即更新，不等待转场完成。页面以稳定导航 key 保留同页状态。
+- 日志与构建输出在跟随模式下使用 200ms、`easeOut` 的 `animateTo` 滚动至最新输出；
+  用户上滚退出跟随后不自动抢回滚动位置。时长/曲线统一定义于 `GcmMotion`（`lib/ui/motion.dart`）。
 
 ### 属性/运行弹窗
 ```
