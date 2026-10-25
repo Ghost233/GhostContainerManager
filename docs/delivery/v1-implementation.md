@@ -140,3 +140,13 @@ MCP 全链路在真实运行时验证通过：35 工具 tools/list、system_stat
 - 规格同步：`docs/spec/ui-ia.md` §D11 改为三口径语义；MCP `project_get` 的 `ProjectSummary.images` schema 不变（digest 不入 JSON）。
 - 门禁：`scripts/test-host.sh check` exit 0（368 tests，run-SdD07B）；`projects_page_test` 24/24、`image_footprint_service_test` 9/9。
 - 用户待决策项（记录，未实施）：1 GB 日志的具体位置待用户确认（实测未见 1 GB 日志，最大为 builder buildkit-cache 1.3 GB，`builder stop/delete` 可回收）；无效构建（仅 go1/go2 有效）的改名/删除策略；权限允许时工具改为标准 OCI 镜像（`apple/container` org 包）以消除影子注册表；MCP 端口 35731 明文仅限 loopback。
+
+## 正式发布 v1.0.2（2026-10-25/26）
+
+- 版本由用户确认继续累加：`1.0.1` → `1.0.2`（本次改动＝项目页镜像三口径占用 + 项目列表实占合计）。
+- 发布提交 `5caac4d`，附注 tag `v1.0.2`。
+- 本地门禁：`scripts/test-host.sh prepare` 后 `check` exit 0（368 tests，run-52JHXh）；`scripts/release.sh --dry-run` 核对版本/tag/提交一致。
+- release.yml run 40210106414（success）：https://github.com/Ghost233/GhostContainerManager/actions/runs/40210106414
+- Release：https://github.com/Ghost233/GhostContainerManager/releases/tag/v1.0.2（非草稿、非预发布，2026-10-25T16:20:04Z 发布）。
+- 资产：`GhostContainerManager-1.0.2.dmg`（31,490,129 B）、`manifest.json`（181 B）、`SHA256SUMS`（178 B）。
+- 分发方式：仍未签名、未公证（沿用 v1.0.0 的用户确认）。
