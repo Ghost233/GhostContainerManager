@@ -4,7 +4,7 @@
 
 ## 项目身份与能力
 
-项目 ID 为 `com.ghost233.ghostcontainermanager`，显示名为 `GhostContainerManager`。`maclauncher.json` 的入口预留为发布 `.app` 路径，当前文件尚不存在。服务列表为空，服务粒度在开发任务中确定。
+项目 ID 为 `com.ghost233.ghostcontainermanager`，显示名为 `Ghost Container Manager`。`maclauncher.json` 的入口预留为发布 `.app` 路径，当前文件尚不存在。服务列表为空，服务粒度在开发任务中确定。
 
 只为已实现的能力注册 `ServiceCallbacks`。当前固定版本支持 `onStart`、`onRecycle`、`onStatus` 和 `onLogs`；应用级 `AppCallbacks` 支持窗口、入口接管和版本查询。能力由实际回调决定。
 

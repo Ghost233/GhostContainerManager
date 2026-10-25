@@ -161,7 +161,7 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'GhostContainerManager',
+      title: 'Ghost Container Manager',
       theme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true),
       home: ListenableBuilder(
         listenable: _readiness,

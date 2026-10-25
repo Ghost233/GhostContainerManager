@@ -179,9 +179,9 @@ print('unexpected gh operation',file=sys.stderr);sys.exit(2)
     @unittest.skipUnless(os.uname().sysname == "Darwin", "macOS package validation")
     def test_prebuilt_app_version_mismatch_fails_before_packaging(self):
         shutil.copy2(SOURCE / "build-release.sh", self.repo / "scripts/build-release.sh")
-        app = self.root / "GhostContainerManager.app"
+        app = self.root / "Ghost Container Manager.app"
         (app / "Contents/MacOS").mkdir(parents=True)
-        (app / "Contents/MacOS/GhostContainerManager").write_bytes(b"fixture executable")
+        (app / "Contents/MacOS/Ghost Container Manager").write_bytes(b"fixture executable")
         with (app / "Contents/Info.plist").open("wb") as file:
             plistlib.dump({"CFBundleIdentifier": "com.ghost233.ghostcontainermanager",
                           "CFBundleShortVersionString": "0.1.2"}, file)
@@ -199,10 +199,10 @@ print('unexpected gh operation',file=sys.stderr);sys.exit(2)
         sdk = Path(os.environ.get("GCM_FLUTTER_SDK", "/Users/ghost233/flutter"))
         universal = sdk / "bin/cache/artifacts/engine/darwin-x64-release/FlutterMacOS.xcframework/macos-arm64_x86_64/FlutterMacOS.framework/Versions/A/FlutterMacOS"
         self.assertTrue(universal.is_file(), "fixed SDK native fixture missing")
-        app = self.root / "GhostContainerManager.app"
+        app = self.root / "Ghost Container Manager.app"
         (app / "Contents/MacOS").mkdir(parents=True)
         # Reuse the SDK's existing universal binary; compile no Intel artifact.
-        shutil.copy2(universal, app / "Contents/MacOS/GhostContainerManager")
+        shutil.copy2(universal, app / "Contents/MacOS/Ghost Container Manager")
         with (app / "Contents/Info.plist").open("wb") as file:
             plistlib.dump({"CFBundleIdentifier": "com.ghost233.ghostcontainermanager",
                           "CFBundleShortVersionString": "0.1.3"}, file)
@@ -217,11 +217,11 @@ print('unexpected gh operation',file=sys.stderr);sys.exit(2)
     @unittest.skipUnless(os.uname().sysname == "Darwin", "macOS package validation")
     def test_arm64_fixture_package_has_matching_manifest_and_checksums(self):
         shutil.copy2(SOURCE / "build-release.sh", self.repo / "scripts/build-release.sh")
-        app = self.root / "GhostContainerManager.app"
+        app = self.root / "Ghost Container Manager.app"
         (app / "Contents/MacOS").mkdir(parents=True)
         source = self.root / "fixture.c"
         source.write_text("int main(void) { return 0; }\n")
-        executable = app / "Contents/MacOS/GhostContainerManager"
+        executable = app / "Contents/MacOS/Ghost Container Manager"
         subprocess.run(["clang", "-arch", "arm64", str(source), "-o", str(executable)],
                        check=True, capture_output=True, text=True)
         for framework, binary in (("App", "App"), ("FlutterMacOS", "FlutterMacOS")):

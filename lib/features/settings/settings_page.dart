@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import '../../app/menu_bar_controller.dart';
 import '../../mcp/tool_audit.dart';
+import '../../services/app_constants.dart';
 import '../../ui/colors.dart';
 import '../../ui/components.dart';
 import '../../ui/text.dart';
@@ -319,7 +320,8 @@ class _AboutSection extends StatelessWidget {
     return SectionCard(
       title: '关于',
       child: Text(
-        'GhostContainerManager 0.0.0（开发中）',
+        '$applicationDisplayName '
+        '${gcmAppVersion == 'dev' ? '开发版' : gcmAppVersion}',
         style: theme.textTheme.bodySmall,
       ),
     );

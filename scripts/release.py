@@ -115,7 +115,7 @@ class Release:
 
     def publish(self, tag, head, local_tag):
         if not local_tag:
-            self.git("tag", "-a", tag, head, "-m", "GhostContainerManager " + tag)
+            self.git("tag", "-a", tag, head, "-m", "Ghost Container Manager " + tag)
         try:
             self.git("push", "origin", "refs/tags/" + tag)
         except ReleaseError as error:

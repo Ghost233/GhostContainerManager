@@ -21,7 +21,9 @@
 
 set -euo pipefail
 
-APP_NAME="GhostContainerManager"
+APP_NAME="Ghost Container Manager"
+# 产物名不带空格，沿用文档与 release.yml 约定的资产命名。
+ARTIFACT_STEM="GhostContainerManager"
 EXPECTED_BUNDLE_ID="com.ghost233.ghostcontainermanager"
 FLUTTER_BIN="${FLUTTER_BIN:-flutter}"
 PREBUILT_APP=""
@@ -80,7 +82,7 @@ full_version="$(awk '/^version:/{print $2; exit}' pubspec.yaml)"
 VERSION="$full_version"
 [ "$VERSION" != "0.0.0" ] || die "0.0.0 是基础配置占位；由人确定正式版本后再打包"
 
-DMG_NAME="GhostContainerManager-${VERSION}.dmg"
+DMG_NAME="${ARTIFACT_STEM}-${VERSION}.dmg"
 STAGING_DIR=""
 APP_PATH=""
 
@@ -105,7 +107,7 @@ else
   command -v "$FLUTTER_BIN" >/dev/null 2>&1 \
     || die "未找到 flutter（可通过 FLUTTER_BIN 指定路径）"
   # 构建号由调用方注入（CI 传 github.run_number）；缺省不传，Flutter 以版本号兜底。
-  build_args=(build macos --release)
+  build_args=(build macos --release --dart-define "GCM_APP_VERSION=${VERSION}")
   if [ -n "${GCM_BUILD_NUMBER:-}" ]; then
     build_args+=(--build-number "$GCM_BUILD_NUMBER")
   fi

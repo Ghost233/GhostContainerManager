@@ -5,7 +5,8 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = GhostContainerManager
+// 显示名带空格；打包产物名（DMG）仍为 GhostContainerManager-<版本>.dmg，见 scripts/build-release.sh。
+PRODUCT_NAME = Ghost Container Manager
 
 // The application's bundle identifier
 PRODUCT_BUNDLE_IDENTIFIER = com.ghost233.ghostcontainermanager

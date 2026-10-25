@@ -62,7 +62,7 @@ class GcmMcpServer {
 
   static const Implementation serverInfo = Implementation(
     name: 'ghost-container-manager',
-    title: 'GhostContainerManager',
+    title: 'Ghost Container Manager',
     version: '0.0.0',
   );
 

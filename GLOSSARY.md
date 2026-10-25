@@ -1,6 +1,6 @@
 # 术语表
 
-GhostContainerManager 的领域术语。只含领域概念，不含实现细节。
+Ghost Container Manager 的领域术语。只含领域概念，不含实现细节。
 
 ## 运行时
 

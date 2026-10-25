@@ -43,7 +43,7 @@ void main() {
     await launcher.connect();
 
     expect(connector.projectId, 'com.ghost233.ghostcontainermanager');
-    expect(connector.projectName, 'GhostContainerManager');
+    expect(connector.projectName, 'Ghost Container Manager');
     expect(connector.services?.keys, unorderedEquals(['web', 'worker']));
     expect(connector.services?['web']?.name, 'web');
     expect(connector.services?['worker']?.name, 'worker');

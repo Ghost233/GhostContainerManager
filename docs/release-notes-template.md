@@ -1,4 +1,4 @@
-# GhostContainerManager {{VERSION}}
+# Ghost Container Manager {{VERSION}}
 
 发布 tag：`{{TAG}}`。
 

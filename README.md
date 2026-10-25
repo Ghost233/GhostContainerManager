@@ -1,4 +1,4 @@
-# GhostContainerManager
+# Ghost Container Manager
 
 面向 Apple Silicon Mac 的 Apple container 管理工具，参考 [Orchard](https://github.com/andrew-waters/orchard)。当前处于基础配置阶段，尚未实现应用界面、原生桥接或容器管理功能。
 

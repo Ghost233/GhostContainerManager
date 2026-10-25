@@ -28,7 +28,7 @@ class MacLauncherBridge {
     : _sdkConnector = sdkConnector ?? _connectSdk;
 
   static const projectId = 'com.ghost233.ghostcontainermanager';
-  static const projectName = 'GhostContainerManager';
+  static const projectName = 'Ghost Container Manager';
   static const managedLabelPrefix = 'com.ghost233.';
   // A fixed window, not an idle timeout: continuous producers cannot starve it.
   static const _logBatchWindow = Duration(milliseconds: 250);

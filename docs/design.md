@@ -1,4 +1,4 @@
-# GhostContainerManager 设计基线
+# Ghost Container Manager 设计基线
 
 版本：2026-10-24（P0–P2 与走查修复，issue #26）。适用范围：全部 9 页与 `lib/ui/` 共享组件。
 本文是本项目的**单一设计事实来源**：语义色、间距、字体、组件与页面模板在此定义，

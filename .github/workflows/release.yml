@@ -83,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "${{ steps.version.outputs.tag }}" --verify-tag \
-            --title "GhostContainerManager ${{ steps.version.outputs.version }}" \
+            --title "Ghost Container Manager ${{ steps.version.outputs.version }}" \
             --notes-file dist/release-notes.md \
             "dist/GhostContainerManager-${{ steps.version.outputs.version }}.dmg" \
             dist/manifest.json \
