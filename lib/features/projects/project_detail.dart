@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import '../../services/container_models.dart';
 import '../../services/container_service.dart';
 import '../../services/errors.dart';
+import '../../services/image_footprint_service.dart';
 import '../../services/image_service.dart';
 import '../../services/project_service.dart';
 import '../../ui/motion.dart';
@@ -25,19 +26,32 @@ import 'project_dialogs.dart';
 /// 保留此态待 service 暴露取消信号后映射。
 enum BuildLogState { closed, running, success, failed, cancelled }
 
+enum _FootprintPhase { calculating, ready, unavailable }
+
+class _ImageFootprintState {
+  const _ImageFootprintState(this.phase, [this.footprint]);
+
+  final _FootprintPhase phase;
+  final ImageDiskFootprint? footprint;
+}
+
 class ProjectDetailView extends StatefulWidget {
   const ProjectDetailView({
     super.key,
     required this.service,
     required this.containerService,
     required this.imageService,
+    required this.footprintService,
     required this.project,
+    this.appRoot,
     required this.onBack,
   });
 
   final ProjectService service;
   final ContainerService containerService;
   final ImageService imageService;
+  final ImageFootprintService footprintService;
+  final String? appRoot;
   final String project;
   final VoidCallback onBack;
 
@@ -49,6 +63,11 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
   ProjectDetails? _details;
   Object? _error;
   bool _loading = true;
+  final Map<String, _ImageFootprintState> _footprints = {};
+  final Map<String, int> _containerDiskBytes = {};
+  int _footprintGeneration = 0;
+  int _footprintDone = 0;
+  int _footprintTotal = 0;
 
   /// 上次回收报告（dryRun=false 完成后展示）。
   ProjectReclaimReport? _lastReclaim;
@@ -73,10 +92,27 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
   }
 
   @override
+  void didUpdateWidget(covariant ProjectDetailView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.appRoot != widget.appRoot && _details != null) {
+      _startFootprintCalculations(_details!);
+    }
+  }
+
+  @override
   void dispose() {
+    _footprintGeneration += 1;
     _logScrollController.dispose();
     super.dispose();
   }
+
+  /// 是否有镜像的展开大小算不出来（显示「重试计算」）。
+  bool get _hasFootprintFailures => _footprints.values.any(
+    (state) =>
+        state.phase == _FootprintPhase.unavailable ||
+        (state.phase == _FootprintPhase.ready &&
+            state.footprint?.expandedBytes == null),
+  );
 
   /// 日志追加后平滑跟随最新输出。
   void _scrollLogToBottom() {
@@ -102,6 +138,7 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
         _loading = false;
         _error = null;
       });
+      unawaited(_startFootprintCalculations(details));
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -109,6 +146,73 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
           _error = error;
         });
       }
+    }
+  }
+
+  /// 计算镜像三口径（下载/展开/实占）与容器实占。
+  ///
+  /// 展开需要解压层，耗时可观：逐镜像串行算、每算完一个就刷新一行；
+  /// 页面销毁或刷新换代时旧计算直接丢弃，不写状态。
+  Future<void> _startFootprintCalculations(ProjectDetails details) async {
+    final generation = ++_footprintGeneration;
+    final root = widget.appRoot ?? ImageFootprintService.defaultAppRoot();
+    final containersByImage = <String, List<String>>{};
+    for (final container in details.containers) {
+      containersByImage
+          .putIfAbsent(container.image, () => <String>[])
+          .add(container.id);
+    }
+    setState(() {
+      _containerDiskBytes.clear();
+      _footprintDone = 0;
+      _footprintTotal = details.images
+          .where((image) => image.digest != null)
+          .length;
+      for (final image in details.images) {
+        _footprints[image.reference] = image.digest == null
+            ? const _ImageFootprintState(_FootprintPhase.unavailable)
+            : const _ImageFootprintState(_FootprintPhase.calculating);
+      }
+    });
+    for (final container in details.containers) {
+      unawaited(() async {
+        final bytes = await widget.footprintService.containerDirectoryBytes(
+          container.id,
+          appRoot: root,
+        );
+        if (!mounted || generation != _footprintGeneration) return;
+        setState(() => _containerDiskBytes[container.id] = bytes);
+      }());
+    }
+    for (final image in details.images) {
+      final digest = image.digest;
+      if (digest == null) continue;
+      unawaited(() async {
+        try {
+          final footprint = await widget.footprintService.footprintFor(
+            digest: digest,
+            containerIds:
+                containersByImage[image.reference] ?? const <String>[],
+            appRoot: widget.appRoot,
+          );
+          if (!mounted || generation != _footprintGeneration) return;
+          setState(() {
+            _footprints[image.reference] = _ImageFootprintState(
+              _FootprintPhase.ready,
+              footprint,
+            );
+            _footprintDone += 1;
+          });
+        } catch (_) {
+          if (!mounted || generation != _footprintGeneration) return;
+          setState(() {
+            _footprints[image.reference] = const _ImageFootprintState(
+              _FootprintPhase.unavailable,
+            );
+            _footprintDone += 1;
+          });
+        }
+      }());
     }
   }
 
@@ -450,6 +554,37 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
             Row(
               children: [
                 Text('镜像列表', style: theme.textTheme.titleSmall),
+                const SizedBox(width: 6),
+                Tooltip(
+                  message:
+                      '下载＝压缩层体积；展开＝各层解压后的逻辑大小（真实解压计算）；'
+                      '实占＝磁盘真实占用（按块计，含该镜像容器的 initfs 系统盘、'
+                      'kernel 与稀疏 rootfs 的实占，rootfs 外观 513 GB 是稀疏文件）。',
+                  child: Icon(
+                    Icons.info_outline,
+                    size: 14,
+                    color: theme.colorScheme.outline,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                if (_footprintTotal > 0 && _footprintDone < _footprintTotal)
+                  Text(
+                    '计算展开大小 $_footprintDone/$_footprintTotal',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.outline,
+                    ),
+                  ),
+                if (_hasFootprintFailures)
+                  TextButton(
+                    key: const Key('retry-image-footprints'),
+                    onPressed: () {
+                      final details = _details;
+                      if (details != null) {
+                        unawaited(_startFootprintCalculations(details));
+                      }
+                    },
+                    child: const Text('重试计算'),
+                  ),
                 const Spacer(),
                 if (_lastFailureLogPath != null)
                   TextButton(
@@ -460,69 +595,110 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
               ],
             ),
             const SizedBox(height: 8),
-            for (final image in images) _buildImageRow(theme, image),
+            for (final image in images)
+              _buildImageRow(theme, image, details.containers),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildImageRow(ThemeData theme, ProjectImageStatus image) {
-    return SizedBox(
-      height: 40,
-      child: Row(
+  Widget _buildImageRow(
+    ThemeData theme,
+    ProjectImageStatus image,
+    List<ContainerSnapshotInfo> containers,
+  ) {
+    final members = containers
+        .where((c) => c.image == image.reference)
+        .toList(growable: false);
+    final running = members
+        .where((c) => c.state == ContainerState.running)
+        .length;
+    final footprint = _footprints[image.reference];
+    final expanded = switch (footprint?.phase) {
+      _FootprintPhase.calculating => '计算中…',
+      _FootprintPhase.ready when footprint?.footprint?.expandedBytes != null =>
+        formatBytes(footprint!.footprint!.expandedBytes!),
+      _ => '—',
+    };
+    final actual = footprint?.phase == _FootprintPhase.ready
+        ? formatBytes(footprint!.footprint!.actualDiskBytes)
+        : '—';
+    final statStyle = theme.textTheme.bodySmall?.copyWith(
+      color: theme.colorScheme.outline,
+    );
+    return Padding(
+      key: Key('project-image-${image.reference}'),
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            flex: 3,
-            child: Text(
-              image.reference,
-              style: monoTextStyle(context),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          SizedBox(
-            width: 80,
-            child: Text(
-              image.sizeBytes == null ? '—' : formatBytes(image.sizeBytes!),
-              style: theme.textTheme.bodySmall,
-            ),
-          ),
-          SizedBox(
-            width: 110,
-            child: Text(
-              image.createdAt == null ? '—' : formatDateTime(image.createdAt!),
-              style: theme.textTheme.bodySmall,
-            ),
-          ),
-          SizedBox(
-            width: 70,
-            child: Text(
-              image.inUse ? '使用中' : '未使用',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: image.inUse
-                    ? const Color(0xFF1D7A34)
-                    : theme.colorScheme.outline,
+          Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(
+                  image.reference,
+                  style: monoTextStyle(context),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-            ),
-          ),
-          SizedBox(
-            width: 90,
-            child: Text(
-              image.pushedToRegistry ? '已推送 registry' : '仅本地',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: image.pushedToRegistry
-                    ? theme.colorScheme.primary
-                    : theme.colorScheme.outline,
+              SizedBox(
+                width: 70,
+                child: Text(
+                  image.inUse ? '使用中' : '未使用',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: image.inUse
+                        ? const Color(0xFF1D7A34)
+                        : theme.colorScheme.outline,
+                  ),
+                ),
               ),
-            ),
+              SizedBox(
+                width: 90,
+                child: Text(
+                  image.pushedToRegistry ? '已推送 registry' : '仅本地',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: image.pushedToRegistry
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.outline,
+                  ),
+                ),
+              ),
+              // 删除本地副本限定「未使用且已推送」（可从 registry 恢复，避免丢失）。
+              if (!image.inUse && image.pushedToRegistry)
+                TextButton(
+                  key: Key('delete-local-${image.reference}'),
+                  onPressed: () => _deleteLocalCopy(image),
+                  child: const Text('删除本地副本…'),
+                ),
+            ],
           ),
-          // 删除本地副本限定「未使用且已推送」（可从 registry 恢复，避免丢失）。
-          if (!image.inUse && image.pushedToRegistry)
-            TextButton(
-              key: Key('delete-local-${image.reference}'),
-              onPressed: () => _deleteLocalCopy(image),
-              child: const Text('删除本地副本…'),
-            ),
+          const SizedBox(height: 2),
+          Wrap(
+            spacing: 12,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text('容器', style: statStyle),
+              Text('运行 $running / 共 ${members.length}', style: statStyle),
+              Text(
+                '下载 ${image.sizeBytes == null ? '—' : formatBytes(image.sizeBytes!)}',
+                style: statStyle,
+              ),
+              Text('展开 $expanded', style: statStyle),
+              Text('实占 $actual', style: statStyle),
+              SizedBox(
+                width: 110,
+                child: Text(
+                  image.createdAt == null
+                      ? '—'
+                      : formatDateTime(image.createdAt!),
+                  style: statStyle,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -535,7 +711,23 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('成员容器', style: theme.textTheme.titleSmall),
+            Row(
+              children: [
+                Text('成员容器', style: theme.textTheme.titleSmall),
+                const SizedBox(width: 6),
+                Tooltip(
+                  message:
+                      '实占＝容器运行时目录的磁盘真实占用（按块计）。每个容器都有 '
+                      'initfs.ext4 系统盘（约 0.5–0.6 GB）、kernel（约 29 MB）与可写 '
+                      'rootfs.ext4；rootfs 外观 513 GB 是稀疏文件，真实占用看这里。',
+                  child: Icon(
+                    Icons.info_outline,
+                    size: 14,
+                    color: theme.colorScheme.outline,
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 8),
             if (details.containers.isEmpty)
               Text(
@@ -544,9 +736,39 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
                   color: theme.colorScheme.outline,
                 ),
               )
-            else
+            else ...[
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 22),
+                    Expanded(
+                      flex: 3,
+                      child: Text('容器', style: theme.textTheme.labelSmall),
+                    ),
+                    Expanded(
+                      flex: 3,
+                      child: Text('镜像', style: theme.textTheme.labelSmall),
+                    ),
+                    Expanded(
+                      flex: 2,
+                      child: Text('端口', style: theme.textTheme.labelSmall),
+                    ),
+                    SizedBox(
+                      width: 80,
+                      child: Text('创建', style: theme.textTheme.labelSmall),
+                    ),
+                    SizedBox(
+                      width: 80,
+                      child: Text('实占', style: theme.textTheme.labelSmall),
+                    ),
+                    const SizedBox(width: 150),
+                  ],
+                ),
+              ),
               for (final container in details.containers)
                 _buildContainerRow(theme, container),
+            ],
           ],
         ),
       ),
@@ -589,6 +811,16 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
                   ? '—'
                   : formatRelative(container.createdAt!),
               style: theme.textTheme.bodySmall,
+            ),
+          ),
+          SizedBox(
+            width: 80,
+            child: Tooltip(
+              message: '实占（磁盘块）：含 initfs 系统盘、kernel 与稀疏 rootfs。',
+              child: Text(switch (_containerDiskBytes[container.id]) {
+                final int bytes => formatBytes(bytes),
+                null => '…',
+              }, style: theme.textTheme.bodySmall),
             ),
           ),
           // 行内操作：启动/停止 + 日志 + 删除（复用 ContainerService）。

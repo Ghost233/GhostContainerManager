@@ -128,3 +128,15 @@ MCP 全链路在真实运行时验证通过：35 工具 tools/list、system_stat
 - 资产：`GhostContainerManager-1.0.1.dmg`（31,454,304 B，sha256 `7753ac23…`）、`manifest.json`、`SHA256SUMS`。
 - 同步核验：远端 tag 指向 `578b567`，本地 main 与 origin/main 均为 `578b567`；manifest 记录版本 `1.0.1`。
 - 分发方式：仍未签名、未公证（沿用 v1.0.0 的用户确认）。
+
+## 项目页镜像磁盘占用（1.0.2）
+
+- 需求（用户）：项目页每个镜像「运行了多少个容器、占用空间多少（含展开后）」；同时排查系统盘不足。根因实测：`~/Library/Application Support/com.apple.container` 249 GB，其中 `snapshots/` 143 GB（容器 rootfs 稀疏文件 `rootfs.ext4` 的**表观大小**）与 `containers/` 88 GB（initfs 系统盘 45 GB + kernel 23 GB + rootfs 真实占用），镜像 blob 仅 15 GB；`container system df` 的 169.9 GB 是未压缩层大小而非磁盘占用。
+- 新增 `ImageFootprintService`（`lib/services/image_footprint_service.dart`）：
+  - `expandedSizeBytes`：解析 OCI index→arm64 manifest→真实解压每层 gzip 求和（Docker 虚拟大小），blob 缺失/非 gzip/超限时降级返回 null，不伪造大小；索引缓存写入 Application Support（按 blob mtime 失效）。
+  - `layerDiskBytes`：layer blob + manifest + index 的 `stat.st_blocks*512` 实际占用；多 tag 共享层按唯一 blob 计一次。
+  - `footprintFor`：三口径合并（展开/层实占/容器目录实占），容器目录用 `du` 精确统计 initfs、kernel 与稀疏 rootfs。
+- UI：镜像行改为「下载 X · 展开 Y（可重试）· 实占 Z」三口径；项目列表磁盘列改为实占合计（镜像层 blob + 成员容器目录），列头「实占」并附口径提示；展开计算并发、可重试、带 `计算展开大小 n/m` 进度。
+- 规格同步：`docs/spec/ui-ia.md` §D11 改为三口径语义；MCP `project_get` 的 `ProjectSummary.images` schema 不变（digest 不入 JSON）。
+- 门禁：`scripts/test-host.sh check` exit 0（368 tests，run-SdD07B）；`projects_page_test` 24/24、`image_footprint_service_test` 9/9。
+- 用户待决策项（记录，未实施）：1 GB 日志的具体位置待用户确认（实测未见 1 GB 日志，最大为 builder buildkit-cache 1.3 GB，`builder stop/delete` 可回收）；无效构建（仅 go1/go2 有效）的改名/删除策略；权限允许时工具改为标准 OCI 镜像（`apple/container` org 包）以消除影子注册表；MCP 端口 35731 明文仅限 loopback。

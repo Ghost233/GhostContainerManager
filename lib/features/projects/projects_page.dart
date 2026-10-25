@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/placeholders.dart';
 import '../../services/container_service.dart';
+import '../../services/image_footprint_service.dart';
 import '../../services/image_service.dart';
 import '../../services/project_service.dart';
 import '../../ui/text.dart';
@@ -27,6 +28,7 @@ class ProjectsPage extends StatefulWidget {
     required this.containerService,
     required this.imageService,
     required this.controller,
+    this.footprintService,
     required this.onOpenRuntime,
   });
 
@@ -34,6 +36,9 @@ class ProjectsPage extends StatefulWidget {
   final ContainerService containerService;
   final ImageService imageService;
   final ReadinessController controller;
+
+  /// Optional seam for widget tests; production owns one shared cache service.
+  final ImageFootprintService? footprintService;
 
   /// 「打开引导检查」次按钮（跳到运行时页），与占位页语义一致。
   final VoidCallback onOpenRuntime;
@@ -48,6 +53,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
   Object? _error;
   String _search = '';
   String? _selectedProject;
+  late final ImageFootprintService _footprintService;
 
   /// 磁盘占用快照（bytes）：仅手动刷新更新（终轮拍板，无自动校准）。
   int? _diskBytes;
@@ -61,6 +67,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
   @override
   void initState() {
     super.initState();
+    _footprintService = widget.footprintService ?? ImageFootprintService();
     widget.controller.addListener(_syncWithReadiness);
     _syncWithReadiness();
   }
@@ -129,19 +136,37 @@ class _ProjectsPageState extends State<ProjectsPage> {
         .toList(growable: false);
   }
 
-  /// 项目级磁盘占用：对每行 getProject 取 ProjectDetails.images 求和 sizeBytes。
-  /// ProjectSummary.images 仅引用无 sizeBytes，故逐项目求和（项目数少，N+1 可接受）。
+  /// 项目级磁盘占用（实占）：镜像层 blob 实际块 + 成员容器目录实际占用。
+  /// 逐项目串行计算（项目数少，stat/du 成本低）。
   Future<void> _refreshProjectDiskBytes(List<ProjectSummary> projects) async {
+    final root =
+        widget.controller.statusData?.appRoot ??
+        ImageFootprintService.defaultAppRoot();
     for (final summary in projects) {
       try {
         final details = await widget.service.getProject(
           project: summary.project,
         );
         if (!mounted) return;
-        final total = details.images.fold<int>(
-          0,
-          (sum, image) => sum + (image.sizeBytes ?? 0),
-        );
+        var total = 0;
+        for (final image in details.images) {
+          final digest = image.digest;
+          if (digest == null) {
+            total += image.sizeBytes ?? 0;
+            continue;
+          }
+          total += await _footprintService.layerDiskBytes(
+            digest: digest,
+            appRoot: widget.controller.statusData?.appRoot,
+          );
+        }
+        for (final container in details.containers) {
+          total += await _footprintService.containerDirectoryBytes(
+            container.id,
+            appRoot: root,
+          );
+        }
+        if (!mounted) return;
         setState(() => _projectDiskBytes[summary.project] = total);
       } catch (_) {
         // 单项目求和失败不阻塞列表；保持缺省。
@@ -182,6 +207,8 @@ class _ProjectsPageState extends State<ProjectsPage> {
         service: widget.service,
         containerService: widget.containerService,
         imageService: widget.imageService,
+        footprintService: _footprintService,
+        appRoot: widget.controller.statusData?.appRoot,
         project: selected,
         onBack: () => setState(() => _selectedProject = null),
       );
@@ -314,7 +341,15 @@ class _ListHeader extends StatelessWidget {
           Expanded(flex: 3, child: Text('名称', style: style)),
           SizedBox(width: 90, child: Text('镜像数', style: style)),
           SizedBox(width: 110, child: Text('运行中容器', style: style)),
-          SizedBox(width: 90, child: Text('磁盘占用', style: style)),
+          SizedBox(
+            width: 90,
+            child: Tooltip(
+              message:
+                  '实占合计：镜像层 blob 的磁盘块 + 该项目容器的运行时目录（含 '
+                  'initfs 系统盘、kernel 与稀疏 rootfs 的真实占用）。',
+              child: Text('实占', style: style),
+            ),
+          ),
           SizedBox(width: 120, child: Text('最近构建', style: style)),
         ],
       ),

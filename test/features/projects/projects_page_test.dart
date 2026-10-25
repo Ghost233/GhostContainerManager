@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
 import 'package:ghost_container_manager/features/projects/projects_page.dart';
 import 'package:ghost_container_manager/features/system/readiness_controller.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
+import 'package:ghost_container_manager/services/image_footprint_service.dart';
 import 'package:ghost_container_manager/services/image_service.dart';
 import 'package:ghost_container_manager/services/project_build_log_store.dart';
 import 'package:ghost_container_manager/services/project_service.dart';
@@ -59,6 +61,7 @@ _pumpPage(
   WidgetTester tester, {
   FakeContainerBridge? bridge,
   FakeProjectCli? cli,
+  ImageFootprintService? footprintService,
   List<String>? projectPaths,
 }) async {
   final fakeBridge = bridge ?? FakeContainerBridge();
@@ -88,6 +91,7 @@ _pumpPage(
           containerService: containers,
           imageService: images,
           controller: readiness,
+          footprintService: footprintService ?? _FakeImageFootprintService(),
           onOpenRuntime: () {},
         ),
       ),
@@ -222,6 +226,71 @@ void main() {
     // 成员容器
     expect(find.text('mysite-web'), findsOneWidget);
     expect(find.text('mysite-debug-run'), findsOneWidget);
+  });
+
+  testWidgets('项目详情：镜像容器数与下载/展开大小独立计算', (tester) async {
+    final fixture = _mysiteFixture();
+    fixture.bridge.containers.addAll([
+      snapshotPayload(
+        id: 'mysite-web-2',
+        image: 'mysite-go2:latest',
+        labels: const {'com.ghost233.project': 'mysite'},
+      ),
+      snapshotPayload(
+        id: 'mysite-web-3',
+        image: 'mysite-go2:latest',
+        status: 'stopped',
+        labels: const {'com.ghost233.project': 'mysite'},
+      ),
+    ]);
+    final footprints = _FakeImageFootprintService()..deferred = true;
+    await _pumpPage(
+      tester,
+      bridge: fixture.bridge,
+      cli: fixture.cli,
+      footprintService: footprints,
+    );
+
+    await tester.tap(find.text('mysite'));
+    await tester.pumpAndSettle();
+
+    expect(footprints.calls, 4);
+    expect(find.text('计算展开大小 0/4'), findsOneWidget);
+    expect(find.text('展开 计算中…'), findsNWidgets(4));
+    expect(find.text('下载 200 B'), findsOneWidget);
+
+    footprints.completeAll(1024);
+    await tester.pumpAndSettle();
+
+    expect(find.text('运行 2 / 共 3'), findsOneWidget);
+    expect(find.text('下载 200 B'), findsOneWidget);
+    expect(find.text('展开 1.0 KB'), findsNWidgets(4));
+    expect(find.textContaining('计算展开大小'), findsNothing);
+  });
+
+  testWidgets('项目详情：展开大小失败可重试且不阻塞镜像列表', (tester) async {
+    final fixture = _mysiteFixture();
+    final footprints = _FakeImageFootprintService()..value = null;
+    await _pumpPage(
+      tester,
+      bridge: fixture.bridge,
+      cli: fixture.cli,
+      footprintService: footprints,
+    );
+
+    await tester.tap(find.text('mysite'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('mysite-go1:latest'), findsOneWidget);
+    expect(find.text('展开 —'), findsNWidgets(4));
+    expect(find.byKey(const Key('retry-image-footprints')), findsOneWidget);
+
+    footprints.value = 2048;
+    await tester.tap(find.byKey(const Key('retry-image-footprints')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('展开 2.0 KB'), findsNWidgets(4));
+    expect(find.byKey(const Key('retry-image-footprints')), findsNothing);
   });
 
   testWidgets('构建新版本：底部日志面板平滑跟随，成功后收尾', (tester) async {
@@ -623,4 +692,55 @@ void main() {
     await _pumpPage(tester, bridge: fixture.bridge, cli: fixture.cli);
     expect(find.text('＋ 从目录新建项目…'), findsOneWidget);
   });
+}
+
+class _FakeImageFootprintService implements ImageFootprintService {
+  int? value = 1024;
+  int layerBytes = 100;
+  int containerBytes = 25;
+  bool deferred = false;
+  int calls = 0;
+  final List<Completer<int?>> pending = <Completer<int?>>[];
+
+  @override
+  Future<int?> expandedSizeBytes({required String digest, String? appRoot}) {
+    calls += 1;
+    if (deferred) {
+      final completer = Completer<int?>();
+      pending.add(completer);
+      return completer.future;
+    }
+    return Future<int?>.value(value);
+  }
+
+  @override
+  Future<int> layerDiskBytes({required String digest, String? appRoot}) async =>
+      layerBytes;
+
+  @override
+  Future<int> containerDirectoryBytes(String id, {String? appRoot}) async =>
+      containerBytes;
+
+  @override
+  Future<ImageDiskFootprint> footprintFor({
+    required String digest,
+    required List<String> containerIds,
+    String? appRoot,
+  }) async {
+    final expanded = await expandedSizeBytes(digest: digest, appRoot: appRoot);
+    return ImageDiskFootprint(
+      expandedBytes: expanded,
+      layerDiskBytes: layerBytes,
+      containerDiskBytes: containerBytes * containerIds.length,
+    );
+  }
+
+  void completeAll(int? size) {
+    deferred = false;
+    final waiting = List<Completer<int?>>.of(pending);
+    pending.clear();
+    for (final completer in waiting) {
+      completer.complete(size);
+    }
+  }
 }

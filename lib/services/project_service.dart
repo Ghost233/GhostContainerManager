@@ -74,12 +74,17 @@ class ProjectImageStatus {
     required this.inUse,
     this.sizeBytes,
     this.createdAt,
+    this.digest,
     this.pushedToRegistry = false,
   });
 
   final String reference;
   final int? sizeBytes;
   final DateTime? createdAt;
+
+  /// OCI index or manifest digest used only for local footprint inspection.
+  /// Deliberately excluded from toJson so the MCP project schema is unchanged.
+  final String? digest;
   final bool inUse;
   final bool pushedToRegistry;
 
@@ -477,6 +482,7 @@ class ProjectService {
             reference: record.info.reference,
             sizeBytes: record.info.sizeBytes,
             createdAt: record.info.createdAt,
+            digest: record.info.digest,
             inUse: containers.any((c) => c.image == record.info.reference),
             pushedToRegistry: pushedRepositories.contains(
               '$localRegistryPrefix/$repository',
