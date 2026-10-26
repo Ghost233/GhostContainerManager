@@ -5,7 +5,7 @@
 /// （ADR-0001）；本文件只是它的按名索引视图——[GcmToolRegistry.definitions]
 /// 从注册表派生为不可修改的 name → 定义 Map，[GcmToolRegistry.lookup] 按名
 /// 查找，[GcmToolRegistry.catalogRevision] 给出注册表内容的规范化稳定哈希
-/// （lib/mcp/catalog_revision.dart 的纯 Dart SHA-256，截前 16 个小写 hex，
+/// （lib/mcp/catalog_revision.dart 的纯 Dart SHA-256，截前 12 个小写 hex，
 /// 不新增第三方依赖）。
 library;
 
@@ -13,6 +13,7 @@ import 'package:mcp_dart/mcp_dart.dart';
 
 import 'catalog_revision.dart' as revision;
 import 'tool_catalog.dart';
+import 'tool_example.dart';
 
 /// 单个业务工具的完整定义（gcm_help tool 模式的响应载体）。
 class GcmToolDefinition {
@@ -49,7 +50,9 @@ class GcmToolDefinition {
   final Map<String, Object?>? meta;
 
   /// gcm_help tool 模式响应里 `tool` 字段的 JSON 形状：完整
-  /// inputSchema/outputSchema、四字段 hint 注解与 meta。
+  /// inputSchema/outputSchema、四字段 hint 注解、meta 与一份必能通过
+  /// inputSchema 校验的示例参数（issue #35，由 lib/mcp/tool_example.dart
+  /// 从 schema 派生，测试强制 35 个示例全部通过校验）。
   Map<String, Object?> toJson() => <String, Object?>{
     'name': name,
     'title': title,
@@ -63,6 +66,7 @@ class GcmToolDefinition {
       'idempotentHint': annotations.idempotentHint,
       'openWorldHint': annotations.openWorldHint,
     },
+    'example': exampleForSchema(inputSchema),
     'meta': meta,
   };
 }
@@ -84,6 +88,6 @@ class GcmToolRegistry {
   /// 按名查找；未知名返回 null。
   GcmToolDefinition? lookup(String name) => _definitions[name];
 
-  /// 注册表内容的规范化稳定哈希（16 个小写 hex 字符）；目录不变则不变。
+  /// 注册表内容的规范化稳定哈希（12 个小写 hex 字符）；目录不变则不变。
   String get catalogRevision => revision.catalogRevision();
 }

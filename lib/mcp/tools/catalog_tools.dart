@@ -99,17 +99,11 @@ void registerCatalogTools(
     inputSchema: JsonObject(
       properties: <String, JsonSchema>{
         'domain': const JsonString(
-          description: '只返回该域的工具（与 tool 互斥）',
-          enumValues: [
-            'system',
-            'container',
-            'image',
-            'mount',
-            'network',
-            'compose',
-            'project',
-            'registry',
-          ],
+          description:
+              '只返回该域的工具（与 tool 互斥）；合法域：system/container/'
+              'image/mount/network/compose/project/registry。'
+              '不带 enum 约束——未知域由 handler 返回中文结构化错误'
+              '（issue #35），不走协议层英文 -32602。',
         ),
         'tool': const JsonString(
           description:
@@ -134,6 +128,25 @@ void registerCatalogTools(
           hint:
               '二选一：domain 过滤单个域、tool 查看单个工具完整定义；'
               '都不传则返回总目录。',
+        );
+      }
+      // issue #35（总审查 P2 修复）：未知 domain 不能再靠 schema enum 走
+      // SDK 英文 -32602——handler 级给出中文结构化错误与合法域清单。
+      const knownDomains = [
+        'system',
+        'container',
+        'image',
+        'mount',
+        'network',
+        'compose',
+        'project',
+        'registry',
+      ];
+      if (domain != null && !knownDomains.contains(domain)) {
+        return _catalogError(
+          GcmErrorCode.invalidArgument,
+          '未知域：$domain',
+          hint: '合法域：${knownDomains.join(', ')}。也可调用 gcm_help（不带参数）查看总目录。',
         );
       }
       // tool 模式：返回单个工具的完整定义。定义取自主注册表的按名索引
@@ -233,7 +246,9 @@ void registerCatalogTools(
     annotations: const ToolAnnotations(
       title: 'Call GCM Tool',
       readOnlyHint: false,
-      destructiveHint: false,
+      // issue #35（总审查 P0 修复）：gcm_call 可分发到删除类工具，外层
+      // 注解必须保守为 destructive，由测试钉住防再次回退。
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     ),

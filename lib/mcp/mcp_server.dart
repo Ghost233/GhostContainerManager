@@ -121,7 +121,9 @@ class GcmMcpServer {
             'management tool (grouped by domain, with parameters and risk '
             'annotations), and gcm_call invokes one of them by name. Always '
             'call gcm_help first to discover tool names and arguments. '
-            'Confirm with the user before calling tools whose catalog entry '
+            'Every gcm_help response carries a catalogRevision hash: cache '
+            'the catalog by it and re-fetch with gcm_help only when it '
+            'changes. Confirm with the user before calling tools whose catalog entry '
             'has destructiveHint: true.',
       ),
     );

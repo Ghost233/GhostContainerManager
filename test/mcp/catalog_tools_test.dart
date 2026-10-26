@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
 import 'package:ghost_container_manager/mcp/catalog_revision.dart';
 import 'package:ghost_container_manager/mcp/tool_catalog.dart';
+import 'package:ghost_container_manager/mcp/tool_example.dart';
 import 'package:ghost_container_manager/mcp/tools/catalog_tools.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
@@ -34,9 +35,9 @@ void main() {
       );
     });
 
-    test('catalogRevision 为 16 位小写 hex 且重复调用稳定', () {
+    test('catalogRevision 为 12 位小写 hex 且重复调用稳定', () {
       final revision = catalogRevision();
-      expect(revision, matches(RegExp(r'^[0-9a-f]{16}$')));
+      expect(revision, matches(RegExp(r'^[0-9a-f]{12}$')));
       expect(catalogRevision(), revision);
     });
 
@@ -88,6 +89,18 @@ void main() {
       for (final entry in kToolCatalog) {
         expect(entry.title, isNotEmpty, reason: entry.name);
         expect(entry.description, isNotEmpty, reason: entry.name);
+      }
+    });
+
+    test('issue #35：35 个工具各有一份通过自身 inputSchema 校验的示例', () {
+      for (final entry in kToolCatalog) {
+        final example = exampleForSchema(entry.inputSchema);
+        expect(example, isA<Map<String, Object?>>(), reason: entry.name);
+        expect(
+          () => entry.inputSchema.validate(example),
+          returnsNormally,
+          reason: '${entry.name} 的示例必须通过自身 schema 校验',
+        );
       }
     });
 
@@ -429,7 +442,7 @@ void main() {
           .cast<String, dynamic>();
       final revision = defaultStructured['catalogRevision'];
       expect(revision, isA<String>());
-      expect(revision, matches(RegExp(r'^[0-9a-f]{16}$')));
+      expect(revision, matches(RegExp(r'^[0-9a-f]{12}$')));
       expect(domainStructured['catalogRevision'], revision);
       expect(revision, catalogRevision());
     });
@@ -496,6 +509,49 @@ void main() {
       final hint = error['hint'] as String;
       expect(hint, contains('gcm_help'));
       expect(hint, contains('container_create'));
+    });
+
+    test('issue #35：gcm_call 外层注解保守为 destructive（钉住防回退）', () async {
+      await initialize();
+      final body = await rpc(<String, dynamic>{
+        'jsonrpc': '2.0',
+        'id': nextId++,
+        'method': 'tools/list',
+        'params': <String, dynamic>{},
+      });
+      final tools = ((body['result'] as Map<String, dynamic>)['tools'] as List)
+          .cast<Map<String, dynamic>>();
+      final call = tools.singleWhere((t) => t['name'] == 'gcm_call');
+      final annotations = (call['annotations'] as Map).cast<String, dynamic>();
+      expect(annotations['destructiveHint'], isTrue);
+      expect(annotations['readOnlyHint'], isFalse);
+      expect(annotations['idempotentHint'], isFalse);
+    });
+
+    test('issue #35：未知 domain 返回中文结构化错误（不走协议层 -32602）', () async {
+      await initialize();
+      final result = await callTool('gcm_help', <String, dynamic>{
+        'domain': 'bogus',
+      });
+      expect(result['isError'], isTrue);
+      final structured = (result['structuredContent'] as Map)
+          .cast<String, dynamic>();
+      final error = (structured['error'] as Map).cast<String, dynamic>();
+      expect(error['code'], 'INVALID_ARGUMENT');
+      expect(error['message'] as String, contains('未知域'));
+      expect(error['hint'] as String, contains('container'));
+    });
+
+    test('issue #35：tool 模式响应含示例参数', () async {
+      await initialize();
+      final result = await callTool('gcm_help', <String, dynamic>{
+        'tool': 'container_create',
+      });
+      final structured = (result['structuredContent'] as Map)
+          .cast<String, dynamic>();
+      final tool = (structured['tool'] as Map).cast<String, dynamic>();
+      expect(tool['example'], isA<Map<String, dynamic>>());
+      expect((tool['example'] as Map).containsKey('image'), isTrue);
     });
 
     test('issue #30：catalogRevision 跨服务器实例一致', () async {

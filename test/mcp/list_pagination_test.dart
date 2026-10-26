@@ -32,7 +32,9 @@ void main() {
   late FakeContainerBridge bridge;
   late _FakeProjectService projectService;
   late StreamableMcpServer transport;
-  final http = HttpClient();
+  // 每测试新建并在 tearDown 关闭（issue #35 资源卫生）；不能组级共享
+  // 后关闭——HttpClient.close 会让后续测试的 postUrl 直接抛 StateError。
+  late HttpClient http;
 
   String? sessionId;
   String? protocolVersion;
@@ -62,6 +64,7 @@ void main() {
   setUp(() async {
     sessionId = null;
     protocolVersion = null;
+    http = HttpClient();
     bridge = FakeContainerBridge()
       ..containers = [
         payloadWithMount('zeta', '/z/src'),
@@ -146,6 +149,7 @@ void main() {
 
   tearDown(() async {
     await transport.stop();
+    http.close();
   });
 
   Future<Map<String, dynamic>> rpc(Map<String, dynamic> message) async {

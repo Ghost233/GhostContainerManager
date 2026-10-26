@@ -18,7 +18,7 @@ stdio 代理用 `--port` 指向同一端口。代理本身无状态，可按需�
 
 server 采用精简注册：`tools/list` 只返回 `gcm_help` 与 `gcm_call` 两个
 工具，全部 35 个业务工具经 `gcm_help` 发现、经 `gcm_call` 调用。`gcm_help`
-支持两种模式（真实返回摘自 2026-10-26 验收，`HEAD=2fe37da` debug 构建）：
+支持三种模式：
 
 **默认模式** `gcm_help({})` — 返回全部工具，按 8 个领域分组：
 
@@ -40,19 +40,28 @@ server 采用精简注册：`tools/list` 只返回 `gcm_help` 与 `gcm_call` 两
 ```
 
 **领域模式** `gcm_help({"domain": "container"})` — 只返回该领域的工具
-清单（上例返回 10 个容器工具）。
+清单（上例返回 10 个容器工具）。合法域：system/container/image/mount/
+network/compose/project/registry；未知域返回结构化中文错误
+（`INVALID_ARGUMENT`，附合法域清单）。
 
-已知缺口（验收 #33 实证，`HEAD=2fe37da`）：`gcm_help` 目前**只有**上述两
-种模式。issue #30 验收评论与交付文档声称的单工具模式
-`gcm_help({"tool": "..."})`（返回完整 inputSchema + 注解）与
-`catalogRevision` 字段在代码中未实现——真实 server 对 `tool` 参数返回
-协议层 `-32602`（inputSchema 仅声明 `domain` 且
-`additionalProperties: false`）。接入方在缺口补齐前不要依赖这两个特性。
+**单工具模式** `gcm_help({"tool": "container_create"})` — 返回该工具的
+完整定义：`{mode: "tool", catalogRevision, tool: {name, title, domain,
+description, inputSchema, outputSchema, annotations, example, meta}}`。
+其中 `example` 是一份必能通过该工具 inputSchema 校验的示例参数对象。
+`domain` 与 `tool` 互斥，同传返回 `INVALID_ARGUMENT`；未知工具名返回
+`NOT_FOUND` 并附全部合法工具名清单。
+
+**catalogRevision**：三种模式的响应都带 `catalogRevision`（注册表内容
+的规范化 SHA-256 哈希，前 12 位 hex）。目录不变则哈希不变——客户端可按
+它缓存目录、变化时再刷新（server instructions 亦作此提示）。
 
 ## 工具调用：gcm_call
 
 `gcm_call({"tool": "<工具名>", "arguments": {...}})` 分发到业务工具；分发
-前对 `arguments` 做 JsonSchema 校验，非法参数在协议层返回 `-32602`。
+前对 `arguments` 做 JsonSchema 校验（mcp_dart 内建校验器），非法参数返回
+结构化工具错误（`isError: true`，`error.code = "INVALID_ARGUMENT"`，中文
+message 指明字段），handler 不会执行。注意 `gcm_call` 外层注解为
+`destructiveHint: true`（保守：它可能分发到删除类工具）。
 
 真实示例（验收快照）：
 

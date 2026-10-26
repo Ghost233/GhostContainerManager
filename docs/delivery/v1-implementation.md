@@ -188,3 +188,15 @@ MCP 全链路在真实运行时验证通过：35 工具 tools/list、system_stat
 - 合并：PR #34 squash → main b8edb36「MCP 加固里程碑：注册表校验、保守注解、分页契约与真实验收（#28）」；远端分支已删，本地 feature 分支已清。
 - 合并后门禁：main 上 scripts/test-host.sh check exit 0，431/431 tests（run-L0Gbik）。
 - 遗留：v1.1.0 发布待维护者触发；macOS 26 虚拟机出包验证随发布人工执行。
+
+## 总审查修复记录（issue #35，PR #34 合并后 fix-forward）
+
+背景：PR #34 合并时依据的 Spec 审查摘要「无 P0/P1」是该子代理的中间态误报；其最终报告含 1 P0 + 2 P1（m06574）。教训：审查结论以最终完整报告为准，中间消息不作合并依据。
+
+修复（全部测试钉住，435/435 绿，run-aKH081）：
+- P0：gcm_call 外层注解 destructiveHint 改 true（该值全史从未为 true，是 #30 验收 1 的实际回归；tools/list e2e 钉住）。
+- P1：每工具示例——lib/mcp/tool_example.dart 从 schema 派生示例（枚举首值/minimum/required-only），gcm_help tool 模式输出 example 字段，35 个示例逐一过内建校验器的强制测试。
+- P1：docs/agents/mcp.md 订正（三模式 + catalogRevision 说明、isError 结构化错误替代 -32602 旧说法）。
+- P2 批：catalogRevision 截前 12 位对齐规格；gcm_help 未知 domain 改 handler 级中文 INVALID_ARGUMENT（domain schema 去掉 enum 让错误到 handler）；tool_registrar 死防御与未使用的 McpServerRegistrar 删除；list_pagination_test HttpClient 每测试新建并 tearDown close；server instructions 补 catalogRevision 缓存提示。
+
+合并后 P2 跟进清单（两轴不重叠，共 8 项）：审计工具名双写漂移、已知限制表格化、registry 51 容器实例化核对、CLI parity 定时核对、纯 Dart SHA-256 vs crypto 直接依赖、T5 CI/release 握手门禁接入、macOS 26 VM 出包验证（随发布人工）、GUI 同刻一致性核对记录。
