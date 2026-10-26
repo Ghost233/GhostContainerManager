@@ -157,3 +157,9 @@ MCP 全链路在真实运行时验证通过：35 工具 tools/list、system_stat
 - 形态：`tools/list` 只暴露 `gcm_help`（按域分组的工具目录：名称/title/描述要点/RO·D·I 注解，支持 `domain` 过滤）与 `gcm_call`（`tool` + `arguments` 按名分发；未知工具名 → `NOT_FOUND` 工具错误并提示先调 `gcm_help`）。35 个业务工具的实现/schema/注解不变。
 - 结构：新增 `lib/mcp/tool_catalog.dart`（35 条目单一事实来源，须与 docs/spec/mcp-tools.md §3 同步）、`lib/mcp/tool_registrar.dart`（`ToolRegistrar` 结构接缝 + `ToolCallbackRegistry` 收集器 + `McpServerRegistrar` 适配器）、`lib/mcp/tools/catalog_tools.dart`（两个入口工具 + `buildBusinessToolRegistry`）。`GcmMcpServer.buildServer` 改为注册两个入口工具；业务工具 callback 经 `_auditedRegistry` 包装保持工具粒度审计（gcm_call 入口本身也记一条）。
 - 测试：协议级测试的 `callTool` 一律改经 `gcm_call` 转发；`tools/list` 断言改为「恰好 {gcm_help, gcm_call}」+ `gcm_help` 目录断言；新增 `test/mcp/catalog_tools_test.dart`（目录 35 条/八域/查找/注册表收集）。MCP 套件 64/64 绿。
+
+## v1.0.3 发布（2026-10-26）
+
+- 发布内容：MCP 精简注册模式（fe654ad，gcm_help + gcm_call 双入口，35 业务工具经分发表调用）。
+- 版本提交 38f23d3（`chore: bump version to 1.0.3`）；本地门禁：test-host check 372/372（run-ltaLZq）、build-release 预检 OK（arm64 DMG 31,501,734 B）。
+- tag v1.0.3 推送后 release.yml run 40278597713 结论 success；Release 正式发布（非草稿/预发布），资产三件齐全：GhostContainerManager-1.0.3.dmg（31,487,792 B，sha256 80cc9479…）、manifest.json、SHA256SUMS。本地 main、origin/main、tag 同指 38f23d3。
