@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
+import 'package:ghost_container_manager/mcp/catalog_revision.dart';
 import 'package:ghost_container_manager/mcp/tool_catalog.dart';
 import 'package:ghost_container_manager/mcp/tools/catalog_tools.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
@@ -10,6 +11,46 @@ import 'package:ghost_container_manager/services/system_service.dart';
 import 'package:mcp_dart/mcp_dart.dart';
 
 void main() {
+  group('catalogRevision（issue #30）', () {
+    test('sha256HexDigest 通过 FIPS 180-4 标准已知向量', () {
+      // 空串（单分块边界）。
+      expect(
+        sha256HexDigest(utf8.encode('')),
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      );
+      // 短消息。
+      expect(
+        sha256HexDigest(utf8.encode('abc')),
+        'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+      );
+      // 56 字节消息，跨两个分块。
+      expect(
+        sha256HexDigest(
+          utf8.encode(
+            'abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq',
+          ),
+        ),
+        '248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1',
+      );
+    });
+
+    test('catalogRevision 为 16 位小写 hex 且重复调用稳定', () {
+      final revision = catalogRevision();
+      expect(revision, matches(RegExp(r'^[0-9a-f]{16}$')));
+      expect(catalogRevision(), revision);
+    });
+
+    test('canonicalJson 对 Map 键递归排序', () {
+      expect(
+        canonicalJson(<String, Object?>{
+          'b': 1,
+          'a': <String, Object?>{'y': null, 'x': true},
+        }),
+        '{"a":{"x":true,"y":null},"b":1}',
+      );
+    });
+  });
+
   group('tool catalog', () {
     test('35 entries across eight domains, matching the v1 spec', () {
       expect(kToolCatalog, hasLength(35));
@@ -374,6 +415,190 @@ void main() {
       final structured = (result['structuredContent'] as Map)
           .cast<String, dynamic>();
       expect((structured['error'] as Map)['code'], 'NOT_FOUND');
+    });
+
+    test('issue #30：default 与 domain 模式响应含相同 catalogRevision', () async {
+      await initialize();
+      final defaultResult = await callTool('gcm_help', <String, dynamic>{});
+      final domainResult = await callTool('gcm_help', <String, dynamic>{
+        'domain': 'container',
+      });
+      final defaultStructured = (defaultResult['structuredContent'] as Map)
+          .cast<String, dynamic>();
+      final domainStructured = (domainResult['structuredContent'] as Map)
+          .cast<String, dynamic>();
+      final revision = defaultStructured['catalogRevision'];
+      expect(revision, isA<String>());
+      expect(revision, matches(RegExp(r'^[0-9a-f]{16}$')));
+      expect(domainStructured['catalogRevision'], revision);
+      expect(revision, catalogRevision());
+    });
+
+    test('issue #30：tool 模式返回单工具完整定义', () async {
+      await initialize();
+      final result = await callTool('gcm_help', <String, dynamic>{
+        'tool': 'container_create',
+      });
+      expect(result['isError'], isNot(true));
+      final structured = (result['structuredContent'] as Map)
+          .cast<String, dynamic>();
+      expect(structured['name'], 'container_create');
+      expect(structured['domain'], 'container');
+      expect(structured['title'], 'Create Container');
+      expect(structured['description'] as String, isNotEmpty);
+      final inputSchema = (structured['inputSchema'] as Map)
+          .cast<String, dynamic>();
+      expect(
+        (inputSchema['properties'] as Map).keys,
+        containsAll(<String>['image', 'name', 'ports', 'mounts']),
+      );
+      final outputSchema = (structured['outputSchema'] as Map)
+          .cast<String, dynamic>();
+      expect(
+        outputSchema['required'] as List,
+        containsAll(<String>['id', 'name', 'status', 'warnings']),
+      );
+      final annotations = (structured['annotations'] as Map)
+          .cast<String, dynamic>();
+      expect(annotations['title'], 'Create Container');
+      expect(annotations['readOnlyHint'], isFalse);
+      expect(annotations['destructiveHint'], isFalse);
+      expect(annotations['idempotentHint'], isFalse);
+      expect(annotations['openWorldHint'], isTrue);
+      expect(structured.containsKey('meta'), isTrue);
+      expect(structured['catalogRevision'], catalogRevision());
+    });
+
+    test('issue #30：domain 与 tool 同传返回 INVALID_ARGUMENT', () async {
+      await initialize();
+      final result = await callTool('gcm_help', <String, dynamic>{
+        'domain': 'container',
+        'tool': 'container_create',
+      });
+      expect(result['isError'], isTrue);
+      final structured = (result['structuredContent'] as Map)
+          .cast<String, dynamic>();
+      final error = (structured['error'] as Map).cast<String, dynamic>();
+      expect(error['code'], 'INVALID_ARGUMENT');
+      expect(error['message'] as String, contains('互斥'));
+    });
+
+    test('issue #30：未知工具名返回结构化错误并附合法名提示', () async {
+      await initialize();
+      final result = await callTool('gcm_help', <String, dynamic>{
+        'tool': 'nope_not_a_tool',
+      });
+      expect(result['isError'], isTrue);
+      final structured = (result['structuredContent'] as Map)
+          .cast<String, dynamic>();
+      final error = (structured['error'] as Map).cast<String, dynamic>();
+      expect(error['code'], 'NOT_FOUND');
+      expect(error['message'] as String, contains('nope_not_a_tool'));
+      final hint = error['hint'] as String;
+      expect(hint, contains('gcm_help'));
+      expect(hint, contains('container_create'));
+    });
+
+    test('issue #30：catalogRevision 跨服务器实例一致', () async {
+      await initialize();
+      final first = await callTool('gcm_help', <String, dynamic>{});
+      final firstRevision =
+          ((first['structuredContent'] as Map)
+                  .cast<String, dynamic>())['catalogRevision']
+              as String;
+
+      // 第二个完全独立的服务器实例（独立 McpServer + 独立端口）。
+      final bridge = FakeContainerBridge();
+      final secondServer = StreamableMcpServer(
+        serverFactory: (_) {
+          final server = McpServer(
+            const Implementation(name: 'catalog-snapshot-test-2', version: '0'),
+          );
+          registerCatalogTools(
+            server,
+            buildBusinessToolRegistry(
+              systemService: SystemService(bridge: bridge),
+              containerService: ContainerService(bridge: bridge),
+            ),
+          );
+          return server;
+        },
+        host: '127.0.0.1',
+        port: 0,
+        path: '/mcp',
+        enableJsonResponse: true,
+      );
+      await secondServer.start();
+      final secondClient = HttpClient();
+      String? secondSession;
+      String? secondProtocol;
+      try {
+        Future<Map<String, dynamic>> secondRpc(
+          Map<String, dynamic> body,
+        ) async {
+          final request = await secondClient.postUrl(
+            Uri.parse('http://127.0.0.1:${secondServer.boundPort}/mcp'),
+          );
+          request.headers
+            ..contentType = ContentType.json
+            ..set(
+              HttpHeaders.acceptHeader,
+              'application/json, text/event-stream',
+            );
+          if (secondSession != null) {
+            request.headers.set('mcp-session-id', secondSession!);
+          }
+          if (secondProtocol != null) {
+            request.headers.set('mcp-protocol-version', secondProtocol);
+          }
+          request.write(jsonEncode(body));
+          final response = await request.close();
+          final text = await utf8.decoder.bind(response).join();
+          expect(response.statusCode, inInclusiveRange(200, 202));
+          secondSession ??= response.headers.value('mcp-session-id');
+          return text.trim().isEmpty
+              ? <String, dynamic>{}
+              : jsonDecode(text) as Map<String, dynamic>;
+        }
+
+        final initialized = await secondRpc(<String, dynamic>{
+          'jsonrpc': '2.0',
+          'id': 1,
+          'method': 'initialize',
+          'params': <String, dynamic>{
+            'protocolVersion': '2025-06-18',
+            'capabilities': <String, dynamic>{},
+            'clientInfo': <String, dynamic>{
+              'name': 'test2',
+              'version': '1.0.0',
+            },
+          },
+        });
+        secondProtocol =
+            (initialized['result'] as Map<String, dynamic>)['protocolVersion']
+                as String?;
+        await secondRpc(<String, dynamic>{
+          'jsonrpc': '2.0',
+          'method': 'notifications/initialized',
+        });
+        final second = await secondRpc(<String, dynamic>{
+          'jsonrpc': '2.0',
+          'id': 2,
+          'method': 'tools/call',
+          'params': <String, dynamic>{
+            'name': 'gcm_help',
+            'arguments': <String, dynamic>{},
+          },
+        });
+        final secondRevision =
+            (((second['result'] as Map)['structuredContent'] as Map)
+                    .cast<String, dynamic>())['catalogRevision']
+                as String;
+        expect(secondRevision, firstRevision);
+      } finally {
+        secondClient.close(force: true);
+        await secondServer.stop();
+      }
     });
   });
 }

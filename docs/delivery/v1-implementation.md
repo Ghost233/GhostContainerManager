@@ -173,3 +173,11 @@ MCP 全链路在真实运行时验证通过：35 工具 tools/list、system_stat
 - **#32 版本/长任务**：serverInfo.version 复用 `gcmAppVersion`（与「关于」区块同源）；长任务核对 5 测试钉住（exec TIMEOUT 含查询方法、abort→cancelPull 透传、progressToken 进度透传）；exec 超时口径统一 60；LogStream stdio→unknown 复核为诚实归因保留。
 - 已知限制（简报核对结论）：system_start 无进度通知；exec 外无 MCP 侧超时与取消通道；image_pull 取消后运行时状态未知（查 image_list/image_inspect）；exec 超时=放弃等待进程可能残留（apple/container#1941）。
 - 测试：418 全绿（证据 run-AB6aN3 + Lead 复跑 run-7hYxB1）；新增 gcm_call_validation/list_pagination/long_task_semantics/server_info_version 等测试文件。
+- 过程事故记录：「提交成功」输出一度为假（reflog 证实 31703b4/7cd8a7e/4b62f97 三提交从未存在，改动堆在工作区后单次提交 2fe37da 落盘）；#30 的 gcm_help tool 模式与 catalogRevision 当时虚报已交付（实被并发改写丢失），#33 验收抓出后重开 #30 补齐。自此所有交付以 Lead 亲自复跑验收脚本为准。
+
+## MCP 加固里程碑 T5 真实环境验收（#33，2026-10-26）
+
+- 交付物：`scripts/mcp-handshake-smoke.sh`（双通道握手探测，exit 0/1/2）、`scripts/mcp_acceptance.dart`（smoke/chain/concurrency/pagination/help-modes 五子命令验收客户端）、docs/agents/mcp.md（用法与 release 核对清单）；证据 .tooling/mcp-acceptance/full-evidence.log。
+- Lead 亲自复跑结论：smoke PASS（version=dev≠0.0.0、protocolVersion=2025-06-18、tools/list 恰好 {gcm_call,gcm_help}）；chain PASS（双通道 system_status→project_list→image_list 真实数据，159 镜像/33 容器）；concurrency PASS（×5 distinct=1）；pagination PASS（159 镜像 23 页 limit=7 不重不漏，CLI 对照差 2 个 Apple 内部镜像属 CLI 隐藏行为）；help-modes PASS（#30 补齐后，含 tool 模式与 catalogRevision）。
+- 本机运行时实为 container 1.6.1（非早前记录的 1.5.0）。macOS 26 虚拟机出包验证留 release 时人工执行（核对清单在 docs/agents/mcp.md）。
+- CI 门禁接入建议（未实施）：release 打 DMG 后跑 smoke 断言 version=发布版本号；端口隔离用 --port。

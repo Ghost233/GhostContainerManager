@@ -64,6 +64,26 @@ class ToolCatalogEntry {
       'openWorldHint': annotations.openWorldHint,
     },
   };
+
+  /// issue #30：gcm_help tool 模式的完整定义形状（完整 inputSchema /
+  /// outputSchema / 五字段注解 / meta 全部序列化为 JSON），同时也是
+  /// catalogRevision 哈希的输入形状——两处共用同一序列化，不会漂移。
+  Map<String, Object?> toDetailJson() => <String, Object?>{
+    'name': name,
+    'domain': domain,
+    'title': title,
+    'description': description,
+    'inputSchema': inputSchema.toJson(),
+    'outputSchema': outputSchema.toJson(),
+    'annotations': <String, Object?>{
+      'title': annotations.title,
+      'readOnlyHint': annotations.readOnlyHint,
+      'destructiveHint': annotations.destructiveHint,
+      'idempotentHint': annotations.idempotentHint,
+      'openWorldHint': annotations.openWorldHint,
+    },
+    'meta': meta,
+  };
 }
 
 /// 把注册表条目的全部声明与 [callback] 绑定注册到 [registrar]。

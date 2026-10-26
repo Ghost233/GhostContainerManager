@@ -26,6 +26,7 @@ import '../../services/network_service.dart';
 import '../../services/project_service.dart';
 import '../../services/registry_service.dart';
 import '../../services/system_service.dart';
+import '../catalog_revision.dart';
 import '../tool_catalog.dart';
 import '../tool_registrar.dart';
 import 'compose_tools.dart';
@@ -86,11 +87,15 @@ void registerCatalogTools(
     description:
         '列出本应用提供的全部容器管理工具（按域分组，含参数要点与风险注解）。'
         '先用本工具找到目标工具名与参数，再通过 gcm_call 调用。'
-        '可选参数 domain 过滤单个域（system/container/image/mount/network/compose/project/registry）。',
+        '三种模式：不带参数返回总目录；domain 过滤单个域'
+        '（system/container/image/mount/network/compose/project/registry）；'
+        'tool 返回单个工具的完整定义（inputSchema/outputSchema/注解/meta）。'
+        'domain 与 tool 互斥，不能同时传入。'
+        '响应带 catalogRevision（注册表内容哈希，目录不变则不变）。',
     inputSchema: JsonObject(
       properties: <String, JsonSchema>{
         'domain': const JsonString(
-          description: '只返回该域的工具',
+          description: '只返回该域的工具（与 tool 互斥）',
           enumValues: [
             'system',
             'container',
@@ -102,12 +107,62 @@ void registerCatalogTools(
             'registry',
           ],
         ),
+        'tool': const JsonString(
+          description:
+              '只返回该工具的完整定义（inputSchema/outputSchema/注解/meta）；'
+              '与 domain 互斥',
+        ),
       },
       additionalProperties: false,
     ),
     annotations: _readOnly,
     callback: (args, extra) async {
       final domain = args['domain'] as String?;
+      final tool = args['tool'] as String?;
+      // issue #30：三种模式的响应都带 catalogRevision（注册表内容规范化
+      // 哈希），客户端可据此判断已发现的目录是否过期。
+      final revision = catalogRevision();
+      // domain 与 tool 互斥：同传是调用方歧义，明确拒绝而非默默选一个。
+      if (domain != null && tool != null) {
+        return _catalogError(
+          GcmErrorCode.invalidArgument,
+          'gcm_help 的 domain 与 tool 参数互斥，不能同时传入。',
+          hint:
+              '二选一：domain 过滤单个域、tool 查看单个工具完整定义；'
+              '都不传则返回总目录。',
+        );
+      }
+      // tool 模式：返回单个工具的完整定义。定义取自主注册表
+      // （kToolCatalog，元数据单一事实来源）——帮助是定义性文档，与
+      // 当前进程是否接线该域无关；default/domain 目录仍只列已接线工具。
+      if (tool != null) {
+        final entry = tool.isEmpty ? null : catalogEntryByName(tool);
+        if (entry == null) {
+          return _catalogError(
+            GcmErrorCode.notFound,
+            '未知工具：$tool',
+            hint:
+                '已登记工具（共 ${kToolCatalog.length} 个）：'
+                '${kToolCatalog.map((e) => e.name).join(', ')}。'
+                '也可调用 gcm_help（不带参数）查看按域分组的总目录。',
+          );
+        }
+        final detail = <String, Object?>{
+          'catalogRevision': revision,
+          ...entry.toDetailJson(),
+        };
+        return CallToolResult(
+          content: [
+            TextContent(
+              text:
+                  '${entry.name}（${entry.domain} 域）：${entry.title}。'
+                  '完整 inputSchema/outputSchema/注解见 structuredContent。'
+                  '调用方式：gcm_call({tool: "${entry.name}", arguments: {...}})。',
+            ),
+          ],
+          structuredContent: detail,
+        );
+      }
       // 目录成员来自 ToolCallbackRegistry 的注册快照（只含实际接线的
       // 工具）；渲染数据仍取自主注册表条目，元数据单一事实来源不变。
       final grouped = <String, List<ToolCatalogEntry>>{};
@@ -129,6 +184,7 @@ void registerCatalogTools(
         total += entry.value.length;
       }
       final result = <String, Object?>{
+        'catalogRevision': revision,
         'usage':
             '调用方式：gcm_call({tool: "<工具名>", arguments: {...}})。'
             'destructiveHint=true 的工具请先与用户确认。',
