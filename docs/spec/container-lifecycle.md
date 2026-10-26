@@ -69,10 +69,10 @@ running/stopped(autoRemove) --退出--> 消失
 | create | `ClientImage.get` → `client.create` | **本地镜像-only**（2026-10-24 用户拍板，修正原「缺时自动 fetch」）：镜像必须已存在，缺失时立即报错并提示先 `image_pull`（避免 create 隐式变成分钟级长操作；pulling 合成态随之取消）。落盘后状态=stopped，不启动 | autoRemove 默认 false（对应 `container run --rm` 的反面；UI 暴露为「退出后自动删除」开关）；v1 创建面=name/image/command/env/ports/mounts/labels/network/start（cpus/memoryBytes 延 v2，审查 P1 裁决）；内存下限 200 MiB 由上游校验 | 同名报错，非幂等 |
 | start | `bootstrap` + `startProcess` | 注册 launchd runtime 服务并拉起 init 进程；stdio 全 nil（后台容器语义） | 无参数 | 上游幂等（running 时 no-op） |
 | stop | `client.stop(id, opts)` | 向 init 发停止信号，等待优雅超时后 runtime 升级 SIGKILL；完成后清理 runtime 服务，状态回 stopped | `timeoutInSeconds` 默认 **5**（=`ContainerStopOptions.default` 与 CLI `--time` 默认）；`signal` 默认 nil → 用容器配置 `stopSignal` → 再缺省 SIGTERM | 上游幂等 |
-| restart | **上游无此命令**（CLI 与 orchard 均无） | Service layer 合成：`stop(默认参数)` 成功后 `start`。非原子；stop 幂等所以 restart 一个 stopped 容器 = 纯 start | 参数继承 stop | 合成操作，可安全重试 |
+| restart | **上游无此命令**（CLI 与 orchard 均无） | Service layer 合成：`stop(默认参数)` 成功后 `start`。非原子；stop 幂等所以 restart 一个 stopped 容器 = 纯 start | 参数继承 stop | 合成操作，可安全重试但非幂等（每次是完整 stop+start 周期；MCP `idempotentHint=false`） |
 | delete | `client.delete(id, force)` | stopped：直接删 bundle+注销 launchd；running 且 force=true：上游先 SIGKILL(5s) 再删；running 且无 force：前置拒绝 | `force` 默认 false；UI 对运行中容器给「强制停止并删除」复选项（不设破坏性门控是已定决策，此处仅做语义透明） | 删后重发=notFound 报错，Service layer 吞掉视为成功 |
 | logs | `client.logs(id)` → 两个 FileHandle | fhs[0]=容器 stdio 日志，fhs[1]=bootlog（VM 引导日志）。任意状态可读，无文件时读作空。**XPC 独有**（CLI 的 `logs -f` 是裸文本不可用） | 默认：初始加载末尾 500 行 + follow 开；bootlog 作为可切换来源 | 只读 |
-| exec | `createProcess` + `start` | **v1 = 一次性命令**：非 TTY（terminal=false），stdout/stderr 分管道捕获，返回退出码。继承容器 env，调用方可覆盖 env/工作目录/user。交互式 TTY 不在 v1（需要 stdin 流 + resize  plumbing，orchard 也未做） | MCP 侧加 `timeoutSeconds`（默认 30）超时后 kill 进程组；注意上游已知 bug apple/container#1941（kill 信号类型不匹配），kill 可能失败 → 超时语义=放弃等待并报告，进程可能残留 | 每次 exec 是独立进程，天然安全 |
+| exec | `createProcess` + `start` | **v1 = 一次性命令**：非 TTY（terminal=false），stdout/stderr 分管道捕获，返回退出码。继承容器 env，调用方可覆盖 env/工作目录/user。交互式 TTY 不在 v1（需要 stdin 流 + resize  plumbing，orchard 也未做） | MCP 侧加 `timeoutSeconds`（默认 60）超时后 kill 进程组；注意上游已知 bug apple/container#1941（kill 信号类型不匹配），kill 可能失败 → 超时语义=放弃等待并报告，进程可能残留 | 每次 exec 是独立进程，天然安全 |
 
 补充语义细节：
 

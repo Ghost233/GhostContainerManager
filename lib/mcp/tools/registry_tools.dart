@@ -1,7 +1,15 @@
+/// MCP `registry_*` tool handlers (docs/spec/mcp-tools.md §3.7).
+///
+/// MCP translation for the app-owned local registry. Container and image
+/// lifecycle remains in [RegistryService]. Declarative metadata lives in
+/// lib/mcp/tool_catalog.dart (ADR-0001).
+library;
+
 import 'dart:async';
 
 import 'package:mcp_dart/mcp_dart.dart';
 
+import '../tool_catalog.dart';
 import '../tool_registrar.dart';
 
 import '../../services/registry_service.dart';
@@ -13,13 +21,9 @@ void registerRegistryTools(
   ToolRegistrar service,
   RegistryService registryService,
 ) {
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'registry_status',
-    title: 'Get Registry Status',
-    description: '读取本地 registry 容器、HTTP 健康、端口与数据目录占用。',
-    inputSchema: const JsonObject(properties: {}, additionalProperties: false),
-    outputSchema: _registryStatusOutput(),
-    annotations: _annotations('Get Registry Status', readOnly: true),
     callback: (args, extra) => guardToolCall(() async {
       final result = await registryService.status();
       return (
@@ -31,23 +35,9 @@ void registerRegistryTools(
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'registry_start',
-    title: 'Start Local Registry',
-    description: '幂等启动 127.0.0.1 上的 registry；首次会拉取并创建容器，保留已有数据。',
-    inputSchema: JsonObject(
-      properties: <String, JsonSchema>{'port': _portSchema()},
-      additionalProperties: false,
-    ),
-    outputSchema: JsonObject(
-      properties: <String, JsonSchema>{
-        'running': const JsonBoolean(),
-        'port': const JsonInteger(),
-        'containerId': const JsonString(),
-      },
-      required: ['running', 'port', 'containerId'],
-    ),
-    annotations: _annotations('Start Local Registry'),
     callback: (args, extra) => guardToolCall(() async {
       final result = await _withCancellation(extra, (cancellation) {
         var stage = 0;
@@ -75,16 +65,9 @@ void registerRegistryTools(
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'registry_stop',
-    title: 'Stop Local Registry',
-    description: '停止 registry 容器，不删除容器或其持久化数据。',
-    inputSchema: JsonObject(additionalProperties: false),
-    outputSchema: JsonObject(
-      properties: <String, JsonSchema>{'running': const JsonBoolean()},
-      required: ['running'],
-    ),
-    annotations: _annotations('Stop Local Registry', destructive: true),
     callback: (args, extra) => guardToolCall(() async {
       final result = await registryService.stop();
       return (
@@ -94,35 +77,6 @@ void registerRegistryTools(
     }),
   );
 }
-
-JsonInteger _portSchema() => const JsonInteger(
-  description: '宿主机 loopback 端口',
-  defaultValue: 5056,
-  minimum: 1,
-  maximum: 65535,
-);
-
-JsonObject _registryStatusOutput() => JsonObject(
-  properties: <String, JsonSchema>{
-    'running': const JsonBoolean(),
-    'port': const JsonInteger(),
-    'containerId': const JsonString(),
-    'diskBytes': const JsonInteger(),
-  },
-  required: ['running', 'port'],
-);
-
-ToolAnnotations _annotations(
-  String title, {
-  bool readOnly = false,
-  bool destructive = false,
-}) => ToolAnnotations(
-  title: title,
-  readOnlyHint: readOnly,
-  destructiveHint: destructive,
-  idempotentHint: true,
-  openWorldHint: true,
-);
 
 Future<T> _withCancellation<T>(
   RequestHandlerExtra extra,

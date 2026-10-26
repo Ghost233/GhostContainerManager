@@ -182,7 +182,10 @@ void main() {
       );
       expect(
         annotations['idempotentHint'],
-        entry.key != 'container_create' && entry.key != 'container_exec',
+        entry.key != 'container_create' &&
+            entry.key != 'container_exec' &&
+            // issue #32：restart 非幂等（每次都是完整 stop+start 周期）。
+            entry.key != 'container_restart',
         reason: entry.key,
       );
     }
@@ -224,7 +227,8 @@ void main() {
     final containers =
         (result['structuredContent'] as Map<String, dynamic>)['containers']
             as List;
-    expect(containers.map((c) => (c as Map)['id']), ['web', 'other']);
+    // issue #31：列表按 id 升序输出，分页细节见 list_pagination_test。
+    expect(containers.map((c) => (c as Map)['id']), ['other', 'web']);
   });
 
   test('container_inspect 返回完整 configuration', () async {
@@ -323,6 +327,30 @@ void main() {
     expect(result['isError'], isTrue);
     final structured = result['structuredContent'] as Map<String, dynamic>;
     expect((structured['error'] as Map)['code'], 'CONFLICT');
+  });
+
+  test('container_exec 超时：TIMEOUT 含资源标识与查询方法（issue #32）', () async {
+    // 超时 = 放弃等待，进程可能仍在容器内运行（状态未知语义，见
+    // test/mcp/long_task_semantics_test.dart 的核对结论）；错误必须给出
+    // 容器 id 与查询途径，不得让 agent 误以为进程已停止。
+    bridge.execResult = const BridgeExecResult(
+      exitCode: -1,
+      stdout: '',
+      stderr: '',
+      timedOut: true,
+    );
+    await initialize();
+    final result = await callTool('container_exec', <String, dynamic>{
+      'id': 'web',
+      'command': <String>['sleep', '600'],
+      'timeoutSeconds': 5,
+    });
+    expect(result['isError'], isTrue);
+    final error =
+        (result['structuredContent'] as Map<String, dynamic>)['error'] as Map;
+    expect(error['code'], 'TIMEOUT');
+    expect(error['message'], contains('web'));
+    expect(error['hint'], contains('container_inspect'));
   });
 
   test('container_create 转换 MCP 参数并可创建后启动', () async {

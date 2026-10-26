@@ -1,13 +1,21 @@
+/// MCP `project_*` tool handlers (docs/spec/mcp-tools.md §3.6).
+///
+/// Curated project workflows. Runtime mutations stay in ProjectService; this
+/// module only translates MCP arguments, progress, cancellation and
+/// summaries. Declarative metadata (selector/input/output schemas,
+/// annotations) lives in lib/mcp/tool_catalog.dart (ADR-0001).
+library;
+
 import 'dart:async';
 
 import 'package:mcp_dart/mcp_dart.dart';
 
+import '../tool_catalog.dart';
 import '../tool_registrar.dart';
 
 import '../../services/project_service.dart';
+import 'pagination.dart';
 import 'system_tools.dart';
-
-const _prefixPattern = r'^[a-z0-9][a-z0-9.-]{0,126}$';
 
 /// Curated project workflows. Runtime mutations stay in ProjectService; this
 /// module only translates MCP schemas, progress, cancellation and summaries.
@@ -15,42 +23,41 @@ void registerProjectTools(
   ToolRegistrar service,
   ProjectService projectService,
 ) {
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'project_list',
-    title: 'List Projects',
-    description: '列出容器 label 与 ghostcontainer.toml 发现的项目。',
-    inputSchema: JsonObject(additionalProperties: false),
-    outputSchema: JsonObject(
-      properties: <String, JsonSchema>{
-        'projects': const JsonArray(items: JsonObject()),
-      },
-      required: ['projects'],
-    ),
-    annotations: _annotations(
-      'List Projects',
-      readOnly: true,
-      idempotent: true,
-    ),
     callback: (args, extra) => guardToolCall(() async {
       final projects = await projectService.listProjects();
+      // issue #31：稳定排序（project 名升序）后统一分页。
+      final sorted = List.of(projects)
+        ..sort((a, b) => a.project.compareTo(b.project));
+      final page = listPageArguments(args);
+      final slice = listPageSlice(
+        sorted,
+        limit: page.limit,
+        offset: page.offset,
+      );
       return (
         data: <String, Object?>{
-          'projects': projects
+          'projects': slice
               .map((project) => project.toJson())
               .toList(growable: false),
+          ...listPageEnvelope(
+            total: sorted.length,
+            returned: slice.length,
+            offset: page.offset,
+          ),
         },
-        summary: '共 ${projects.length} 个项目',
+        summary:
+            '共 ${sorted.length} 个项目，本页 ${slice.length} 个'
+            '${listSummaryPreview(slice.map((p) => p.project))}',
       );
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'project_get',
-    title: 'Get Project',
-    description: '返回项目镜像、容器与使用状态；project 与 path 二选一。',
-    inputSchema: _selectorInput(),
-    outputSchema: _projectDetailsOutput(),
-    annotations: _annotations('Get Project', readOnly: true, idempotent: true),
     callback: (args, extra) => guardToolCall(() async {
       final result = await projectService.getProject(
         project: args['project'] as String?,
@@ -64,29 +71,9 @@ void registerProjectTools(
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'project_init',
-    title: 'Init Project',
-    description: '在项目目录创建仅含 prefix 的 ghostcontainer.toml。',
-    inputSchema: JsonObject(
-      properties: <String, JsonSchema>{
-        'path': const JsonString(description: '项目目录'),
-        'prefix': const JsonString(
-          description: '项目前缀；默认使用目录名',
-          pattern: _prefixPattern,
-        ),
-      },
-      required: ['path'],
-      additionalProperties: false,
-    ),
-    outputSchema: JsonObject(
-      properties: <String, JsonSchema>{
-        'path': const JsonString(),
-        'prefix': const JsonString(),
-      },
-      required: ['path', 'prefix'],
-    ),
-    annotations: _annotations('Init Project'),
     callback: (args, extra) => guardToolCall(() async {
       final result = await projectService.initProject(
         path: args['path'] as String,
@@ -99,28 +86,9 @@ void registerProjectTools(
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'project_build',
-    title: 'Build Project Image',
-    description:
-        '构建 {prefix}-{name}:latest。MCP 默认跳过测试；'
-        '显式测试使用 project_test 的 command。失败返回末50行与持久日志路径。',
-    inputSchema: _selectorInput(
-      properties: <String, JsonSchema>{
-        'name': const JsonString(
-          description: '镜像自定义名，不含项目前缀或 tag',
-          pattern: _prefixPattern,
-        ),
-        'dockerfile': const JsonString(),
-        'context': const JsonString(),
-        'buildArgs': const JsonObject(additionalProperties: JsonString()),
-        'skipTests': const JsonBoolean(defaultValue: true),
-        'noCache': const JsonBoolean(defaultValue: false),
-      },
-      required: ['name'],
-    ),
-    outputSchema: _projectBuildOutput(),
-    annotations: _annotations('Build Project Image'),
     callback: (args, extra) => guardToolCall(() async {
       final buildArgs =
           (args['buildArgs'] as Map?)?.map(
@@ -158,41 +126,9 @@ void registerProjectTools(
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'project_test',
-    title: 'Test Project Image',
-    description: '用必传 command 运行一次性测试容器；非零退出是结果数据。',
-    inputSchema: _selectorInput(
-      properties: <String, JsonSchema>{
-        'name': const JsonString(pattern: _prefixPattern),
-        'command': const JsonArray(
-          description: '测试命令及参数，必须是非空字符串数组',
-          items: JsonString(),
-        ),
-      },
-      required: ['name', 'command'],
-    ),
-    outputSchema: JsonObject(
-      properties: <String, JsonSchema>{
-        'project': const JsonString(),
-        'image': const JsonString(),
-        'exitCode': const JsonInteger(),
-        'stdout': const JsonString(),
-        'stderr': const JsonString(),
-        'truncated': const JsonBoolean(),
-        'durationMs': const JsonInteger(),
-      },
-      required: [
-        'project',
-        'image',
-        'exitCode',
-        'stdout',
-        'stderr',
-        'truncated',
-        'durationMs',
-      ],
-    ),
-    annotations: _annotations('Test Project Image'),
     callback: (args, extra) => guardToolCall(() async {
       final result = await _withCancellation(
         extra,
@@ -213,22 +149,9 @@ void registerProjectTools(
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'project_reclaim',
-    title: 'Reclaim Project',
-    description: '停删项目容器并仅释放无引用项目镜像；dryRun 返回同构预演。',
-    inputSchema: _selectorInput(
-      properties: <String, JsonSchema>{
-        'dryRun': const JsonBoolean(defaultValue: false),
-        'force': const JsonBoolean(defaultValue: true),
-      },
-    ),
-    outputSchema: _projectReclaimOutput(),
-    annotations: _annotations(
-      'Reclaim Project',
-      destructive: true,
-      idempotent: true,
-    ),
     callback: (args, extra) => guardToolCall(() async {
       final result = await projectService.reclaimProject(
         project: args['project'] as String?,
@@ -245,19 +168,9 @@ void registerProjectTools(
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'project_publish',
-    title: 'Publish Project Image',
-    description: 'tag 并 plain-HTTP 推送到 127.0.0.1:5056，可选删除两个本地 tag。',
-    inputSchema: _selectorInput(
-      properties: <String, JsonSchema>{
-        'name': const JsonString(pattern: _prefixPattern),
-        'deleteLocal': const JsonBoolean(defaultValue: false),
-      },
-      required: ['name'],
-    ),
-    outputSchema: _projectPublishOutput(),
-    annotations: _annotations('Publish Project Image', idempotent: true),
     callback: (args, extra) => guardToolCall(() async {
       final result = await _withCancellation(extra, (cancellation) {
         var lines = 0;
@@ -280,18 +193,9 @@ void registerProjectTools(
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'project_restore',
-    title: 'Restore Project Image',
-    description: '从本地 plain-HTTP registry 拉回并 tag 回项目镜像名。',
-    inputSchema: _selectorInput(
-      properties: <String, JsonSchema>{
-        'name': const JsonString(pattern: _prefixPattern),
-      },
-      required: ['name'],
-    ),
-    outputSchema: _projectRestoreOutput(),
-    annotations: _annotations('Restore Project Image', idempotent: true),
     callback: (args, extra) => guardToolCall(() async {
       final result = await _withCancellation(extra, (cancellation) {
         var lines = 0;
@@ -313,36 +217,6 @@ void registerProjectTools(
     }),
   );
 }
-
-Map<String, JsonSchema> _selectorProperties() => <String, JsonSchema>{
-  'project': const JsonString(
-    description: '项目 prefix；与 path 二选一',
-    pattern: _prefixPattern,
-  ),
-  'path': const JsonString(description: '项目目录；与 project 二选一'),
-};
-
-JsonObject _selectorInput({
-  Map<String, JsonSchema> properties = const <String, JsonSchema>{},
-  List<String> required = const <String>[],
-}) => JsonObject(
-  properties: <String, JsonSchema>{..._selectorProperties(), ...properties},
-  required: required,
-  additionalProperties: false,
-);
-
-ToolAnnotations _annotations(
-  String title, {
-  bool readOnly = false,
-  bool destructive = false,
-  bool idempotent = false,
-}) => ToolAnnotations(
-  title: title,
-  readOnlyHint: readOnly,
-  destructiveHint: destructive,
-  idempotentHint: idempotent,
-  openWorldHint: true,
-);
 
 Future<T> _withCancellation<T>(
   RequestHandlerExtra extra,
@@ -379,53 +253,3 @@ void _sendProgress(
     // A notification can race client disconnect; the operation still finishes.
   }
 }
-
-JsonObject _projectDetailsOutput() => JsonObject(
-  properties: <String, JsonSchema>{
-    'project': const JsonString(),
-    'path': const JsonString(),
-    'images': const JsonArray(items: JsonObject()),
-    'containers': const JsonArray(items: JsonObject()),
-  },
-  required: ['project', 'images', 'containers'],
-);
-
-JsonObject _projectBuildOutput() => JsonObject(
-  properties: <String, JsonSchema>{
-    'project': const JsonString(),
-    'image': const JsonString(),
-    'testsPassed': const JsonBoolean(),
-    'exitCode': const JsonInteger(),
-    'durationMs': const JsonInteger(),
-    'output': const JsonString(),
-    'failureLogPath': const JsonString(),
-  },
-  required: ['project', 'image', 'exitCode', 'durationMs'],
-);
-
-JsonObject _projectReclaimOutput() => JsonObject(
-  properties: <String, JsonSchema>{
-    'project': const JsonString(),
-    'containers': const JsonObject(),
-    'images': const JsonObject(),
-    'disk': const JsonObject(),
-    'errors': const JsonArray(items: JsonString()),
-  },
-  required: ['project', 'containers', 'images', 'disk', 'errors'],
-);
-
-JsonObject _projectPublishOutput() => JsonObject(
-  properties: <String, JsonSchema>{
-    'project': const JsonString(),
-    'pushed': const JsonArray(items: JsonObject()),
-  },
-  required: ['project', 'pushed'],
-);
-
-JsonObject _projectRestoreOutput() => JsonObject(
-  properties: <String, JsonSchema>{
-    'project': const JsonString(),
-    'restored': const JsonArray(items: JsonObject()),
-  },
-  required: ['project', 'restored'],
-);

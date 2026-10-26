@@ -163,3 +163,13 @@ MCP 全链路在真实运行时验证通过：35 工具 tools/list、system_stat
 - 发布内容：MCP 精简注册模式（fe654ad，gcm_help + gcm_call 双入口，35 业务工具经分发表调用）。
 - 版本提交 38f23d3（`chore: bump version to 1.0.3`）；本地门禁：test-host check 372/372（run-ltaLZq）、build-release 预检 OK（arm64 DMG 31,501,734 B）。
 - tag v1.0.3 推送后 release.yml run 40278597713 结论 success；Release 正式发布（非草稿/预发布），资产三件齐全：GhostContainerManager-1.0.3.dmg（31,487,792 B，sha256 80cc9479…）、manifest.json、SHA256SUMS。本地 main、origin/main、tag 同指 38f23d3。
+
+## MCP 加固里程碑（#28，T1–T4，2026-10-26）
+
+- 分支 feature/mcp-hardening；外部审查简报 16 条整份采纳，工单 #29–#32 落地，#33 真实环境验收待做。
+- **#29 注册表地基**：`lib/mcp/tool_catalog.dart` 重写为声明式注册表单一事实来源（35 条目含 inputSchema/outputSchema/五字段注解/meta，`registerCatalogTool` 绑定器）；gcm_call 分发前用 mcp_dart 2.4.3 公开导出 `JsonSchemaValidation.validate` 校验参数，失败 INVALID_ARGUMENT 中文 message + hint，handler 不执行；`ToolCallbackRegistry` 存 `ToolDefinitionSnapshot` 快照，审计重注册全元数据。
+- **#30 注解/帮助**：保守风险注解穷举 35 工具（gcm_call 标 destructive=true；container_restart 非幂等）；gcm_help 三模式（default 域索引瘦身 / domain / tool 完整 schema+注解）；catalogRevision=目录 JSON 规范化 SHA-256 截 16 hex。
+- **#31 分页**：新建 `lib/mcp/tools/pagination.dart`（默认 limit=50/上限 500/超限 INVALID_ARGUMENT；信封 total/returned/hasMore/nextOffset）；6 个列表工具接入并稳定升序排序；文本摘要瘦身（前 5 标识+折叠；gcm_help 文本通道一行摘要）。
+- **#32 版本/长任务**：serverInfo.version 复用 `gcmAppVersion`（与「关于」区块同源）；长任务核对 5 测试钉住（exec TIMEOUT 含查询方法、abort→cancelPull 透传、progressToken 进度透传）；exec 超时口径统一 60；LogStream stdio→unknown 复核为诚实归因保留。
+- 已知限制（简报核对结论）：system_start 无进度通知；exec 外无 MCP 侧超时与取消通道；image_pull 取消后运行时状态未知（查 image_list/image_inspect）；exec 超时=放弃等待进程可能残留（apple/container#1941）。
+- 测试：418 全绿（证据 run-AB6aN3 + Lead 复跑 run-7hYxB1）；新增 gcm_call_validation/list_pagination/long_task_semantics/server_info_version 等测试文件。

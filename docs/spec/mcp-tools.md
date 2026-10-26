@@ -42,7 +42,7 @@
 | `container_create` | 创建容器（默认不启动；**镜像须为本地已有**，缺失报 NOT_FOUND 并提示先 `image_pull`，不自动拉取——2026-10-24 拍板） | `image: string`（必）；`name?`、`command?: string[]`、`env?: object`、`ports?: [{host, container, proto?}]`、`mounts?: [{source, target, readonly?}]`、`labels?: object`、`network?: string`、`start?: bool`（默认 false）；~~cpus/memoryBytes~~ 延 v2（T3 审查 P1 裁决） | | | ✗（具名重复创建返回 CONFLICT） | `{id, name, status, warnings}` |
 | `container_start` | 启动容器 | `id` | | | ✓（已运行 = 幂等成功） | `{id, status, pid?}` |
 | `container_stop` | 优雅停止（SIGTERM → 超时后 SIGKILL） | `id`；`timeoutSeconds?: int`（默认 5，对齐上游 system stop 的 5s 优雅期惯例） | | | ✓ | `{id, status, stoppedGracefully: bool}` |
-| `container_restart` | 重启（= stop+start 编排） | `id`；`timeoutSeconds?` | | | ✓ | `{id, status}` |
+| `container_restart` | 重启（= stop+start 编排） | `id`；`timeoutSeconds?` | | | | `{id, status}` |
 | `container_kill` | 发送信号 | `id`；`signal?: string`（默认 "KILL"，支持 TERM/INT/HUP 等） | | ✓（KILL 语义） | ✓ | `{id, signal, status}` |
 | `container_delete` | 删除容器 | `id`；`force?: bool`（默认 false，运行中拒绝并提示先 stop 或 force） | | ✓ | ✓ | `{id, deleted: true}` |
 | `container_exec` | 容器内执行命令，一次性返回 | `id`；`command: string[]`（必）；`timeoutSeconds?: int`（默认 60，上限 600）；`workdir?`、`env?` | | | ✗ | `{exitCode, stdout, stderr, truncated: bool}`（单流上限 64 KiB，超出截断并标 `truncated`，见 §4） |
@@ -161,7 +161,7 @@
 | `TIMEOUT` | exec/stop 等超时 | Service layer 计时 |
 | `INTERNAL` | 未分类 | 兜底，message 保留原始错误文本（E02：I/O 边界先校验再成形） |
 
-**幂等与重试语义**：`idempotentHint: true` 的工具（list/get/start/stop/restart/delete/pull/up/down 等）agent 可安全重试；`container_create`/`container_exec` 标 `idempotentHint: false`，重试前须先查状态。**不写门控，但注解必须诚实**——这是上层封装做风险控制的唯一信息源。
+**幂等与重试语义**：`idempotentHint: true` 的工具（list/get/start/stop/delete/pull/up/down 等）agent 可安全重试；`container_create`/`container_restart`/`container_exec` 标 `idempotentHint: false`（restart 每次是完整 stop+start 周期，可安全重试≠幂等），重试前须先查状态。**不写门控，但注解必须诚实**——这是上层封装做风险控制的唯一信息源。
 
 ## 6. 长操作与流式（关键决策点 3）
 

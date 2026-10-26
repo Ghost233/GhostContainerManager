@@ -1,14 +1,19 @@
-/// MCP `system_*` tool definitions (docs/spec/mcp-tools.md §3.3).
+/// MCP `system_*` tool handlers (docs/spec/mcp-tools.md §3.3).
 ///
 /// Two-layer error model (§5): protocol errors stay in JSON-RPC; tool
 /// execution failures return `CallToolResult(isError: true)` whose content
 /// and structuredContent carry `{error: {code, message, hint?, source?}}`.
+///
+/// Declarative metadata (title/description/schemas/annotations) lives in the
+/// single registry lib/mcp/tool_catalog.dart (ADR-0001); this module only
+/// binds handlers to entries via [registerCatalogTool].
 library;
 
 import 'dart:convert';
 
 import 'package:mcp_dart/mcp_dart.dart';
 
+import '../tool_catalog.dart';
 import '../tool_registrar.dart';
 
 import '../../services/errors.dart';
@@ -47,55 +52,13 @@ Future<CallToolResult> guardToolCall(
   }
 }
 
-const _readOnly = ToolAnnotations(
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: true,
-);
-
 String _versionText(RuntimeVersion? v) => v?.toString() ?? '-';
 
 /// Registers the system domain tools on [service].
 void registerSystemTools(ToolRegistrar service, SystemService systemService) {
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'system_status',
-    title: 'Runtime Status',
-    description:
-        '返回 Apple container 运行时状态：五级就绪级别（未安装/版本低/主版本不兼容/'
-        '服务未起/内核缺失/就绪）、CLI 与 apiserver 版本、版本是否受支持、'
-        '服务状态与资源计数。',
-    inputSchema: const JsonObject(properties: {}, additionalProperties: false),
-    outputSchema: JsonObject(
-      properties: <String, JsonSchema>{
-        'level': const JsonString(
-          description: '就绪级别',
-          enumValues: [
-            'notInstalled',
-            'versionTooLow',
-            'unsupportedMajor',
-            'serviceNotRunning',
-            'kernelMissing',
-            'ready',
-          ],
-        ),
-        'ready': const JsonBoolean(),
-        'versionSupported': const JsonBoolean(
-          description: '运行时版本是否通过基线（≥1.6.0）与大版本（1.x）门槛',
-        ),
-        'cliVersion': const JsonString(),
-        'apiServerVersion': const JsonString(),
-        'installPath': const JsonString(),
-        'detail': const JsonString(),
-        'debugBypass': const JsonBoolean(),
-        'status': const JsonString(description: 'apiserver 状态，如 running'),
-        'appRoot': const JsonString(),
-        'installRoot': const JsonString(),
-        'resources': const JsonObject(),
-      },
-      required: ['level', 'ready', 'versionSupported'],
-    ),
-    annotations: _readOnly,
     callback: (args, extra) => guardToolCall(() async {
       final info = await systemService.status();
       return (
@@ -109,42 +72,9 @@ void registerSystemTools(ToolRegistrar service, SystemService systemService) {
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'system_start',
-    title: 'Start Runtime',
-    description:
-        '启动 Apple container 运行时（container system start，内核安装标志始终显式传递），'
-        '随后轮询健康检查直到 apiserver 应答，并返回最新就绪级别。',
-    inputSchema: const JsonObject(
-      properties: <String, JsonSchema>{
-        'installKernel': JsonBoolean(
-          description: '是否同时安装/更新默认内核（对应 --enable-kernel-install）',
-          defaultValue: true,
-        ),
-      },
-      additionalProperties: false,
-    ),
-    outputSchema: JsonObject(
-      properties: <String, JsonSchema>{
-        'status': const JsonString(description: '启动后守护进程状态，如 running'),
-        'kernelInstalled': const JsonBoolean(
-          description: '请求安装内核时的安装结果；installKernel=false 时不返回',
-        ),
-        'startupMs': const JsonInteger(
-          description: '从 CLI 调用到 apiserver 应答的耗时（毫秒）',
-        ),
-        'level': const JsonString(),
-        'ready': const JsonBoolean(),
-        'detail': const JsonString(),
-      },
-      required: ['status', 'level', 'ready'],
-    ),
-    annotations: const ToolAnnotations(
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    ),
     callback: (args, extra) => guardToolCall(() async {
       final installKernel = args['installKernel'] as bool? ?? true;
       final result = await systemService.start(installKernel: installKernel);
@@ -162,28 +92,9 @@ void registerSystemTools(ToolRegistrar service, SystemService systemService) {
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'system_stop',
-    title: 'Stop Runtime',
-    description:
-        '停止 Apple container 运行时（container system stop），'
-        '运行中的容器随守护进程一并停止。',
-    inputSchema: const JsonObject(properties: {}, additionalProperties: false),
-    outputSchema: JsonObject(
-      properties: <String, JsonSchema>{
-        'status': const JsonString(description: '停止后守护进程状态，如 stopped'),
-        'containersStopped': const JsonInteger(
-          description: '随停止一并停下的运行中容器数（尽力统计）',
-        ),
-      },
-      required: ['status', 'containersStopped'],
-    ),
-    annotations: const ToolAnnotations(
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: true,
-      openWorldHint: true,
-    ),
     callback: (args, extra) => guardToolCall(() async {
       final result = await systemService.stop();
       return (

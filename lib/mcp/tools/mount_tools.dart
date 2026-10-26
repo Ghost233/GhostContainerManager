@@ -1,86 +1,58 @@
-/// MCP `mount_*` tools (docs/spec/mcp-tools.md §3.4) — read-only mount
-/// aggregation. Apple container has no volume primitive; mounts are
+/// MCP `mount_*` tool handlers (docs/spec/mcp-tools.md §3.4) — read-only
+/// mount aggregation. Apple container has no volume primitive; mounts are
 /// container config aggregated by host source path.
+///
+/// Declarative metadata lives in lib/mcp/tool_catalog.dart (ADR-0001);
+/// this module only binds handlers to registry entries.
 library;
 
-import 'package:mcp_dart/mcp_dart.dart';
-
+import '../tool_catalog.dart';
 import '../tool_registrar.dart';
 
 import '../../services/errors.dart';
 import '../../services/mount_service.dart';
+import 'pagination.dart';
 import 'system_tools.dart';
-
-const _readOnly = ToolAnnotations(
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: true,
-);
 
 /// Registers the mount domain tools on [service].
 void registerMountTools(ToolRegistrar service, MountService mountService) {
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'mount_list',
-    title: 'List Mounts',
-    description:
-        '聚合所有容器（含已停止）的挂载配置，按主机源路径归组。'
-        '每个挂载给出类型（virtiofs/tmpfs）、主机路径与使用它的容器及容器内目标路径。',
-    inputSchema: const JsonObject(properties: {}, additionalProperties: false),
-    outputSchema: JsonObject(
-      properties: <String, JsonSchema>{'mounts': const JsonArray()},
-      required: ['mounts'],
-    ),
-    annotations: _readOnly,
     callback: (args, extra) => guardToolCall(() async {
       final mounts = await mountService.listMounts();
-      final used = mounts.fold<int>(0, (sum, m) => sum + m.usedBy.length);
+      // issue #31：稳定排序（name 即主机源路径，升序）后统一分页。
+      final sorted = List.of(mounts)..sort((a, b) => a.name.compareTo(b.name));
+      final used = sorted.fold<int>(0, (sum, m) => sum + m.usedBy.length);
+      final page = listPageArguments(args);
+      final slice = listPageSlice(
+        sorted,
+        limit: page.limit,
+        offset: page.offset,
+      );
       return (
         data: <String, Object?>{
-          'mounts': mounts.map((m) => m.toWire()).toList(growable: false),
+          'mounts': slice.map((m) => m.toWire()).toList(growable: false),
+          ...listPageEnvelope(
+            total: sorted.length,
+            returned: slice.length,
+            offset: page.offset,
+          ),
         },
-        summary: '共 ${mounts.length} 个挂载源，被引用 $used 次。',
+        summary:
+            '共 ${sorted.length} 个挂载源，被引用 $used 次，本页 ${slice.length} 个'
+            '${listSummaryPreview(slice.map((m) => m.name))}',
       );
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'mount_inspect',
-    title: 'Inspect Mount',
-    description:
-        '查看单个挂载的详情（按 mount_list 返回的 name，即主机源路径'
-        '或 tmpfs:<目标路径>）。',
-    inputSchema: const JsonObject(
-      properties: <String, JsonSchema>{
-        'name': JsonString(description: '挂载名（主机源路径或 tmpfs:<目标路径>）'),
-      },
-      required: ['name'],
-      additionalProperties: false,
-    ),
-    outputSchema: const JsonObject(
-      properties: <String, JsonSchema>{
-        'name': JsonString(),
-        'type': JsonString(),
-        'source': JsonString(),
-        'readOnly': JsonBoolean(),
-        'usedBy': JsonArray(
-          items: JsonObject(
-            properties: <String, JsonSchema>{
-              'containerId': JsonString(),
-              'destination': JsonString(),
-              'readOnly': JsonBoolean(),
-            },
-            required: ['containerId', 'destination', 'readOnly'],
-            additionalProperties: false,
-          ),
-        ),
-      },
-      required: ['name', 'type', 'readOnly', 'usedBy'],
-      additionalProperties: false,
-    ),
-    annotations: _readOnly,
     callback: (args, extra) => guardToolCall(() async {
       final name = args['name'];
+      // 防御层（ADR-0002）：分发前 schema 校验已挡掉缺失/错类型；
+      // 这里的业务校验保留，不删。
       if (name is! String || name.isEmpty) {
         throw const GcmException(
           GcmErrorCode.invalidArgument,
