@@ -181,3 +181,10 @@ MCP 全链路在真实运行时验证通过：35 工具 tools/list、system_stat
 - Lead 亲自复跑结论：smoke PASS（version=dev≠0.0.0、protocolVersion=2025-06-18、tools/list 恰好 {gcm_call,gcm_help}）；chain PASS（双通道 system_status→project_list→image_list 真实数据，159 镜像/33 容器）；concurrency PASS（×5 distinct=1）；pagination PASS（159 镜像 23 页 limit=7 不重不漏，CLI 对照差 2 个 Apple 内部镜像属 CLI 隐藏行为）；help-modes PASS（#30 补齐后，含 tool 模式与 catalogRevision）。
 - 本机运行时实为 container 1.6.1（非早前记录的 1.5.0）。macOS 26 虚拟机出包验证留 release 时人工执行（核对清单在 docs/agents/mcp.md）。
 - CI 门禁接入建议（未实施）：release 打 DMG 后跑 smoke 断言 version=发布版本号；端口隔离用 --port。
+
+## 里程碑收口记录（#28 合并）
+
+- 总审查：双轴（Standards 760f089d / Spec 25610727）对 main..feature/mcp-hardening（29 文件 +4435/−1292）一致结论「可合并」，无 P0/P1；P2 项（审计工具名双写漂移、已知限制表格化、registry 51 容器实例化、CLI parity 定时核对）已记录。
+- 合并：PR #34 squash → main b8edb36「MCP 加固里程碑：注册表校验、保守注解、分页契约与真实验收（#28）」；远端分支已删，本地 feature 分支已清。
+- 合并后门禁：main 上 scripts/test-host.sh check exit 0，431/431 tests（run-L0Gbik）。
+- 遗留：v1.1.0 发布待维护者触发；macOS 26 虚拟机出包验证随发布人工执行。
