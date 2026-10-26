@@ -18,10 +18,10 @@ void main() {
       );
     });
 
-    test('catalogRevision 为 16 位小写 hex 且两个实例一致', () {
+    test('catalogRevision 为 12 位小写 hex 且两个实例一致', () {
       final first = GcmToolRegistry();
       final second = GcmToolRegistry();
-      expect(first.catalogRevision, matches(RegExp(r'^[0-9a-f]{16}$')));
+      expect(first.catalogRevision, matches(RegExp(r'^[0-9a-f]{12}$')));
       expect(second.catalogRevision, first.catalogRevision);
     });
 

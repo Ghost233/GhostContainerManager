@@ -2,7 +2,7 @@
 ///
 /// 计算方式：kToolCatalog 每个条目经 [ToolCatalogEntry.toDetailJson]
 /// 序列化后按工具名组成对象，再做规范化 JSON（Map 键递归排序、零空白），
-/// 对 UTF-8 字节做 SHA-256，取前 16 个小写 hex 字符。注册表在进程内不可
+/// 对 UTF-8 字节做 SHA-256，取前 12 个小写 hex 字符。注册表在进程内不可
 /// 变，结果只计算一次并缓存；同一构建的任意多个服务器实例必然一致，注册
 /// 表内容变化则哈希变化——客户端可用它判断缓存的工具目录是否过期。
 ///
@@ -16,14 +16,14 @@ import 'tool_catalog.dart';
 
 String? _cachedRevision;
 
-/// 当前注册表的 catalogRevision（16 个小写 hex 字符）。
+/// 当前注册表的 catalogRevision（12 个小写 hex 字符）。
 String catalogRevision() => _cachedRevision ??= _computeCatalogRevision();
 
 String _computeCatalogRevision() {
   final canonical = canonicalJson(<String, Object?>{
     for (final entry in kToolCatalog) entry.name: entry.toDetailJson(),
   });
-  return sha256HexDigest(utf8.encode(canonical)).substring(0, 16);
+  return sha256HexDigest(utf8.encode(canonical)).substring(0, 12);
 }
 
 /// 规范化 JSON：Map 键递归按字典序排序、无空白，保证同一内容在任何
