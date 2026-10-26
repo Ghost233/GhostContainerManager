@@ -29,3 +29,9 @@ Ghost Container Manager 的领域术语。只含领域概念，不含实现细�
 - **内置 MCP server**：随应用运行、与界面共用同一管理入口的 MCP 服务，向 agent 暴露容器管理工具。
 - **管理入口（Service layer）**：界面、内置 MCP server、MacLauncher SDK 复用的同一层容器管理能力。
 - **MacLauncher**：本机启动器生态，应用按 SDK 规范向其注册已实现的服务。
+- **业务工具**：MCP 服务对外提供的 35 项管理功能（system/container/image/mount/network/compose/project/registry 八个域），是产品能力的完整集合。
+- **统一入口**：MCP 协议面只注册的两个工具——帮助入口（`gcm_help`）与调用入口（`gcm_call`）；业务工具不逐个出现在客户端的工具列表里，经统一入口可达。
+- **工具注册表（Tool registry）**：35 项业务工具的唯一定义来源——名称、域、描述、参数约束（schema）、风险注解、示例与处理函数同处声明；帮助目录、分发、参数校验与测试全部从注册表读取，不允许第二份手工目录。
+- **分发（dispatch）**：`gcm_call` 按工具名查注册表、先做参数校验、校验通过才调用处理函数的过程；校验失败时处理函数不得执行。
+- **风险注解（annotations）**：工具的 readOnly / destructive / idempotent 三元风险表达。统一入口采用保守标记（可分发到删除类操作即视为 destructive）；注册表保留每个业务工具的准确注解。风险注解是提示，不是权限控制。
+- **分页契约**：大列表工具（镜像列表、容器列表）的有界返回约定：`limit`（默认 50、上限 500）+ `offset`，响应携带总数、实际返回数量与是否还有后续数据，排序稳定。
