@@ -280,7 +280,9 @@ void registerContainerTools(
     service,
     'container_exec',
     callback: (args, extra) => guardToolCall(() async {
-      final id = args['id'] as String;
+      // issue #30：分发前 schema 校验只保证 id 存在，不剔除首尾空白；
+      // 这里统一 trim，缺失时退为空串由服务层按 NOT_FOUND 处理。
+      final id = (args['id'] as String?)?.trim() ?? '';
       final ContainerExecResult result;
       try {
         result = await containerService.exec(

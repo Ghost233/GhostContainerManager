@@ -442,31 +442,30 @@ void main() {
       expect(result['isError'], isNot(true));
       final structured = (result['structuredContent'] as Map)
           .cast<String, dynamic>();
-      expect(structured['name'], 'container_create');
-      expect(structured['domain'], 'container');
-      expect(structured['title'], 'Create Container');
-      expect(structured['description'] as String, isNotEmpty);
-      final inputSchema = (structured['inputSchema'] as Map)
-          .cast<String, dynamic>();
+      expect(structured['mode'], 'tool');
+      expect(structured['catalogRevision'], catalogRevision());
+      final tool = (structured['tool'] as Map).cast<String, dynamic>();
+      expect(tool['name'], 'container_create');
+      expect(tool['domain'], 'container');
+      expect(tool['title'], 'Create Container');
+      expect(tool['description'] as String, isNotEmpty);
+      final inputSchema = (tool['inputSchema'] as Map).cast<String, dynamic>();
       expect(
         (inputSchema['properties'] as Map).keys,
         containsAll(<String>['image', 'name', 'ports', 'mounts']),
       );
-      final outputSchema = (structured['outputSchema'] as Map)
+      final outputSchema = (tool['outputSchema'] as Map)
           .cast<String, dynamic>();
       expect(
         outputSchema['required'] as List,
         containsAll(<String>['id', 'name', 'status', 'warnings']),
       );
-      final annotations = (structured['annotations'] as Map)
-          .cast<String, dynamic>();
-      expect(annotations['title'], 'Create Container');
+      final annotations = (tool['annotations'] as Map).cast<String, dynamic>();
       expect(annotations['readOnlyHint'], isFalse);
       expect(annotations['destructiveHint'], isFalse);
       expect(annotations['idempotentHint'], isFalse);
       expect(annotations['openWorldHint'], isTrue);
-      expect(structured.containsKey('meta'), isTrue);
-      expect(structured['catalogRevision'], catalogRevision());
+      expect(tool.containsKey('meta'), isTrue);
     });
 
     test('issue #30：domain 与 tool 同传返回 INVALID_ARGUMENT', () async {

@@ -60,9 +60,20 @@ class ToolCallbackRegistry implements ToolRegistrar {
 
   /// Derived view kept for call sites that only need the dispatch table.
   /// Writes must go through [registerTool] so the snapshot stays complete.
-  Map<String, ToolFunction> get callbacks => <String, ToolFunction>{
-    for (final tool in tools.values) tool.name: tool.callback,
-  };
+  Map<String, ToolFunction> get callbacks {
+    final table = <String, ToolFunction>{};
+    for (final tool in tools.values) {
+      final callback = tool.callback as ToolFunction?;
+      // issue #30 运行时防御：快照缺失回调说明注册表与分发表已经漂移，
+      // 立即以中文语义报错，而不是把空洞漏进分发表、让 gcm_call 分发时
+      // 才以空指针的形式暴露。
+      if (callback == null) {
+        throw StateError('工具 ${tool.name} 不在分发表中：注册快照缺失回调。');
+      }
+      table[tool.name] = callback;
+    }
+    return table;
+  }
 
   @override
   void registerTool(

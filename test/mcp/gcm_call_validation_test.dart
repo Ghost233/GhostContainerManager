@@ -133,6 +133,16 @@ void main() {
     return body['result'] as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> gcmHelp(Map<String, dynamic>? arguments) async {
+    final body = await rpc(<String, dynamic>{
+      'jsonrpc': '2.0',
+      'id': nextId++,
+      'method': 'tools/call',
+      'params': <String, dynamic>{'name': 'gcm_help', 'arguments': ?arguments},
+    });
+    return body['result'] as Map<String, dynamic>;
+  }
+
   Map<String, dynamic> expectInvalidArgument(Map<String, dynamic> result) {
     expect(result['isError'], isTrue);
     final structured = (result['structuredContent'] as Map)
@@ -268,6 +278,31 @@ void main() {
       final structured = (result['structuredContent'] as Map)
           .cast<String, dynamic>();
       expect((structured['error'] as Map)['code'], 'NOT_FOUND');
+    });
+  });
+
+  group('gcm_help tool 模式参数校验（issue #30）', () {
+    test('domain 与 tool 同传 → INVALID_ARGUMENT 互斥错误', () async {
+      await initialize();
+      final result = await gcmHelp(<String, dynamic>{
+        'domain': 'container',
+        'tool': 'container_create',
+      });
+      final error = expectInvalidArgument(result);
+      expect(error['message'] as String, contains('互斥'));
+    });
+
+    test('未知工具名 → 工具错误并附合法名引导', () async {
+      await initialize();
+      final result = await gcmHelp(<String, dynamic>{'tool': 'nope_tool'});
+      expect(result['isError'], isTrue);
+      final structured = (result['structuredContent'] as Map)
+          .cast<String, dynamic>();
+      final error = (structured['error'] as Map).cast<String, dynamic>();
+      expect(error['message'] as String, contains('nope_tool'));
+      final hint = error['hint'] as String;
+      expect(hint, contains('gcm_help'));
+      expect(hint, contains('container_create'));
     });
   });
 }

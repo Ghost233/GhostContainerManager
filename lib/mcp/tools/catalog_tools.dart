@@ -29,6 +29,7 @@ import '../../services/system_service.dart';
 import '../catalog_revision.dart';
 import '../tool_catalog.dart';
 import '../tool_registrar.dart';
+import '../tool_registry.dart';
 import 'compose_tools.dart';
 import 'container_tools.dart';
 import 'image_tools.dart';
@@ -75,6 +76,9 @@ const _readOnly = ToolAnnotations(
   idempotentHint: true,
   openWorldHint: false,
 );
+
+/// gcm_help tool 模式的定义查找面（kToolCatalog 的按名索引视图）。
+final GcmToolRegistry _helpToolRegistry = GcmToolRegistry();
 
 /// Registers the two slim entry tools on [server].
 void registerCatalogTools(
@@ -132,12 +136,13 @@ void registerCatalogTools(
               '都不传则返回总目录。',
         );
       }
-      // tool 模式：返回单个工具的完整定义。定义取自主注册表
-      // （kToolCatalog，元数据单一事实来源）——帮助是定义性文档，与
-      // 当前进程是否接线该域无关；default/domain 目录仍只列已接线工具。
+      // tool 模式：返回单个工具的完整定义。定义取自主注册表的按名索引
+      // 视图（GcmToolRegistry → kToolCatalog，元数据单一事实来源）——
+      // 帮助是定义性文档，与当前进程是否接线该域无关；default/domain
+      // 目录仍只列已接线工具。
       if (tool != null) {
-        final entry = tool.isEmpty ? null : catalogEntryByName(tool);
-        if (entry == null) {
+        final definition = tool.isEmpty ? null : _helpToolRegistry.lookup(tool);
+        if (definition == null) {
           return _catalogError(
             GcmErrorCode.notFound,
             '未知工具：$tool',
@@ -148,16 +153,17 @@ void registerCatalogTools(
           );
         }
         final detail = <String, Object?>{
+          'mode': 'tool',
           'catalogRevision': revision,
-          ...entry.toDetailJson(),
+          'tool': definition.toJson(),
         };
         return CallToolResult(
           content: [
             TextContent(
               text:
-                  '${entry.name}（${entry.domain} 域）：${entry.title}。'
+                  '${definition.name}（${definition.domain} 域）：${definition.title}。'
                   '完整 inputSchema/outputSchema/注解见 structuredContent。'
-                  '调用方式：gcm_call({tool: "${entry.name}", arguments: {...}})。',
+                  '调用方式：gcm_call({tool: "${definition.name}", arguments: {...}})。',
             ),
           ],
           structuredContent: detail,
