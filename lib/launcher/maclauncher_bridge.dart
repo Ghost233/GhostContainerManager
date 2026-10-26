@@ -273,6 +273,15 @@ class MacLauncherBridge {
   LogStream _logStreamFor(String source) {
     // Apple container stdio cannot reliably split stdout from stderr.
     // Runtime/VM boot diagnostics use the SDK's non-stdio app channel.
+    //
+    // issue #32 复核结论（2026-10-26）：stdio → unknown 仍是诚实归因，
+    // 保持不变。依据：上游 client.logs 只交付两个 FileHandle——fhs[0] 是
+    // 合并的 stdio 流（stdout/stderr 在容器侧已合并，无法事后拆分），
+    // fhs[1] 是 bootlog（见 docs/spec/container-lifecycle.md §2 logs 行；
+    // 桥接侧 source 标签 'stdio'/'boot' 见 lib/bridge/container_bridge.dart）。
+    // pinned SDK（268f88e）的 LogStream 枚举为 {stdout, stderr, app,
+    // unknown}：把合并流标成 stdout 或 stderr 都会撒谎，unknown 是唯一
+    // 不夸大的取值；boot 诊断明确走 app 通道。
     return source == 'boot' ? LogStream.app : LogStream.unknown;
   }
 

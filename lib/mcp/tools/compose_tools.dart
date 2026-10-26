@@ -1,16 +1,20 @@
-/// MCP `compose_*` tools (docs/spec/mcp-tools.md §3.5) — orchard compose
-/// plugin passthrough (up/down) plus label-aggregated project listing.
+/// MCP `compose_*` tool handlers (docs/spec/mcp-tools.md §3.5) — orchard
+/// compose plugin passthrough (up/down) plus label-aggregated project
+/// listing.
 ///
 /// The plugin emits human text, never JSON → up/down pass the raw output
 /// through verbatim (tail-truncated to the service cap).
+///
+/// Declarative metadata lives in lib/mcp/tool_catalog.dart (ADR-0001);
+/// this module only binds handlers to registry entries.
 library;
 
-import 'package:mcp_dart/mcp_dart.dart';
-
+import '../tool_catalog.dart';
 import '../tool_registrar.dart';
 
 import '../../services/compose_service.dart';
 import '../../services/errors.dart';
+import 'pagination.dart';
 import 'system_tools.dart';
 
 /// Registers the compose domain tools on [service].
@@ -18,73 +22,43 @@ void registerComposeTools(
   ToolRegistrar service,
   ComposeService composeService,
 ) {
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'compose_list',
-    title: 'List Compose Projects',
-    description:
-        '按容器 label（com.compose.project / com.compose.service）聚合当前存在的 '
-        'Compose 项目：项目名、服务清单、各服务对应容器与状态。'
-        '插件只提供 up/down，项目发现走 label 聚合（不需要插件也可工作）。',
-    inputSchema: const JsonObject(properties: {}, additionalProperties: false),
-    outputSchema: JsonObject(
-      properties: <String, JsonSchema>{'projects': const JsonArray()},
-      required: ['projects'],
-    ),
-    annotations: const ToolAnnotations(
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    ),
     callback: (args, extra) => guardToolCall(() async {
       final projects = await composeService.listProjects();
+      // issue #31：稳定排序（项目名升序）后统一分页。
+      final sorted = List.of(projects)
+        ..sort((a, b) => a.name.compareTo(b.name));
+      final page = listPageArguments(args);
+      final slice = listPageSlice(
+        sorted,
+        limit: page.limit,
+        offset: page.offset,
+      );
       return (
         data: <String, Object?>{
-          'projects': projects.map((p) => p.toWire()).toList(growable: false),
+          'projects': slice.map((p) => p.toWire()).toList(growable: false),
+          ...listPageEnvelope(
+            total: sorted.length,
+            returned: slice.length,
+            offset: page.offset,
+          ),
         },
-        summary: '共 ${projects.length} 个 Compose 项目。',
+        summary:
+            '共 ${sorted.length} 个 Compose 项目，本页 ${slice.length} 个'
+            '${listSummaryPreview(slice.map((p) => p.name))}',
       );
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'compose_up',
-    title: 'Compose Up',
-    description:
-        '运行 container compose up（需要本机已安装 compose 插件；未安装时返回'
-        ' NOT_FOUND 与安装指引）。file 必须是绝对路径。输出为插件的人类可读文本'
-        '原样透传（超长时保留尾部并标记 truncated）。'
-        '可用 dryRun 只打印计划不改动任何资源。',
-    inputSchema: const JsonObject(
-      properties: <String, JsonSchema>{
-        'file': JsonString(description: 'compose 文件绝对路径'),
-        'projectName': JsonString(description: '项目名（缺省取文件 name 或目录名）'),
-        'dryRun': JsonBoolean(
-          description: '只计算并打印计划，不创建/修改资源',
-          defaultValue: false,
-        ),
-        'forceRecreate': JsonBoolean(
-          description: '强制重建所有服务容器',
-          defaultValue: false,
-        ),
-        'pull': JsonString(
-          description: '镜像拉取策略',
-          enumValues: ['missing', 'always', 'never'],
-          defaultValue: 'missing',
-        ),
-      },
-      required: ['file'],
-      additionalProperties: false,
-    ),
-    outputSchema: _composeRunOutput(),
-    annotations: const ToolAnnotations(
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    ),
     callback: (args, extra) => guardToolCall(() async {
       final file = args['file'];
+      // 防御层（ADR-0002）：分发前 schema 校验已挡掉缺失/错类型；
+      // 这里的业务校验保留，不删。
       if (file is! String || file.isEmpty) {
         throw const GcmException(
           GcmErrorCode.invalidArgument,
@@ -107,31 +81,9 @@ void registerComposeTools(
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'compose_down',
-    title: 'Compose Down',
-    description:
-        '运行 container compose down，停止并移除项目的容器与其创建的网络'
-        '（keepNetworks 可保留网络）。file 与 projectName 至少提供一项；'
-        '输出为人类可读文本原样透传。',
-    inputSchema: const JsonObject(
-      properties: <String, JsonSchema>{
-        'file': JsonString(description: 'compose 文件绝对路径（与 projectName 至少一项）'),
-        'projectName': JsonString(description: '项目名（与 file 至少一项）'),
-        'keepNetworks': JsonBoolean(
-          description: '保留项目创建的网络',
-          defaultValue: false,
-        ),
-      },
-      additionalProperties: false,
-    ),
-    outputSchema: _composeRunOutput(),
-    annotations: const ToolAnnotations(
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: true,
-      openWorldHint: true,
-    ),
     callback: (args, extra) => guardToolCall(() async {
       final result = await composeService.down(
         file: args['file'] as String?,
@@ -147,13 +99,3 @@ void registerComposeTools(
     }),
   );
 }
-
-JsonObject _composeRunOutput() => const JsonObject(
-  properties: <String, JsonSchema>{
-    'exitCode': JsonInteger(),
-    'output': JsonString(),
-    'truncated': JsonBoolean(),
-  },
-  required: ['exitCode', 'output', 'truncated'],
-  additionalProperties: false,
-);

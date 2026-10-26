@@ -1,96 +1,60 @@
-/// MCP `network_*` tools (docs/spec/mcp-tools.md §3.4) — read-only network
-/// listing via CLI (`container network ls --format json`) joined with
-/// container snapshot attachments.
+/// MCP `network_*` tool handlers (docs/spec/mcp-tools.md §3.4) — read-only
+/// network listing via CLI (`container network ls --format json`) joined
+/// with container snapshot attachments.
+///
+/// Declarative metadata lives in lib/mcp/tool_catalog.dart (ADR-0001);
+/// this module only binds handlers to registry entries.
 library;
 
-import 'package:mcp_dart/mcp_dart.dart';
-
+import '../tool_catalog.dart';
 import '../tool_registrar.dart';
 
 import '../../services/errors.dart';
 import '../../services/network_service.dart';
+import 'pagination.dart';
 import 'system_tools.dart';
-
-const _readOnly = ToolAnnotations(
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: true,
-);
 
 /// Registers the network domain tools on [service].
 void registerNetworkTools(
   ToolRegistrar service,
   NetworkService networkService,
 ) {
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'network_list',
-    title: 'List Networks',
-    description: '列出所有 container 网络（名称、子网、模式、是否内建、当前接入的容器数）。',
-    inputSchema: const JsonObject(properties: {}, additionalProperties: false),
-    outputSchema: JsonObject(
-      properties: <String, JsonSchema>{'networks': const JsonArray()},
-      required: ['networks'],
-    ),
-    annotations: _readOnly,
     callback: (args, extra) => guardToolCall(() async {
       final networks = await networkService.listNetworks();
+      // issue #31：稳定排序（id 升序）后统一分页。
+      final sorted = List.of(networks)..sort((a, b) => a.id.compareTo(b.id));
+      final page = listPageArguments(args);
+      final slice = listPageSlice(
+        sorted,
+        limit: page.limit,
+        offset: page.offset,
+      );
       return (
         data: <String, Object?>{
-          'networks': networks.map((n) => n.toWire()).toList(growable: false),
+          'networks': slice.map((n) => n.toWire()).toList(growable: false),
+          ...listPageEnvelope(
+            total: sorted.length,
+            returned: slice.length,
+            offset: page.offset,
+          ),
         },
-        summary: '共 ${networks.length} 个网络。',
+        summary:
+            '共 ${sorted.length} 个网络，本页 ${slice.length} 个'
+            '${listSummaryPreview(slice.map((n) => n.id))}',
       );
     }),
   );
 
-  service.registerTool(
+  registerCatalogTool(
+    service,
     'network_get',
-    title: 'Get Network',
-    description:
-        '查看单个网络的详情与接入的容器（id、IP、hostname）。'
-        '参数 id 为 network_list 返回的网络 id。',
-    inputSchema: const JsonObject(
-      properties: <String, JsonSchema>{
-        'id': JsonString(description: '网络 id（如 default）'),
-      },
-      required: ['id'],
-      additionalProperties: false,
-    ),
-    outputSchema: const JsonObject(
-      properties: <String, JsonSchema>{
-        'id': JsonString(),
-        'plugin': JsonString(),
-        'mode': JsonString(),
-        'subnet': JsonString(),
-        'gateway': JsonString(),
-        'builtin': JsonBoolean(),
-        'containerCount': JsonInteger(),
-        'containers': JsonArray(
-          items: JsonObject(
-            properties: <String, JsonSchema>{
-              'id': JsonString(),
-              'hostname': JsonString(),
-              'ip': JsonString(),
-            },
-            required: ['id', 'hostname', 'ip'],
-            additionalProperties: false,
-          ),
-        ),
-      },
-      required: [
-        'id',
-        'plugin',
-        'mode',
-        'builtin',
-        'containerCount',
-        'containers',
-      ],
-      additionalProperties: false,
-    ),
-    annotations: _readOnly,
     callback: (args, extra) => guardToolCall(() async {
       final id = args['id'];
+      // 防御层（ADR-0002）：分发前 schema 校验已挡掉缺失/错类型；
+      // 这里的业务校验保留，不删。
       if (id is! String || id.isEmpty) {
         throw const GcmException(
           GcmErrorCode.invalidArgument,

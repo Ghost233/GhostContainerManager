@@ -5,6 +5,12 @@
 /// 目录（名称/描述/参数要点/风险注解），`gcm_call` 按名分发到业务工具的
 /// 原有 callback。业务工具的实现与测试不变，只是注册目标从 McpServer
 /// 换成 [ToolCallbackRegistry]。
+///
+/// issue #29 / ADR-0001：工具目录的单一事实来源是
+/// lib/mcp/tool_catalog.dart 的声明式注册表；ADR-0002：`gcm_call` 在调
+/// handler 前用 mcp_dart 内建校验器（JsonSchemaValidation）按注册表
+/// inputSchema 校验业务参数，失败返回 INVALID_ARGUMENT 且 handler
+/// 不执行。
 library;
 
 import 'dart:convert';
@@ -20,8 +26,10 @@ import '../../services/network_service.dart';
 import '../../services/project_service.dart';
 import '../../services/registry_service.dart';
 import '../../services/system_service.dart';
+import '../catalog_revision.dart';
 import '../tool_catalog.dart';
 import '../tool_registrar.dart';
+import '../tool_registry.dart';
 import 'compose_tools.dart';
 import 'container_tools.dart';
 import 'image_tools.dart';
@@ -69,6 +77,9 @@ const _readOnly = ToolAnnotations(
   openWorldHint: false,
 );
 
+/// gcm_help tool 模式的定义查找面（kToolCatalog 的按名索引视图）。
+final GcmToolRegistry _helpToolRegistry = GcmToolRegistry();
+
 /// Registers the two slim entry tools on [server].
 void registerCatalogTools(
   McpServer server,
@@ -80,11 +91,15 @@ void registerCatalogTools(
     description:
         '列出本应用提供的全部容器管理工具（按域分组，含参数要点与风险注解）。'
         '先用本工具找到目标工具名与参数，再通过 gcm_call 调用。'
-        '可选参数 domain 过滤单个域（system/container/image/mount/network/compose/project/registry）。',
+        '三种模式：不带参数返回总目录；domain 过滤单个域'
+        '（system/container/image/mount/network/compose/project/registry）；'
+        'tool 返回单个工具的完整定义（inputSchema/outputSchema/注解/meta）。'
+        'domain 与 tool 互斥，不能同时传入。'
+        '响应带 catalogRevision（注册表内容哈希，目录不变则不变）。',
     inputSchema: JsonObject(
       properties: <String, JsonSchema>{
         'domain': const JsonString(
-          description: '只返回该域的工具',
+          description: '只返回该域的工具（与 tool 互斥）',
           enumValues: [
             'system',
             'container',
@@ -96,13 +111,75 @@ void registerCatalogTools(
             'registry',
           ],
         ),
+        'tool': const JsonString(
+          description:
+              '只返回该工具的完整定义（inputSchema/outputSchema/注解/meta）；'
+              '与 domain 互斥',
+        ),
       },
       additionalProperties: false,
     ),
     annotations: _readOnly,
     callback: (args, extra) async {
       final domain = args['domain'] as String?;
-      final grouped = catalogByDomain();
+      final tool = args['tool'] as String?;
+      // issue #30：三种模式的响应都带 catalogRevision（注册表内容规范化
+      // 哈希），客户端可据此判断已发现的目录是否过期。
+      final revision = catalogRevision();
+      // domain 与 tool 互斥：同传是调用方歧义，明确拒绝而非默默选一个。
+      if (domain != null && tool != null) {
+        return _catalogError(
+          GcmErrorCode.invalidArgument,
+          'gcm_help 的 domain 与 tool 参数互斥，不能同时传入。',
+          hint:
+              '二选一：domain 过滤单个域、tool 查看单个工具完整定义；'
+              '都不传则返回总目录。',
+        );
+      }
+      // tool 模式：返回单个工具的完整定义。定义取自主注册表的按名索引
+      // 视图（GcmToolRegistry → kToolCatalog，元数据单一事实来源）——
+      // 帮助是定义性文档，与当前进程是否接线该域无关；default/domain
+      // 目录仍只列已接线工具。
+      if (tool != null) {
+        final definition = tool.isEmpty ? null : _helpToolRegistry.lookup(tool);
+        if (definition == null) {
+          return _catalogError(
+            GcmErrorCode.notFound,
+            '未知工具：$tool',
+            hint:
+                '已登记工具（共 ${kToolCatalog.length} 个）：'
+                '${kToolCatalog.map((e) => e.name).join(', ')}。'
+                '也可调用 gcm_help（不带参数）查看按域分组的总目录。',
+          );
+        }
+        final detail = <String, Object?>{
+          'mode': 'tool',
+          'catalogRevision': revision,
+          'tool': definition.toJson(),
+        };
+        return CallToolResult(
+          content: [
+            TextContent(
+              text:
+                  '${definition.name}（${definition.domain} 域）：${definition.title}。'
+                  '完整 inputSchema/outputSchema/注解见 structuredContent。'
+                  '调用方式：gcm_call({tool: "${definition.name}", arguments: {...}})。',
+            ),
+          ],
+          structuredContent: detail,
+        );
+      }
+      // 目录成员来自 ToolCallbackRegistry 的注册快照（只含实际接线的
+      // 工具）；渲染数据仍取自主注册表条目，元数据单一事实来源不变。
+      final grouped = <String, List<ToolCatalogEntry>>{};
+      for (final name in businessTools.tools.keys) {
+        final entry = catalogEntryByName(name);
+        // registerCatalogTool 对未知名直接抛错，这里不可能为空。
+        if (entry == null) continue;
+        grouped
+            .putIfAbsent(entry.domain, () => <ToolCatalogEntry>[])
+            .add(entry);
+      }
       final domains = <String, Object?>{};
       var total = 0;
       for (final entry in grouped.entries) {
@@ -113,14 +190,27 @@ void registerCatalogTools(
         total += entry.value.length;
       }
       final result = <String, Object?>{
+        'catalogRevision': revision,
         'usage':
             '调用方式：gcm_call({tool: "<工具名>", arguments: {...}})。'
             'destructiveHint=true 的工具请先与用户确认。',
         'totalTools': total,
         'domains': domains,
       };
+      // issue #31：structuredContent 保留完整目录，文本通道降级为一行摘要，
+      // 不再内嵌整份 JSON。
+      final domainCounts = domains.entries
+          .map((e) => '${e.key}(${(e.value as List).length})')
+          .join('、');
+      final summary = domains.isEmpty
+          ? '共 0 个工具'
+          : '共 $total 个工具（${domains.length} 个域）：$domainCounts';
       return CallToolResult(
-        content: [TextContent(text: jsonEncode(result))],
+        content: [
+          TextContent(
+            text: 'GCM 工具目录：$summary。调用方式：gcm_call({tool, arguments})。',
+          ),
+        ],
         structuredContent: result,
       );
     },
@@ -156,8 +246,8 @@ void registerCatalogTools(
           hint: '先调用 gcm_help 查看可用工具名。',
         );
       }
-      final callback = businessTools.callbacks[tool];
-      if (callback == null) {
+      final definition = businessTools.tools[tool];
+      if (definition == null) {
         return _catalogError(
           GcmErrorCode.notFound,
           '未知工具：$tool',
@@ -176,10 +266,35 @@ void registerCatalogTools(
           'gcm_call 的 arguments 必须是对象。',
         );
       }
-      // 业务工具 callback 只读取 args，不触碰 RequestHandlerExtra 的
-      // transport 字段（signal/sessionId/sendRequest 等），因此这里可以
-      // 原样透传 gcm_call 收到的 extra。
-      return callback(toolArgs, extra);
+      // ADR-0002 分发前校验：用注册快照里的 inputSchema（即注册表条目
+      // 声明的 schema）+ mcp_dart 内建校验器（JsonSchemaValidation，
+      // draft 2020-12）校验业务参数；失败时 handler 不得执行。业务特有
+      // 限制（非空命令、绝对路径、project/path 选择规则）仍由 handler
+      // 内紧邻的业务校验负责。
+      final inputSchema = definition.inputSchema;
+      if (inputSchema != null) {
+        try {
+          inputSchema.validate(toolArgs);
+        } on JsonSchemaValidationException catch (error) {
+          final where = error.path.isEmpty
+              ? ''
+              : '（字段 ${error.path.join('/')}）';
+          return _catalogError(
+            GcmErrorCode.invalidArgument,
+            '工具 $tool 的参数未通过 schema 校验$where：${error.message}',
+            hint: '先调用 gcm_help 查看 $tool 的参数定义后修正调用。',
+          );
+        }
+      }
+      // extra 原样透传（issue #32 长任务核对）：长任务工具会消费
+      // RequestHandlerExtra——image_pull / project_build / project_test /
+      // project_publish / project_restore / registry_start 读
+      // extra.signal（取消）与 extra.sendProgress（依赖
+      // extra.meta['progressToken']）。原样透传保证 gcm_call 请求上的
+      // cancelled 通知与 _meta.progressToken 直接作用于业务工具。核对
+      // 结论与已知限制见 test/mcp/long_task_semantics_test.dart 的文件
+      // 头注释。
+      return definition.callback(toolArgs, extra);
     },
   );
 }
