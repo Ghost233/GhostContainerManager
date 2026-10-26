@@ -5,6 +5,8 @@ library;
 
 import 'package:mcp_dart/mcp_dart.dart';
 
+import '../tool_registrar.dart';
+
 import '../../services/errors.dart';
 import '../../services/mount_service.dart';
 import 'system_tools.dart';
@@ -16,9 +18,9 @@ const _readOnly = ToolAnnotations(
   openWorldHint: true,
 );
 
-/// Registers the mount domain tools on [server].
-void registerMountTools(McpServer server, MountService mountService) {
-  server.registerTool(
+/// Registers the mount domain tools on [service].
+void registerMountTools(ToolRegistrar service, MountService mountService) {
+  service.registerTool(
     'mount_list',
     title: 'List Mounts',
     description:
@@ -42,7 +44,7 @@ void registerMountTools(McpServer server, MountService mountService) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'mount_inspect',
     title: 'Inspect Mount',
     description:

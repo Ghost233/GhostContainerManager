@@ -2,13 +2,18 @@ import 'dart:async';
 
 import 'package:mcp_dart/mcp_dart.dart';
 
+import '../tool_registrar.dart';
+
 import '../../services/registry_service.dart';
 import 'system_tools.dart';
 
 /// MCP translation for the app-owned local registry. Container and image
 /// lifecycle remains in [RegistryService].
-void registerRegistryTools(McpServer server, RegistryService service) {
-  server.registerTool(
+void registerRegistryTools(
+  ToolRegistrar service,
+  RegistryService registryService,
+) {
+  service.registerTool(
     'registry_status',
     title: 'Get Registry Status',
     description: '读取本地 registry 容器、HTTP 健康、端口与数据目录占用。',
@@ -16,7 +21,7 @@ void registerRegistryTools(McpServer server, RegistryService service) {
     outputSchema: _registryStatusOutput(),
     annotations: _annotations('Get Registry Status', readOnly: true),
     callback: (args, extra) => guardToolCall(() async {
-      final result = await service.status();
+      final result = await registryService.status();
       return (
         data: result.toJson(),
         summary: result.running
@@ -26,7 +31,7 @@ void registerRegistryTools(McpServer server, RegistryService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'registry_start',
     title: 'Start Local Registry',
     description: '幂等启动 127.0.0.1 上的 registry；首次会拉取并创建容器，保留已有数据。',
@@ -46,7 +51,7 @@ void registerRegistryTools(McpServer server, RegistryService service) {
     callback: (args, extra) => guardToolCall(() async {
       final result = await _withCancellation(extra, (cancellation) {
         var stage = 0;
-        return service.start(
+        return registryService.start(
           port: args['port'] as int? ?? 5056,
           cancellation: cancellation,
           onProgress: (progress) {
@@ -70,7 +75,7 @@ void registerRegistryTools(McpServer server, RegistryService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'registry_stop',
     title: 'Stop Local Registry',
     description: '停止 registry 容器，不删除容器或其持久化数据。',
@@ -81,7 +86,7 @@ void registerRegistryTools(McpServer server, RegistryService service) {
     ),
     annotations: _annotations('Stop Local Registry', destructive: true),
     callback: (args, extra) => guardToolCall(() async {
-      final result = await service.stop();
+      final result = await registryService.stop();
       return (
         data: <String, Object?>{'running': result.running},
         summary: result.running ? 'registry 仍在运行' : 'registry 已停止，数据已保留',

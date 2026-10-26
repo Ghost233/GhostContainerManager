@@ -99,7 +99,7 @@ void main() {
     enableJsonResponse: true,
   );
 
-  test('tools/list exposes exactly 35 v1 tools across eight domains', () async {
+  test('tools/list exposes the slim two-tool surface; gcm_help catalogs all 35 v1 tools', () async {
     final server = makeServer();
     await server.start();
     addTearDown(server.stop);
@@ -167,6 +167,30 @@ void main() {
     );
     final tools = (listBody?['result'] as Map)['tools'] as List;
     final names = tools.map((t) => (t as Map)['name'] as String).toSet();
+    // 精简注册模式（2026-10-26 用户拍板）：tools/list 只暴露两个入口工具。
+    expect(names, <String>{'gcm_help', 'gcm_call'});
+
+    final (helpBody, _, _) = await rpc(
+      <String, dynamic>{
+        'jsonrpc': '2.0',
+        'id': 3,
+        'method': 'tools/call',
+        'params': <String, dynamic>{
+          'name': 'gcm_help',
+          'arguments': <String, dynamic>{},
+        },
+      },
+      sessionId: sessionId,
+      protocolVersion: negotiatedVersion,
+    );
+    final structured =
+        (helpBody?['result'] as Map)['structuredContent']
+            as Map<String, dynamic>;
+    final domains = structured['domains'] as Map<String, dynamic>;
+    final catalogNames = <String>{
+      for (final domainTools in domains.values)
+        for (final tool in domainTools as List) (tool as Map)['name'] as String,
+    };
 
     const expected = {
       'system_status',
@@ -205,14 +229,15 @@ void main() {
       'registry_start',
       'registry_stop',
     };
-    expect(names, hasLength(35), reason: 'unexpected tools: $names');
+    expect(catalogNames, hasLength(35), reason: 'catalog: $catalogNames');
     expect(
-      names,
+      catalogNames,
       expected,
       reason:
-          'missing: ${expected.difference(names)}; '
-          'unexpected: ${names.difference(expected)}',
+          'missing: ${expected.difference(catalogNames)}; '
+          'unexpected: ${catalogNames.difference(expected)}',
     );
+    expect(structured['totalTools'], 35);
   });
 
   test('settings switch on launch starts the server; off stops it', () async {

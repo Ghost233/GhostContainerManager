@@ -7,13 +7,18 @@ library;
 
 import 'package:mcp_dart/mcp_dart.dart';
 
+import '../tool_registrar.dart';
+
 import '../../services/compose_service.dart';
 import '../../services/errors.dart';
 import 'system_tools.dart';
 
-/// Registers the compose domain tools on [server].
-void registerComposeTools(McpServer server, ComposeService composeService) {
-  server.registerTool(
+/// Registers the compose domain tools on [service].
+void registerComposeTools(
+  ToolRegistrar service,
+  ComposeService composeService,
+) {
+  service.registerTool(
     'compose_list',
     title: 'List Compose Projects',
     description:
@@ -42,7 +47,7 @@ void registerComposeTools(McpServer server, ComposeService composeService) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'compose_up',
     title: 'Compose Up',
     description:
@@ -102,7 +107,7 @@ void registerComposeTools(McpServer server, ComposeService composeService) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'compose_down',
     title: 'Compose Down',
     description:

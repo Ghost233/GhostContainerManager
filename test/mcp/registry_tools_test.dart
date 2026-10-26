@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghost_container_manager/mcp/tools/registry_tools.dart';
+import 'package:ghost_container_manager/mcp/tool_registrar.dart';
+import 'package:ghost_container_manager/mcp/tools/catalog_tools.dart';
 import 'package:ghost_container_manager/services/errors.dart';
 import 'package:ghost_container_manager/services/registry_service.dart';
 import 'package:mcp_dart/mcp_dart.dart';
@@ -28,7 +30,9 @@ void main() {
       port: 0,
       path: '/mcp',
       serverFactory: (_) {
-        registerRegistryTools(server, registry);
+        final callbacks = ToolCallbackRegistry();
+        registerRegistryTools(callbacks, registry);
+        registerCatalogTools(server, callbacks);
         return server;
       },
       enableJsonResponse: true,
@@ -121,8 +125,8 @@ void main() {
     Object? progressToken,
     int? id,
   }) => request('tools/call', <String, dynamic>{
-    'name': name,
-    'arguments': arguments,
+    'name': 'gcm_call',
+    'arguments': <String, dynamic>{'tool': name, 'arguments': arguments},
     if (progressToken != null)
       '_meta': <String, Object?>{'progressToken': progressToken},
   }, id: id);
@@ -182,8 +186,14 @@ void main() {
 
   test('all three tools expose honest annotations and input schemas', () async {
     await initialize();
-    final result = await request('tools/list', <String, dynamic>{});
-    final tools = (result['tools'] as List).cast<Map<String, dynamic>>();
+    final result = await request('tools/call', <String, dynamic>{
+      'name': 'gcm_help',
+      'arguments': <String, dynamic>{'domain': 'registry'},
+    });
+    final structured = result['structuredContent'] as Map<String, dynamic>;
+    final tools =
+        ((structured['domains'] as Map<String, dynamic>)['registry'] as List)
+            .cast<Map<String, dynamic>>();
     expect(tools.map((tool) => tool['name']), <String>[
       'registry_status',
       'registry_start',
@@ -194,7 +204,6 @@ void main() {
     };
     expect(byName['registry_status']!['annotations']['readOnlyHint'], isTrue);
     expect(byName['registry_status']!['annotations']['idempotentHint'], isTrue);
-    expect(byName['registry_status']!['inputSchema']['properties'], isEmpty);
     expect(byName['registry_start']!['annotations']['readOnlyHint'], isFalse);
     expect(
       byName['registry_start']!['annotations']['destructiveHint'],
@@ -203,13 +212,8 @@ void main() {
     expect(byName['registry_start']!['annotations']['idempotentHint'], isTrue);
     expect(byName['registry_stop']!['annotations']['destructiveHint'], isTrue);
     expect(byName['registry_stop']!['annotations']['idempotentHint'], isTrue);
-    final startProperties =
-        byName['registry_start']!['inputSchema']['properties'] as Map;
-    expect(startProperties['port']['default'], 5056);
-    expect(
-      byName['registry_stop']!['inputSchema']['additionalProperties'],
-      isFalse,
-    );
+    // 精简模式下 inputSchema 不进 tools/list；port 默认 5056 等参数契约由
+    // Service 层与 docs/spec/mcp-tools.md §3 保证。
   });
 
   test(

@@ -6,6 +6,8 @@ library;
 
 import 'package:mcp_dart/mcp_dart.dart';
 
+import '../tool_registrar.dart';
+
 import '../../services/container_models.dart';
 import '../../services/container_service.dart';
 import 'system_tools.dart';
@@ -53,11 +55,14 @@ Map<String, Object?> _containerSummaryJson(ContainerSnapshotInfo c) {
   };
 }
 
-/// Registers the container read tools on [server].
+/// Registers the container read tools on [service].
 ///
 /// Logs stay UI-only (#13 decision): no `container_logs` tool here.
-void registerContainerTools(McpServer server, ContainerService service) {
-  server.registerTool(
+void registerContainerTools(
+  ToolRegistrar service,
+  ContainerService containerService,
+) {
+  service.registerTool(
     'container_list',
     title: 'List Containers',
     description:
@@ -102,7 +107,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
         label: args['label'] as String?,
         state: statusArg == null ? null : ContainerState.fromWire(statusArg),
       );
-      final containers = await service.listContainers(query);
+      final containers = await containerService.listContainers(query);
       final jsonList = containers.map(_containerSummaryJson).toList();
       final running = containers
           .where((c) => c.state == ContainerState.running)
@@ -116,7 +121,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'container_inspect',
     title: 'Inspect Container',
     description:
@@ -136,7 +141,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     annotations: _readOnlyOpenWorld('Inspect Container'),
     callback: (args, extra) => guardToolCall(() async {
       final id = args['id'] as String;
-      final c = await service.inspect(id);
+      final c = await containerService.inspect(id);
       final detail = <String, Object?>{
         ..._containerSummaryJson(c),
         'startedAt': c.startedAt?.toIso8601String(),
@@ -165,7 +170,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'container_stats',
     title: 'Container Stats',
     description:
@@ -201,7 +206,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     annotations: _readOnlyOpenWorld('Container Stats'),
     callback: (args, extra) => guardToolCall(() async {
       final id = args['id'] as String;
-      final stats = await service.stats(id);
+      final stats = await containerService.stats(id);
       final utilization = stats.memoryUtilization;
       // All counters are optional upstream — emit only the ones present so
       // the structured content validates against the output schema.
@@ -231,7 +236,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'container_create',
     title: 'Create Container',
     description:
@@ -318,7 +323,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
           ) ??
           const <String, String>{};
       final start = args['start'] == true;
-      final id = await service.create(
+      final id = await containerService.create(
         id: args['name'] as String?,
         image: args['image'] as String,
         command: (args['command'] as List?)?.cast<String>() ?? const <String>[],
@@ -341,7 +346,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'container_start',
     title: 'Start Container',
     description: '启动容器；已经处于 running 时幂等成功。',
@@ -362,7 +367,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     annotations: _writeAnnotations('Start Container'),
     callback: (args, extra) => guardToolCall(() async {
       final id = args['id'] as String;
-      await service.start(id);
+      await containerService.start(id);
       return (
         data: <String, Object?>{'id': id, 'status': 'running'},
         summary: '容器 $id 已启动',
@@ -370,7 +375,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'container_stop',
     title: 'Stop Container',
     description:
@@ -402,7 +407,10 @@ void registerContainerTools(McpServer server, ContainerService service) {
     callback: (args, extra) => guardToolCall(() async {
       final id = args['id'] as String;
       final timeout = args['timeoutSeconds'] as int? ?? 5;
-      final stoppedGracefully = await service.stop(id, timeoutSeconds: timeout);
+      final stoppedGracefully = await containerService.stop(
+        id,
+        timeoutSeconds: timeout,
+      );
       return (
         data: <String, Object?>{
           'id': id,
@@ -414,7 +422,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'container_restart',
     title: 'Restart Container',
     description: '按 stop 后 start 合成重启，非原子操作；停止超时时由 runtime 发送 SIGKILL。',
@@ -441,7 +449,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     annotations: _writeAnnotations('Restart Container'),
     callback: (args, extra) => guardToolCall(() async {
       final id = args['id'] as String;
-      await service.restart(
+      await containerService.restart(
         id,
         timeoutSeconds: args['timeoutSeconds'] as int? ?? 5,
       );
@@ -452,7 +460,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'container_kill',
     title: 'Kill Container',
     description: '向容器主进程发送信号；signal 默认 KILL，也可为 TERM、INT、HUP 等。',
@@ -479,7 +487,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     callback: (args, extra) => guardToolCall(() async {
       final id = args['id'] as String;
       final signal = args['signal'] as String? ?? 'KILL';
-      final status = await service.kill(id, signal: signal);
+      final status = await containerService.kill(id, signal: signal);
       return (
         data: <String, Object?>{'id': id, 'signal': signal, 'status': status},
         summary: '已向容器 $id 发送 $signal 信号',
@@ -487,7 +495,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'container_delete',
     title: 'Delete Container',
     description:
@@ -514,7 +522,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     annotations: _writeAnnotations('Delete Container', destructive: true),
     callback: (args, extra) => guardToolCall(() async {
       final id = args['id'] as String;
-      await service.delete(id, force: args['force'] == true);
+      await containerService.delete(id, force: args['force'] == true);
       return (
         data: <String, Object?>{'id': id, 'deleted': true},
         summary: '容器 $id 已删除',
@@ -522,7 +530,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'container_exec',
     title: 'Execute Container Command',
     description:
@@ -566,7 +574,7 @@ void registerContainerTools(McpServer server, ContainerService service) {
       idempotent: false,
     ),
     callback: (args, extra) => guardToolCall(() async {
-      final result = await service.exec(
+      final result = await containerService.exec(
         args['id'] as String,
         command: (args['command'] as List).cast<String>(),
         timeoutSeconds: args['timeoutSeconds'] as int? ?? 60,

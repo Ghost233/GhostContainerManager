@@ -27,6 +27,8 @@
 
 **推荐 A**。注解粒度是用户决策（不设门控、注解标全）的直接推论：上层封装靠注解区分操作风险，action 合并会让 destructive 信息消失。35 个工具对现代 agent 是可管理规模。
 
+**2026-10-26 补充（用户拍板，精简注册模式）**：方案 A 的 35 个业务工具保留为分发目标，但不再逐个出现在 `tools/list`——协议面只注册两个入口工具：`gcm_help`（返回按域分组的工具目录：名称/title/描述要点/RO·D·I 注解）与 `gcm_call`（参数 `tool` + `arguments`，按名分发到业务工具）。动机：35 个工具全量注册让 MCP 客户端的工具列表过长，挤占上下文。业务工具的实现、schema、注解不变；目录的单一事实来源是 `lib/mcp/tool_catalog.dart`，须与本文件 §3 保持同步。`gcm_help` 支持可选 `domain` 过滤；`gcm_call` 对未知工具名返回 `NOT_FOUND` 工具错误并提示先调 `gcm_help`。
+
 ## 3. 工具清单（v1 全量）
 
 注解五字段：RO=readOnlyHint，D=destructiveHint，I=idempotentHint，OW=openWorldHint（所有工具都操作本机运行时，均标 `openWorldHint: true`；下表从略）。title 一律填英文短语，从略。

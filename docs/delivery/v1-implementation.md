@@ -150,3 +150,10 @@ MCP 全链路在真实运行时验证通过：35 工具 tools/list、system_stat
 - Release：https://github.com/Ghost233/GhostContainerManager/releases/tag/v1.0.2（非草稿、非预发布，2026-10-25T16:20:04Z 发布）。
 - 资产：`GhostContainerManager-1.0.2.dmg`（31,490,129 B）、`manifest.json`（181 B）、`SHA256SUMS`（178 B）。
 - 分发方式：仍未签名、未公证（沿用 v1.0.0 的用户确认）。
+
+## MCP 精简注册模式（2026-10-26，用户拍板）
+
+- 动机：35 个业务工具全量注册让 MCP 客户端工具列表过长、挤占上下文。用户原话：「能不能用类似cli的那种方式,只暴露2到3个接口,获取help,然后填参数这种,否则太长了」。
+- 形态：`tools/list` 只暴露 `gcm_help`（按域分组的工具目录：名称/title/描述要点/RO·D·I 注解，支持 `domain` 过滤）与 `gcm_call`（`tool` + `arguments` 按名分发；未知工具名 → `NOT_FOUND` 工具错误并提示先调 `gcm_help`）。35 个业务工具的实现/schema/注解不变。
+- 结构：新增 `lib/mcp/tool_catalog.dart`（35 条目单一事实来源，须与 docs/spec/mcp-tools.md §3 同步）、`lib/mcp/tool_registrar.dart`（`ToolRegistrar` 结构接缝 + `ToolCallbackRegistry` 收集器 + `McpServerRegistrar` 适配器）、`lib/mcp/tools/catalog_tools.dart`（两个入口工具 + `buildBusinessToolRegistry`）。`GcmMcpServer.buildServer` 改为注册两个入口工具；业务工具 callback 经 `_auditedRegistry` 包装保持工具粒度审计（gcm_call 入口本身也记一条）。
+- 测试：协议级测试的 `callTool` 一律改经 `gcm_call` 转发；`tools/list` 断言改为「恰好 {gcm_help, gcm_call}」+ `gcm_help` 目录断言；新增 `test/mcp/catalog_tools_test.dart`（目录 35 条/八域/查找/注册表收集）。MCP 套件 64/64 绿。

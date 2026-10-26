@@ -9,6 +9,8 @@ import 'dart:async';
 
 import 'package:mcp_dart/mcp_dart.dart';
 
+import 'tool_registrar.dart';
+
 /// One completed MCP tool call.
 class McpCallRecord {
   const McpCallRecord({
@@ -96,7 +98,7 @@ class McpToolAuditor {
 /// Tool registration is routed through this class by [GcmMcpServer.buildServer],
 /// so all domains are audited without each tool file knowing about the audit
 /// layer. Arguments and results are not captured (privacy/boundedness).
-class AuditedMcpServer extends McpServer {
+class AuditedMcpServer extends McpServer implements ToolRegistrar {
   AuditedMcpServer(
     super.serverInfo, {
     super.options,

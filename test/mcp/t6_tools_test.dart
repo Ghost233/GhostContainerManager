@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ghost_container_manager/bridge/container_bridge.dart';
 import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
 import 'package:ghost_container_manager/mcp/tools/compose_tools.dart';
+import 'package:ghost_container_manager/mcp/tool_registrar.dart';
+import 'package:ghost_container_manager/mcp/tools/catalog_tools.dart';
 import 'package:ghost_container_manager/mcp/tools/mount_tools.dart';
 import 'package:ghost_container_manager/mcp/tools/network_tools.dart';
 import 'package:ghost_container_manager/services/compose_service.dart';
@@ -68,18 +70,20 @@ void main() {
         final server = McpServer(
           const Implementation(name: 't6-tools-test', version: '0'),
         );
+        final registry = ToolCallbackRegistry();
         registerMountTools(
-          server,
+          registry,
           MountService(containerService: containerService),
         );
         registerNetworkTools(
-          server,
+          registry,
           NetworkService(bridge: bridge, containerService: containerService),
         );
         registerComposeTools(
-          server,
+          registry,
           ComposeService(bridge: bridge, containerService: containerService),
         );
+        registerCatalogTools(server, registry);
         return server;
       },
       host: '127.0.0.1',
@@ -140,7 +144,10 @@ void main() {
       'jsonrpc': '2.0',
       'id': 99,
       'method': 'tools/call',
-      'params': <String, dynamic>{'name': name, 'arguments': arguments},
+      'params': <String, dynamic>{
+        'name': 'gcm_call',
+        'arguments': <String, dynamic>{'tool': name, 'arguments': arguments},
+      },
     });
     return body['result'] as Map<String, dynamic>;
   }
@@ -150,11 +157,19 @@ void main() {
     final body = await rpc(<String, dynamic>{
       'jsonrpc': '2.0',
       'id': 2,
-      'method': 'tools/list',
+      'method': 'tools/call',
+      'params': <String, dynamic>{
+        'name': 'gcm_help',
+        'arguments': <String, dynamic>{},
+      },
     });
-    final tools = (body['result'] as Map<String, dynamic>)['tools'] as List;
+    final structured =
+        (body['result'] as Map<String, dynamic>)['structuredContent']
+            as Map<String, dynamic>;
+    final domains = structured['domains'] as Map<String, dynamic>;
     final byName = <String, Map<String, dynamic>>{
-      for (final t in tools) (t as Map)['name'] as String: t.cast(),
+      for (final tools in domains.values)
+        for (final t in tools as List) (t as Map)['name'] as String: t.cast(),
     };
     const expectedTitles = <String, String>{
       'mount_list': 'List Mounts',

@@ -10,6 +10,8 @@ import 'dart:async';
 
 import 'package:mcp_dart/mcp_dart.dart';
 
+import '../tool_registrar.dart';
+
 import '../../services/errors.dart';
 import '../../services/image_models.dart';
 import '../../services/image_service.dart';
@@ -42,9 +44,9 @@ const _referenceDescription =
     '镜像引用，必须 name:tag（如 alpine:3.19，省略 tag 默认 :latest）。'
     '不支持 digest 寻址（apple/container#1962）。';
 
-/// Registers the image tools on [server].
-void registerImageTools(McpServer server, ImageService service) {
-  server.registerTool(
+/// Registers the image tools on [service].
+void registerImageTools(ToolRegistrar service, ImageService imageService) {
+  service.registerTool(
     'image_list',
     title: 'List Images',
     description:
@@ -75,7 +77,7 @@ void registerImageTools(McpServer server, ImageService service) {
     ),
     annotations: _readOnlyOpenWorld,
     callback: (args, extra) => guardToolCall(() async {
-      final images = await service.listImages();
+      final images = await imageService.listImages();
       final dangling = images.where((i) => i.isDangling).length;
       return (
         data: <String, Object?>{
@@ -88,7 +90,7 @@ void registerImageTools(McpServer server, ImageService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'image_inspect',
     title: 'Inspect Image',
     description:
@@ -119,7 +121,9 @@ void registerImageTools(McpServer server, ImageService service) {
     ),
     annotations: _readOnlyOpenWorld,
     callback: (args, extra) => guardToolCall(() async {
-      final inspection = await service.inspect(args['reference'] as String);
+      final inspection = await imageService.inspect(
+        args['reference'] as String,
+      );
       return (
         data: <String, Object?>{'image': inspection.toJson()},
         summary:
@@ -131,7 +135,7 @@ void registerImageTools(McpServer server, ImageService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'image_delete',
     title: 'Delete Image',
     description:
@@ -154,7 +158,7 @@ void registerImageTools(McpServer server, ImageService service) {
     annotations: _deleteOpenWorld,
     callback: (args, extra) => guardToolCall(() async {
       final reference = args['reference'] as String;
-      await service.delete(reference);
+      await imageService.delete(reference);
       final normalized = validateImageReference(reference).reference;
       return (
         data: <String, Object?>{'reference': normalized, 'deleted': true},
@@ -163,7 +167,7 @@ void registerImageTools(McpServer server, ImageService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'image_pull',
     title: 'Pull Image',
     description:
@@ -190,12 +194,12 @@ void registerImageTools(McpServer server, ImageService service) {
     ),
     annotations: _writeOpenWorld,
     callback: (args, extra) => guardToolCall(() async {
-      final pullId = service.newPullId();
+      final pullId = imageService.newPullId();
       final abortSub = extra.signal.onAbort.listen((_) {
-        unawaited(service.cancelPull(pullId));
+        unawaited(imageService.cancelPull(pullId));
       });
       try {
-        final outcome = await service.pull(
+        final outcome = await imageService.pull(
           reference: args['reference'] as String,
           platform: args['platform'] as String?,
           pullId: pullId,

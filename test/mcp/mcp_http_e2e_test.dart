@@ -110,10 +110,7 @@ void main() {
     expect(status, 200);
     final tools = (body!['result'] as Map<String, dynamic>)['tools'] as List;
     final names = tools.map((t) => (t as Map)['name']).toSet();
-    expect(
-      names,
-      containsAll(['system_status', 'system_start', 'system_stop']),
-    );
+    expect(names, containsAll(['gcm_help', 'gcm_call']));
   });
 
   test('system_status 返回结构化结果（两级错误模型成功路径）', () async {
@@ -124,8 +121,11 @@ void main() {
         'id': 3,
         'method': 'tools/call',
         'params': <String, dynamic>{
-          'name': 'system_status',
-          'arguments': <String, dynamic>{},
+          'name': 'gcm_call',
+          'arguments': <String, dynamic>{
+            'tool': 'system_status',
+            'arguments': <String, dynamic>{},
+          },
         },
       },
       sessionId: sessionId,
@@ -159,8 +159,11 @@ void main() {
         'id': 4,
         'method': 'tools/call',
         'params': <String, dynamic>{
-          'name': 'system_stop',
-          'arguments': <String, dynamic>{},
+          'name': 'gcm_call',
+          'arguments': <String, dynamic>{
+            'tool': 'system_stop',
+            'arguments': <String, dynamic>{},
+          },
         },
       },
       sessionId: sessionId,
@@ -187,8 +190,11 @@ void main() {
         'id': 4,
         'method': 'tools/call',
         'params': <String, dynamic>{
-          'name': 'system_stop',
-          'arguments': <String, dynamic>{},
+          'name': 'gcm_call',
+          'arguments': <String, dynamic>{
+            'tool': 'system_stop',
+            'arguments': <String, dynamic>{},
+          },
         },
       },
       sessionId: sessionId,
@@ -212,8 +218,11 @@ void main() {
         'id': 5,
         'method': 'tools/call',
         'params': <String, dynamic>{
-          'name': 'system_start',
-          'arguments': <String, dynamic>{'installKernel': true},
+          'name': 'gcm_call',
+          'arguments': <String, dynamic>{
+            'tool': 'system_start',
+            'arguments': <String, dynamic>{'installKernel': true},
+          },
         },
       },
       sessionId: sessionId,

@@ -5,6 +5,8 @@ library;
 
 import 'package:mcp_dart/mcp_dart.dart';
 
+import '../tool_registrar.dart';
+
 import '../../services/errors.dart';
 import '../../services/network_service.dart';
 import 'system_tools.dart';
@@ -16,9 +18,12 @@ const _readOnly = ToolAnnotations(
   openWorldHint: true,
 );
 
-/// Registers the network domain tools on [server].
-void registerNetworkTools(McpServer server, NetworkService networkService) {
-  server.registerTool(
+/// Registers the network domain tools on [service].
+void registerNetworkTools(
+  ToolRegistrar service,
+  NetworkService networkService,
+) {
+  service.registerTool(
     'network_list',
     title: 'List Networks',
     description: '列出所有 container 网络（名称、子网、模式、是否内建、当前接入的容器数）。',
@@ -39,7 +44,7 @@ void registerNetworkTools(McpServer server, NetworkService networkService) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'network_get',
     title: 'Get Network',
     description:

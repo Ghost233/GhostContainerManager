@@ -9,6 +9,8 @@ import 'dart:convert';
 
 import 'package:mcp_dart/mcp_dart.dart';
 
+import '../tool_registrar.dart';
+
 import '../../services/errors.dart';
 import '../../services/system_parser.dart';
 import '../../services/system_service.dart';
@@ -54,9 +56,9 @@ const _readOnly = ToolAnnotations(
 
 String _versionText(RuntimeVersion? v) => v?.toString() ?? '-';
 
-/// Registers the system domain tools on [server].
-void registerSystemTools(McpServer server, SystemService systemService) {
-  server.registerTool(
+/// Registers the system domain tools on [service].
+void registerSystemTools(ToolRegistrar service, SystemService systemService) {
+  service.registerTool(
     'system_status',
     title: 'Runtime Status',
     description:
@@ -107,7 +109,7 @@ void registerSystemTools(McpServer server, SystemService systemService) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'system_start',
     title: 'Start Runtime',
     description:
@@ -160,7 +162,7 @@ void registerSystemTools(McpServer server, SystemService systemService) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'system_stop',
     title: 'Stop Runtime',
     description:

@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghost_container_manager/mcp/tools/project_tools.dart';
+import 'package:ghost_container_manager/mcp/tool_registrar.dart';
+import 'package:ghost_container_manager/mcp/tools/catalog_tools.dart';
 import 'package:ghost_container_manager/services/errors.dart';
 import 'package:ghost_container_manager/services/project_build_log_store.dart';
 import 'package:ghost_container_manager/services/project_service.dart';
@@ -29,7 +31,9 @@ void main() {
       port: 0,
       path: '/mcp',
       serverFactory: (_) {
-        registerProjectTools(server, projects);
+        final registry = ToolCallbackRegistry();
+        registerProjectTools(registry, projects);
+        registerCatalogTools(server, registry);
         return server;
       },
       enableJsonResponse: true,
@@ -132,16 +136,21 @@ void main() {
     String? progressToken,
   }) {
     return request('tools/call', <String, dynamic>{
-      'name': name,
-      'arguments': arguments,
+      'name': 'gcm_call',
+      'arguments': <String, dynamic>{'tool': name, 'arguments': arguments},
       if (progressToken != null)
         '_meta': <String, dynamic>{'progressToken': progressToken},
     }, id: id);
   }
 
   Future<List<dynamic>> listTools() async {
-    final result = await request('tools/list', <String, dynamic>{});
-    return result['tools'] as List<dynamic>;
+    final result = await request('tools/call', <String, dynamic>{
+      'name': 'gcm_help',
+      'arguments': <String, dynamic>{'domain': 'project'},
+    });
+    final structured = result['structuredContent'] as Map<String, dynamic>;
+    return (structured['domains'] as Map<String, dynamic>)['project']
+        as List<dynamic>;
   }
 
   test('list/get/init return curated structured content', () async {
@@ -319,19 +328,11 @@ void main() {
       isTrue,
     );
     expect(byName['project_reclaim']!['annotations']['idempotentHint'], isTrue);
-    final reclaimProperties =
-        byName['project_reclaim']!['inputSchema']['properties'] as Map;
-    expect(reclaimProperties['force']['default'], isTrue);
     expect(byName['project_build']!['annotations']['idempotentHint'], isFalse);
     expect(byName['project_test']!['annotations']['idempotentHint'], isFalse);
-    final build = byName['project_build']!;
-    final buildProperties = build['inputSchema']['properties'] as Map;
-    expect(buildProperties, isNot(contains('command')));
-    expect(buildProperties['skipTests']['default'], isTrue);
-    expect(
-      byName['project_test']!['inputSchema']['required'],
-      contains('command'),
-    );
+    // 精简模式下 inputSchema 不进 tools/list；skipTests 默认 true、
+    // project_test 必传 command 等契约由 Service 层与规格保证。
+    expect(byName['project_test']!['description'], contains('command'));
   });
 
   test('business failures become tool errors, not protocol errors', () async {

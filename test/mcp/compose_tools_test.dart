@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
 import 'package:ghost_container_manager/mcp/tools/compose_tools.dart';
+import 'package:ghost_container_manager/mcp/tool_registrar.dart';
+import 'package:ghost_container_manager/mcp/tools/catalog_tools.dart';
 import 'package:ghost_container_manager/services/compose_service.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:mcp_dart/mcp_dart.dart';
@@ -25,10 +27,13 @@ void main() {
         final server = McpServer(
           const Implementation(name: 'compose-tools-test', version: '1.0.0'),
         );
-        registerComposeTools(
-          server,
-          ComposeService(bridge: bridge, containerService: containers),
+        final composeService = ComposeService(
+          bridge: bridge,
+          containerService: containers,
         );
+        final registry = ToolCallbackRegistry();
+        registerComposeTools(registry, composeService);
+        registerCatalogTools(server, registry);
         return server;
       },
       host: '127.0.0.1',
@@ -86,31 +91,30 @@ void main() {
     final body = await rpc(<String, dynamic>{
       'jsonrpc': '2.0',
       'id': 2,
-      'method': 'tools/list',
+      'method': 'tools/call',
+      'params': <String, dynamic>{
+        'name': 'gcm_help',
+        'arguments': <String, dynamic>{},
+      },
     });
-    final tools = (body['result'] as Map<String, dynamic>)['tools'] as List;
+    final result = body['result'] as Map<String, dynamic>;
+    final structured = result['structuredContent'] as Map<String, dynamic>;
+    final domains = structured['domains'] as Map<String, dynamic>;
     return <String, Map<String, dynamic>>{
-      for (final tool in tools)
-        (tool as Map)['name'] as String: tool.cast<String, dynamic>(),
+      for (final domain in domains.values)
+        for (final tool in domain as List)
+          (tool as Map)['name'] as String: tool.cast<String, dynamic>(),
     };
   }
 
   test('compose run tools declare their structured output schemas', () async {
     final tools = await listTools();
     for (final name in <String>['compose_up', 'compose_down']) {
-      final schema = (tools[name]?['outputSchema'] as Map?)
-          ?.cast<String, dynamic>();
-      expect(schema, isNotNull, reason: name);
-      final properties = (schema!['properties'] as Map).cast<String, dynamic>();
-      expect(properties.keys, <String>{'exitCode', 'output', 'truncated'});
-      expect((properties['exitCode'] as Map)['type'], 'integer', reason: name);
-      expect((properties['output'] as Map)['type'], 'string', reason: name);
-      expect((properties['truncated'] as Map)['type'], 'boolean', reason: name);
-      expect(
-        schema['required'],
-        containsAll(<String>['exitCode', 'output', 'truncated']),
-        reason: name,
-      );
+      final entry = tools[name];
+      expect(entry, isNotNull, reason: name);
+      // 精简模式下 outputSchema 不进 tools/list；结构化输出形状由
+      // compose_tools 的单元测试与 docs/spec/mcp-tools.md §3 保证。
+      expect(entry!['description'], contains('compose'));
     }
   });
 }

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:mcp_dart/mcp_dart.dart';
 
+import '../tool_registrar.dart';
+
 import '../../services/project_service.dart';
 import 'system_tools.dart';
 
@@ -9,8 +11,11 @@ const _prefixPattern = r'^[a-z0-9][a-z0-9.-]{0,126}$';
 
 /// Curated project workflows. Runtime mutations stay in ProjectService; this
 /// module only translates MCP schemas, progress, cancellation and summaries.
-void registerProjectTools(McpServer server, ProjectService service) {
-  server.registerTool(
+void registerProjectTools(
+  ToolRegistrar service,
+  ProjectService projectService,
+) {
+  service.registerTool(
     'project_list',
     title: 'List Projects',
     description: '列出容器 label 与 ghostcontainer.toml 发现的项目。',
@@ -27,7 +32,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
       idempotent: true,
     ),
     callback: (args, extra) => guardToolCall(() async {
-      final projects = await service.listProjects();
+      final projects = await projectService.listProjects();
       return (
         data: <String, Object?>{
           'projects': projects
@@ -39,7 +44,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'project_get',
     title: 'Get Project',
     description: '返回项目镜像、容器与使用状态；project 与 path 二选一。',
@@ -47,7 +52,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
     outputSchema: _projectDetailsOutput(),
     annotations: _annotations('Get Project', readOnly: true, idempotent: true),
     callback: (args, extra) => guardToolCall(() async {
-      final result = await service.getProject(
+      final result = await projectService.getProject(
         project: args['project'] as String?,
         path: args['path'] as String?,
       );
@@ -59,7 +64,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'project_init',
     title: 'Init Project',
     description: '在项目目录创建仅含 prefix 的 ghostcontainer.toml。',
@@ -83,7 +88,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
     ),
     annotations: _annotations('Init Project'),
     callback: (args, extra) => guardToolCall(() async {
-      final result = await service.initProject(
+      final result = await projectService.initProject(
         path: args['path'] as String,
         prefix: args['prefix'] as String?,
       );
@@ -94,7 +99,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'project_build',
     title: 'Build Project Image',
     description:
@@ -124,7 +129,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
           const <String, String>{};
       final result = await _withCancellation(extra, (cancellation) {
         var lines = 0;
-        return service.buildProject(
+        return projectService.buildProject(
           project: args['project'] as String?,
           path: args['path'] as String?,
           name: args['name'] as String,
@@ -153,7 +158,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'project_test',
     title: 'Test Project Image',
     description: '用必传 command 运行一次性测试容器；非零退出是结果数据。',
@@ -191,7 +196,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
     callback: (args, extra) => guardToolCall(() async {
       final result = await _withCancellation(
         extra,
-        (cancellation) => service.testProject(
+        (cancellation) => projectService.testProject(
           project: args['project'] as String?,
           path: args['path'] as String?,
           name: args['name'] as String,
@@ -208,7 +213,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'project_reclaim',
     title: 'Reclaim Project',
     description: '停删项目容器并仅释放无引用项目镜像；dryRun 返回同构预演。',
@@ -225,7 +230,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
       idempotent: true,
     ),
     callback: (args, extra) => guardToolCall(() async {
-      final result = await service.reclaimProject(
+      final result = await projectService.reclaimProject(
         project: args['project'] as String?,
         path: args['path'] as String?,
         dryRun: args['dryRun'] as bool? ?? false,
@@ -240,7 +245,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'project_publish',
     title: 'Publish Project Image',
     description: 'tag 并 plain-HTTP 推送到 127.0.0.1:5056，可选删除两个本地 tag。',
@@ -256,7 +261,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
     callback: (args, extra) => guardToolCall(() async {
       final result = await _withCancellation(extra, (cancellation) {
         var lines = 0;
-        return service.publishProject(
+        return projectService.publishProject(
           project: args['project'] as String?,
           path: args['path'] as String?,
           name: args['name'] as String,
@@ -275,7 +280,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
     }),
   );
 
-  server.registerTool(
+  service.registerTool(
     'project_restore',
     title: 'Restore Project Image',
     description: '从本地 plain-HTTP registry 拉回并 tag 回项目镜像名。',
@@ -290,7 +295,7 @@ void registerProjectTools(McpServer server, ProjectService service) {
     callback: (args, extra) => guardToolCall(() async {
       final result = await _withCancellation(extra, (cancellation) {
         var lines = 0;
-        return service.restoreProject(
+        return projectService.restoreProject(
           project: args['project'] as String?,
           path: args['path'] as String?,
           name: args['name'] as String,

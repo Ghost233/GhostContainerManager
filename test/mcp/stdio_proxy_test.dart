@@ -67,8 +67,11 @@ void main() {
         'id': 2,
         'method': 'tools/call',
         'params': <String, dynamic>{
-          'name': 'system_status',
-          'arguments': <String, dynamic>{},
+          'name': 'gcm_call',
+          'arguments': <String, dynamic>{
+            'tool': 'system_status',
+            'arguments': <String, dynamic>{},
+          },
         },
       }),
     );

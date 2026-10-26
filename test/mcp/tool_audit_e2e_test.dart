@@ -88,8 +88,11 @@ void main() {
         'id': 2,
         'method': 'tools/call',
         'params': <String, dynamic>{
-          'name': 'system_status',
-          'arguments': <String, dynamic>{},
+          'name': 'gcm_call',
+          'arguments': <String, dynamic>{
+            'tool': 'system_status',
+            'arguments': <String, dynamic>{},
+          },
         },
       },
       sessionId: sessionId,
@@ -97,10 +100,13 @@ void main() {
     );
     expect((callBody?['result'] as Map)['isError'], isNot(true));
 
-    expect(server.recentCalls, hasLength(1));
-    final record = server.recentCalls.single;
-    expect(record.tool, 'system_status');
+    // 精简模式：gcm_call 入口与分发的业务工具各记一条审计。
+    expect(server.recentCalls, hasLength(2));
+    final record = server.recentCalls.firstWhere(
+      (r) => r.tool == 'system_status',
+    );
     expect(record.succeeded, isTrue);
     expect(record.duration, isA<Duration>());
+    expect(server.recentCalls.any((r) => r.tool == 'gcm_call'), isTrue);
   });
 }

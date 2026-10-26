@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
 import 'package:ghost_container_manager/mcp/tools/network_tools.dart';
+import 'package:ghost_container_manager/mcp/tool_registrar.dart';
+import 'package:ghost_container_manager/mcp/tools/catalog_tools.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/network_service.dart';
 import 'package:mcp_dart/mcp_dart.dart';
@@ -25,10 +27,12 @@ void main() {
         final server = McpServer(
           const Implementation(name: 'network-tools-test', version: '1.0.0'),
         );
+        final registry = ToolCallbackRegistry();
         registerNetworkTools(
-          server,
+          registry,
           NetworkService(bridge: bridge, containerService: containers),
         );
+        registerCatalogTools(server, registry);
         return server;
       },
       host: '127.0.0.1',
@@ -86,38 +90,26 @@ void main() {
     final body = await rpc(<String, dynamic>{
       'jsonrpc': '2.0',
       'id': 2,
-      'method': 'tools/list',
+      'method': 'tools/call',
+      'params': <String, dynamic>{
+        'name': 'gcm_help',
+        'arguments': <String, dynamic>{'domain': 'network'},
+      },
     });
-    final tools = (body['result'] as Map<String, dynamic>)['tools'] as List;
+    final result = body['result'] as Map<String, dynamic>;
+    final structured = result['structuredContent'] as Map<String, dynamic>;
+    final domains = structured['domains'] as Map<String, dynamic>;
+    final tools = domains['network'] as List;
     return (tools.singleWhere((tool) => (tool as Map)['name'] == name) as Map)
         .cast<String, dynamic>();
   }
 
   test('network_get declares its structured output schema', () async {
     final tool = await listTool('network_get');
-    final schema = (tool['outputSchema'] as Map).cast<String, dynamic>();
-    final properties = (schema['properties'] as Map).cast<String, dynamic>();
-
-    expect(properties.keys, <String>{
-      'id',
-      'plugin',
-      'mode',
-      'subnet',
-      'gateway',
-      'builtin',
-      'containerCount',
-      'containers',
-    });
-    expect((properties['containerCount'] as Map)['type'], 'integer');
-    expect((properties['builtin'] as Map)['type'], 'boolean');
-    final containers = (properties['containers'] as Map)
-        .cast<String, dynamic>();
-    expect(containers['type'], 'array');
-    final member = (containers['items'] as Map).cast<String, dynamic>();
-    expect(
-      ((member['properties'] as Map).cast<String, dynamic>()).keys,
-      <String>{'id', 'hostname', 'ip'},
-    );
-    expect(schema['required'], containsAll(<String>['id', 'containers']));
+    // 精简模式下 outputSchema 不进 tools/list；目录条目承载名称/描述/注解，
+    // 结构化输出形状由 network_tools 单元测试与 docs/spec/mcp-tools.md §3 保证。
+    expect(tool['title'], 'Get Network');
+    final annotations = tool['annotations'] as Map<String, dynamic>;
+    expect(annotations['readOnlyHint'], isTrue);
   });
 }

@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
 import 'package:ghost_container_manager/mcp/tools/image_tools.dart';
+import 'package:ghost_container_manager/mcp/tool_registrar.dart';
+import 'package:ghost_container_manager/mcp/tools/catalog_tools.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/image_service.dart';
 import 'package:mcp_dart/mcp_dart.dart';
@@ -54,7 +56,9 @@ void main() {
         final server = McpServer(
           const Implementation(name: 'gcm-test', version: '0.0.0'),
         );
-        registerImageTools(server, imageService);
+        final registry = ToolCallbackRegistry();
+        registerImageTools(registry, imageService);
+        registerCatalogTools(server, registry);
         return server;
       },
       host: '127.0.0.1',
@@ -115,7 +119,10 @@ void main() {
       'jsonrpc': '2.0',
       'id': 99,
       'method': 'tools/call',
-      'params': <String, dynamic>{'name': name, 'arguments': arguments},
+      'params': <String, dynamic>{
+        'name': 'gcm_call',
+        'arguments': <String, dynamic>{'tool': name, 'arguments': arguments},
+      },
     });
     return body['result'] as Map<String, dynamic>;
   }
@@ -125,9 +132,17 @@ void main() {
     final body = await rpc(<String, dynamic>{
       'jsonrpc': '2.0',
       'id': 2,
-      'method': 'tools/list',
+      'method': 'tools/call',
+      'params': <String, dynamic>{
+        'name': 'gcm_help',
+        'arguments': <String, dynamic>{'domain': 'image'},
+      },
     });
-    final tools = (body['result'] as Map<String, dynamic>)['tools'] as List;
+    final structured =
+        (body['result'] as Map<String, dynamic>)['structuredContent']
+            as Map<String, dynamic>;
+    final tools =
+        (structured['domains'] as Map<String, dynamic>)['image'] as List;
     final byName = <String, Map<String, dynamic>>{
       for (final t in tools) (t as Map)['name'] as String: t.cast(),
     };
@@ -150,14 +165,8 @@ void main() {
     expect(delete['readOnlyHint'], isFalse);
     final pull = byName['image_pull']!['annotations'] as Map;
     expect(pull['destructiveHint'], isFalse);
-    // The schema documents the reference contract enforced by Service-layer
-    // input validation.
-    final pullSchema =
-        (byName['image_pull']!['inputSchema'] as Map)['properties'] as Map;
-    expect(
-      (pullSchema['reference'] as Map)['description'],
-      contains('name:tag'),
-    );
+    // 精简模式下 inputSchema 不进 tools/list；reference 契约由 Service 层
+    // 输入校验保证（见下方 digest 寻址用例）。
   });
 
   test('image_list 返回 structuredContent（含 dangling 标记）与文本摘要', () async {

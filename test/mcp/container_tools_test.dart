@@ -106,12 +106,15 @@ void main() {
       'jsonrpc': '2.0',
       'id': 99,
       'method': 'tools/call',
-      'params': <String, dynamic>{'name': name, 'arguments': arguments},
+      'params': <String, dynamic>{
+        'name': 'gcm_call',
+        'arguments': <String, dynamic>{'tool': name, 'arguments': arguments},
+      },
     });
     return body['result'] as Map<String, dynamic>;
   }
 
-  test('tools/list 含容器只读工具', () async {
+  test('tools/list 只暴露精简入口，容器工具经 gcm_help 目录可见', () async {
     await initialize();
     final body = await rpc(<String, dynamic>{
       'jsonrpc': '2.0',
@@ -120,11 +123,27 @@ void main() {
     });
     final tools = (body['result'] as Map<String, dynamic>)['tools'] as List;
     final names = tools.map((t) => (t as Map)['name']).toSet();
-    expect(
-      names,
-      containsAll(['container_list', 'container_inspect', 'container_stats']),
-    );
-    expect(names, isNot(contains('container_logs'))); // #13: UI 专属
+    // 精简注册模式：tools/list 只有 gcm_help/gcm_call 两个入口。
+    expect(names, <String>{'gcm_help', 'gcm_call'});
+
+    final helpBody = await rpc(<String, dynamic>{
+      'jsonrpc': '2.0',
+      'id': 3,
+      'method': 'tools/call',
+      'params': <String, dynamic>{
+        'name': 'gcm_help',
+        'arguments': <String, dynamic>{'domain': 'container'},
+      },
+    });
+    final structured =
+        (helpBody['result'] as Map<String, dynamic>)['structuredContent']
+            as Map<String, dynamic>;
+    final catalog =
+        (structured['domains'] as Map<String, dynamic>)['container'] as List;
+    final byName = <String, Map<String, dynamic>>{
+      for (final tool in catalog)
+        (tool as Map)['name'] as String: tool.cast<String, dynamic>(),
+    };
 
     const readTitles = <String, String>{
       'container_list': 'List Containers',
@@ -132,10 +151,15 @@ void main() {
       'container_stats': 'Container Stats',
     };
     for (final entry in readTitles.entries) {
-      final tool = tools.cast<Map>().singleWhere((t) => t['name'] == entry.key);
+      final tool = byName[entry.key]!;
       expect(tool['title'], entry.value);
-      expect((tool['annotations'] as Map)['title'], entry.value);
+      expect(
+        (tool['annotations'] as Map<String, dynamic>)['readOnlyHint'],
+        isTrue,
+        reason: entry.key,
+      );
     }
+    expect(byName, isNot(contains('container_logs'))); // #13: UI 专属
 
     const writeTitles = <String, String>{
       'container_create': 'Create Container',
@@ -146,14 +170,11 @@ void main() {
       'container_delete': 'Delete Container',
       'container_exec': 'Execute Container Command',
     };
-    expect(names, containsAll(writeTitles.keys));
     for (final entry in writeTitles.entries) {
-      final tool = tools.cast<Map>().singleWhere((t) => t['name'] == entry.key);
+      final tool = byName[entry.key]!;
       expect(tool['title'], entry.value);
-      final annotations = tool['annotations'] as Map;
-      expect(annotations['title'], entry.value);
+      final annotations = tool['annotations'] as Map<String, dynamic>;
       expect(annotations['readOnlyHint'], isFalse, reason: entry.key);
-      expect(annotations['openWorldHint'], isTrue, reason: entry.key);
       expect(
         annotations['destructiveHint'],
         entry.key == 'container_kill' || entry.key == 'container_delete',

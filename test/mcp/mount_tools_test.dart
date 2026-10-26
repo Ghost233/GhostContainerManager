@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
 import 'package:ghost_container_manager/mcp/tools/mount_tools.dart';
+import 'package:ghost_container_manager/mcp/tool_registrar.dart';
+import 'package:ghost_container_manager/mcp/tools/catalog_tools.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/mount_service.dart';
 import 'package:mcp_dart/mcp_dart.dart';
@@ -38,7 +40,12 @@ void main() {
         final server = McpServer(
           const Implementation(name: 'mount-tools-test', version: '1.0.0'),
         );
-        registerMountTools(server, MountService(containerService: containers));
+        final registry = ToolCallbackRegistry();
+        registerMountTools(
+          registry,
+          MountService(containerService: containers),
+        );
+        registerCatalogTools(server, registry);
         return server;
       },
       host: '127.0.0.1',
@@ -100,42 +107,42 @@ void main() {
     final listed = await rpc(<String, dynamic>{
       'jsonrpc': '2.0',
       'id': 2,
-      'method': 'tools/list',
+      'method': 'tools/call',
+      'params': <String, dynamic>{
+        'name': 'gcm_help',
+        'arguments': <String, dynamic>{'domain': 'mount'},
+      },
     });
-    final tools = (listed['result'] as Map<String, dynamic>)['tools'] as List;
+    final result = listed['result'] as Map<String, dynamic>;
+    final structured = result['structuredContent'] as Map<String, dynamic>;
+    final domains = structured['domains'] as Map<String, dynamic>;
+    final tools = domains['mount'] as List;
     final tool = (tools.singleWhere(
       (tool) => (tool as Map)['name'] == 'mount_inspect',
     ) as Map).cast<String, dynamic>();
-    final schema = (tool['outputSchema'] as Map).cast<String, dynamic>();
-    final properties = (schema['properties'] as Map).cast<String, dynamic>();
-    expect(properties.keys, <String>{
-      'name',
-      'type',
-      'source',
-      'readOnly',
-      'usedBy',
-    });
-    final usedBy = (properties['usedBy'] as Map).cast<String, dynamic>();
-    expect(usedBy['type'], 'array');
-    final usage = (usedBy['items'] as Map).cast<String, dynamic>();
+    // 精简模式下 outputSchema 不进 tools/list；目录条目承载名称/描述/注解。
+    expect(tool['title'], 'Inspect Mount');
     expect(
-      ((usage['properties'] as Map).cast<String, dynamic>()).keys,
-      <String>{'containerId', 'destination', 'readOnly'},
+      (tool['annotations'] as Map<String, dynamic>)['readOnlyHint'],
+      isTrue,
     );
-    expect(schema['required'], containsAll(<String>['name', 'usedBy']));
 
     final called = await rpc(<String, dynamic>{
       'jsonrpc': '2.0',
       'id': 3,
       'method': 'tools/call',
       'params': <String, dynamic>{
-        'name': 'mount_inspect',
-        'arguments': <String, dynamic>{'name': '/Users/x/site'},
+        'name': 'gcm_call',
+        'arguments': <String, dynamic>{
+          'tool': 'mount_inspect',
+          'arguments': <String, dynamic>{'name': '/Users/x/site'},
+        },
       },
     });
-    final result = called['result'] as Map<String, dynamic>;
-    expect(result['isError'], isNot(true));
-    final data = (result['structuredContent'] as Map).cast<String, dynamic>();
+    final callResult = called['result'] as Map<String, dynamic>;
+    expect(callResult['isError'], isNot(true));
+    final data = (callResult['structuredContent'] as Map)
+        .cast<String, dynamic>();
     expect(data['name'], '/Users/x/site');
     expect(data['type'], 'virtiofs');
     expect(data['source'], '/Users/x/site');
