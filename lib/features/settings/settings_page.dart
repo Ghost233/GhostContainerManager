@@ -99,11 +99,21 @@ class _RuntimeDirectorySection extends StatelessWidget {
                 onPressed: controller.busy
                     ? null
                     : () async {
-                        final path =
-                            await (selectDirectory?.call() ??
-                                getDirectoryPath(confirmButtonText: '选择数据目录'));
-                        if (path != null && context.mounted) {
-                          await controller.setAppRoot(path);
+                        try {
+                          final path =
+                              await (selectDirectory?.call() ??
+                                  getDirectoryPath(
+                                    confirmButtonText: '选择数据目录',
+                                  ));
+                          if (path != null && context.mounted) {
+                            await controller.setAppRoot(path);
+                          }
+                        } catch (error) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('无法选择数据目录：$error')),
+                            );
+                          }
                         }
                       },
                 child: const Text('选择目录'),

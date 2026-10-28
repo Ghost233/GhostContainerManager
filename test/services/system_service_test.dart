@@ -156,6 +156,49 @@ void main() {
   });
 
   group('start', () {
+    test('恢复默认后旧目录仍在运行时报告冲突', () async {
+      bridge.defaultAppRootPath = '/default/root';
+      await service.setAppRoot('/app/root');
+      await service.setAppRoot(null);
+
+      await expectLater(
+        service.start(installKernel: false),
+        throwsA(
+          isA<GcmException>().having(
+            (e) => e.code,
+            'code',
+            GcmErrorCode.conflict,
+          ),
+        ),
+      );
+      expect(
+        bridge.calls.where((call) => call.startsWith('systemStart')),
+        isEmpty,
+      );
+    });
+
+    test('默认启动后实际目录不同于默认目录时不报告成功', () async {
+      bridge.defaultAppRootPath = '/default/root';
+      bridge.statusResult = okJson('{"status":"stopped"}');
+      bridge.pingScript = [
+        const BridgePingResult.ok(
+          apiServerVersion: '1.6.0',
+          appRoot: '/other/root',
+        ),
+      ];
+      await expectLater(
+        service.start(installKernel: false),
+        throwsA(
+          isA<GcmException>().having(
+            (e) => e.code,
+            'code',
+            GcmErrorCode.conflict,
+          ),
+        ),
+      );
+      expect(bridge.calls, contains('systemStart installKernel=false'));
+    });
+
     test('服务已在目标目录运行时确认状态而不再次启动', () async {
       await service.setAppRoot('/app/root');
       bridge.pingScript = [

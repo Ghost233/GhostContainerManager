@@ -151,6 +151,39 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('目录选择器失败时显示错误且保留原设置', (tester) async {
+    final bridge = FakeContainerBridge()..appRoot = '/existing/root';
+    final readiness = ReadinessController(
+      systemService: SystemService(bridge: bridge),
+      bridge: bridge,
+    );
+    addTearDown(readiness.dispose);
+    await readiness.refresh();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsPage(
+            mcp: _controller(),
+            menuBar: _menuBar(),
+            readiness: readiness,
+            selectDirectory: () async => throw StateError('选择器不可用'),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('选择目录'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('选择目录'));
+    await tester.pump();
+    expect(find.textContaining('无法选择数据目录'), findsOneWidget);
+    expect(bridge.appRoot, '/existing/root');
+  });
+
   testWidgets('MCP 区块：开关/端口默认 35731/空最近调用简表', (tester) async {
     final mcp = _controller();
     await tester.pumpWidget(

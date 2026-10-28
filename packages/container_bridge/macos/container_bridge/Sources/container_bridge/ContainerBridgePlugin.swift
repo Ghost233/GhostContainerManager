@@ -69,6 +69,14 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     let args = call.arguments as? [String: Any]
     switch call.method {
+    case "system.defaultAppRoot":
+      guard let appSupport = FileManager.default.urls(
+        for: .applicationSupportDirectory, in: .userDomainMask
+      ).first else {
+        result(FlutterError(code: "runtimeUnavailable", message: "无法确定默认运行时数据目录", details: nil))
+        return
+      }
+      result(["path": appSupport.appendingPathComponent("com.apple.container").path])
     case "system.getAppRoot":
       guard let raw = UserDefaults.standard.object(forKey: "runtimeAppRoot") else {
         result(["path": NSNull()])

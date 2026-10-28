@@ -40,6 +40,19 @@ class MethodChannelContainerBridge implements seam.ContainerBridge {
   }
 
   @override
+  Future<String> defaultAppRoot() async {
+    try {
+      final path = (await _channel.defaultAppRoot())['path'];
+      if (path is! String || path.isEmpty) {
+        throw const seam.BridgeCallException('无法确定默认运行时数据目录');
+      }
+      return path;
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
   Future<void> setAppRoot(String? path) async {
     try {
       await _channel.setAppRoot(path);

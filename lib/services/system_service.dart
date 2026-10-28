@@ -206,7 +206,15 @@ class SystemService {
         throw GcmException(GcmErrorCode.runtimeUnavailable, e.message);
       }
     }
-    return _bridge.kernelInstalled(appRoot: root);
+    return _bridge.kernelInstalled(appRoot: root ?? await _defaultAppRoot());
+  }
+
+  Future<String> _defaultAppRoot() async {
+    try {
+      return await _bridge.defaultAppRoot();
+    } on BridgeCallException catch (e) {
+      throw GcmException(GcmErrorCode.runtimeUnavailable, e.message);
+    }
   }
 
   /// Evaluates the five-level short-circuit state machine.
@@ -333,6 +341,7 @@ class SystemService {
   /// polls the XPC health check until the apiserver answers.
   Future<SystemStartResult> start({required bool installKernel}) async {
     final appRoot = await getAppRoot();
+    final expectedRoot = appRoot ?? await _defaultAppRoot();
     var alreadyRunning = false;
     if (appRoot != null) {
       try {
@@ -340,19 +349,19 @@ class SystemService {
       } on BridgeCallException catch (e) {
         throw GcmException(GcmErrorCode.runtimeUnavailable, e.message);
       }
-      final status = await _bridge.systemStatus();
-      final current = status.ok ? _tryParseStatus(status.stdout) : null;
-      if (current?.running == true &&
-          !await _sameAppRoot(appRoot, current?.appRoot)) {
-        throw const GcmException(
-          GcmErrorCode.conflict,
-          '运行中的服务使用了其他数据目录，请手动停止服务后重试',
-        );
-      }
-      alreadyRunning = current?.running == true;
     }
+    final status = await _bridge.systemStatus();
+    final current = status.ok ? _tryParseStatus(status.stdout) : null;
+    if (current?.running == true &&
+        !await _sameAppRoot(expectedRoot, current?.appRoot)) {
+      throw const GcmException(
+        GcmErrorCode.conflict,
+        '运行中的服务使用了其他数据目录，请手动停止服务后重试',
+      );
+    }
+    alreadyRunning = current?.running == true;
     final stopwatch = Stopwatch()..start();
-    if (!alreadyRunning || installKernel) {
+    if (!alreadyRunning || installKernel || appRoot == null) {
       final result = await _bridge.systemStart(
         installKernel: installKernel,
         appRoot: appRoot,
@@ -381,7 +390,7 @@ class SystemService {
         source: 'xpc',
       );
     }
-    if (appRoot != null && !await _sameAppRoot(appRoot, ping.appRoot)) {
+    if (!await _sameAppRoot(expectedRoot, ping.appRoot)) {
       throw const GcmException(
         GcmErrorCode.conflict,
         '无法确认运行时使用了设置的数据目录，请检查服务状态',

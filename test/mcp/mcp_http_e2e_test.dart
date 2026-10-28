@@ -291,4 +291,34 @@ void main() {
     );
     expect(bridge.appRoot, '/Volumes/data/container');
   });
+
+  test('MCP 恢复默认后拒绝使用旧目录运行的服务', () async {
+    bridge.defaultAppRootPath = '/default/root';
+    bridge.appRoot = null;
+    final (sessionId, protocolVersion) = await initialize();
+    final (_, body, _) = await rpc(
+      <String, dynamic>{
+        'jsonrpc': '2.0',
+        'id': 9,
+        'method': 'tools/call',
+        'params': <String, dynamic>{
+          'name': 'gcm_call',
+          'arguments': <String, dynamic>{
+            'tool': 'system_start',
+            'arguments': <String, dynamic>{'installKernel': false},
+          },
+        },
+      },
+      sessionId: sessionId,
+      protocolVersion: protocolVersion,
+    );
+    final result = body!['result'] as Map<String, dynamic>;
+    expect(result['isError'], isTrue);
+    final payload = result['structuredContent'] as Map<String, dynamic>;
+    expect((payload['error'] as Map<String, dynamic>)['code'], 'CONFLICT');
+    expect(
+      bridge.calls.where((call) => call.startsWith('systemStart')),
+      isEmpty,
+    );
+  });
 }

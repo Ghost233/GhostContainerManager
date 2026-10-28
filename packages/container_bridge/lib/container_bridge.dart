@@ -85,6 +85,9 @@ class ContainerBridgeChannel {
 
   Future<Map<String, Object?>> getAppRoot() => _invoke('system.getAppRoot');
 
+  Future<Map<String, Object?>> defaultAppRoot() =>
+      _invoke('system.defaultAppRoot');
+
   Future<Map<String, Object?>> setAppRoot(String? path) =>
       _invoke('system.setAppRoot', <String, Object?>{'path': path});
 

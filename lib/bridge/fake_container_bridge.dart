@@ -11,6 +11,7 @@ import 'container_bridge.dart';
 
 class FakeContainerBridge implements ContainerBridge {
   String? appRoot;
+  String defaultAppRootPath = '/app/root';
   String? appRootReadError;
   String? appRootValidationError;
 
@@ -21,6 +22,9 @@ class FakeContainerBridge implements ContainerBridge {
     }
     return appRoot;
   }
+
+  @override
+  Future<String> defaultAppRoot() async => defaultAppRootPath;
 
   @override
   Future<void> setAppRoot(String? path) async {
@@ -58,7 +62,7 @@ class FakeContainerBridge implements ContainerBridge {
   /// Scripted ping outcomes, consumed one per call; repeats the last entry
   /// when exhausted. Defaults to a single success.
   List<BridgePingResult> pingScript = [
-    const BridgePingResult.ok(apiServerVersion: '1.6.0'),
+    const BridgePingResult.ok(apiServerVersion: '1.6.0', appRoot: '/app/root/'),
   ];
 
   /// Recorded calls as "method arg1 arg2 ..." strings.

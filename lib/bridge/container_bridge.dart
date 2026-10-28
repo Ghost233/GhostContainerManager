@@ -209,6 +209,9 @@ abstract interface class ContainerBridge {
   /// Saved Runtime data directory, or null for the runtime default.
   Future<String?> getAppRoot();
 
+  /// Default app-root used by `container system start` without an override.
+  Future<String> defaultAppRoot();
+
   /// Select an existing Runtime data directory, or clear the selection.
   Future<void> setAppRoot(String? path);
 
