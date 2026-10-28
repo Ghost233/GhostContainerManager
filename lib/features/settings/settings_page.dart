@@ -3,6 +3,7 @@ library;
 
 import 'dart:async';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -13,12 +14,21 @@ import '../../ui/colors.dart';
 import '../../ui/components.dart';
 import '../../ui/text.dart';
 import 'mcp_settings_controller.dart';
+import '../system/readiness_controller.dart';
 
 class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key, required this.mcp, required this.menuBar});
+  const SettingsPage({
+    super.key,
+    required this.mcp,
+    required this.menuBar,
+    this.readiness,
+    this.selectDirectory,
+  });
 
   final McpSettingsController mcp;
   final MenuBarController menuBar;
+  final ReadinessController? readiness;
+  final Future<String?> Function()? selectDirectory;
 
   @override
   Widget build(BuildContext context) {
@@ -34,12 +44,85 @@ class SettingsPage extends StatelessWidget {
             const SizedBox(height: 24),
             _McpSection(mcp: mcp),
             const SizedBox(height: 24),
+            if (readiness != null) ...[
+              _RuntimeDirectorySection(
+                controller: readiness!,
+                selectDirectory: selectDirectory,
+              ),
+              const SizedBox(height: 24),
+            ],
             const _AboutSection(),
           ],
         );
       },
     );
   }
+}
+
+class _RuntimeDirectorySection extends StatelessWidget {
+  const _RuntimeDirectorySection({
+    required this.controller,
+    this.selectDirectory,
+  });
+
+  final ReadinessController controller;
+  final Future<String?> Function()? selectDirectory;
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: controller,
+    builder: (context, _) => SectionCard(
+      title: '运行时数据目录',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('下次启动使用'),
+          Text(
+            controller.appRootLoaded
+                ? controller.savedAppRoot ?? '使用默认设置'
+                : '无法读取设置',
+          ),
+          const SizedBox(height: 8),
+          const Text('当前运行时数据目录'),
+          Text(controller.statusData?.appRoot ?? '运行时未运行或路径不可用'),
+          const SizedBox(height: 8),
+          const Text('修改将在下次启动运行时生效；选择新目录不会迁移已有数据。'),
+          if (controller.lastError != null)
+            Text(
+              controller.lastError!.message,
+              style: TextStyle(color: GcmColors.stateFailed(context)),
+            ),
+          Wrap(
+            spacing: 12,
+            children: [
+              OutlinedButton(
+                onPressed: controller.busy
+                    ? null
+                    : () async {
+                        final path =
+                            await (selectDirectory?.call() ??
+                                getDirectoryPath(confirmButtonText: '选择数据目录'));
+                        if (path != null && context.mounted) {
+                          await controller.setAppRoot(path);
+                        }
+                      },
+                child: const Text('选择目录'),
+              ),
+              TextButton(
+                onPressed:
+                    controller.busy ||
+                        (controller.appRootLoaded &&
+                            controller.savedAppRoot == null)
+                    ? null
+                    : () => unawaited(controller.setAppRoot(null)),
+                child: const Text('恢复默认'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _GeneralSection extends StatelessWidget {

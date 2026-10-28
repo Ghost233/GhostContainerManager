@@ -10,6 +10,31 @@ import 'dart:async';
 import 'container_bridge.dart';
 
 class FakeContainerBridge implements ContainerBridge {
+  String? appRoot;
+  String? appRootReadError;
+  String? appRootValidationError;
+
+  @override
+  Future<String?> getAppRoot() async {
+    if (appRootReadError case final error?) {
+      throw BridgeCallException(error);
+    }
+    return appRoot;
+  }
+
+  @override
+  Future<void> setAppRoot(String? path) async {
+    appRoot = path;
+    appRootReadError = null;
+  }
+
+  @override
+  Future<void> validateAppRoot(String path) async {
+    if (appRootValidationError case final error?) {
+      throw BridgeCallException(error);
+    }
+  }
+
   /// Probed CLI path; null simulates "not installed".
   String? binaryPath = '/opt/homebrew/bin/container';
 
@@ -28,6 +53,7 @@ class FakeContainerBridge implements ContainerBridge {
   BridgeCommandResult kernelSetResult = _ok;
 
   bool kernelPresent = true;
+  final Map<String, bool> kernelsByAppRoot = <String, bool>{};
 
   /// Scripted ping outcomes, consumed one per call; repeats the last entry
   /// when exhausted. Defaults to a single success.
@@ -62,8 +88,13 @@ class FakeContainerBridge implements ContainerBridge {
   }
 
   @override
-  Future<BridgeCommandResult> systemStart({required bool installKernel}) async {
-    calls.add('systemStart installKernel=$installKernel');
+  Future<BridgeCommandResult> systemStart({
+    required bool installKernel,
+    String? appRoot,
+  }) async {
+    calls.add(
+      'systemStart installKernel=$installKernel${appRoot == null ? '' : ' appRoot=$appRoot'}',
+    );
     return startResult;
   }
 
@@ -80,9 +111,9 @@ class FakeContainerBridge implements ContainerBridge {
   }
 
   @override
-  Future<bool> kernelInstalled() async {
+  Future<bool> kernelInstalled({String? appRoot}) async {
     calls.add('kernelInstalled');
-    return kernelPresent;
+    return kernelsByAppRoot[appRoot] ?? kernelPresent;
   }
 
   @override

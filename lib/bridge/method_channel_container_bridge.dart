@@ -31,6 +31,33 @@ class MethodChannelContainerBridge implements seam.ContainerBridge {
   static int _nextCliHandle = 0;
 
   @override
+  Future<String?> getAppRoot() async {
+    try {
+      return (await _channel.getAppRoot())['path'] as String?;
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<void> setAppRoot(String? path) async {
+    try {
+      await _channel.setAppRoot(path);
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
+  Future<void> validateAppRoot(String path) async {
+    try {
+      await _channel.validateAppRoot(path);
+    } on PlatformException catch (e) {
+      throw seam.BridgeCallException(e.message ?? e.code);
+    }
+  }
+
+  @override
   Future<String?> locateBinary({String? customPath}) async {
     for (final path in [?customPath, ...defaultBinaryCandidates]) {
       if (File(path).existsSync()) return path;
@@ -47,8 +74,12 @@ class MethodChannelContainerBridge implements seam.ContainerBridge {
       _command(() => _channel.systemStatus());
 
   @override
-  Future<seam.BridgeCommandResult> systemStart({required bool installKernel}) =>
-      _command(() => _channel.systemStart(installKernel: installKernel));
+  Future<seam.BridgeCommandResult> systemStart({
+    required bool installKernel,
+    String? appRoot,
+  }) => _command(
+    () => _channel.systemStart(installKernel: installKernel, appRoot: appRoot),
+  );
 
   @override
   Future<seam.BridgeCommandResult> systemStop() =>
@@ -59,12 +90,18 @@ class MethodChannelContainerBridge implements seam.ContainerBridge {
       _command(() => _channel.systemKernelSet(force: force));
 
   @override
-  Future<bool> kernelInstalled() async {
+  Future<bool> kernelInstalled({String? appRoot}) async {
     final home = Platform.environment['HOME'];
-    if (home == null) return false;
-    return Link(
-      '$home/Library/Application Support/com.apple.container/kernels/default.kernel-arm64',
-    ).existsSync();
+    final root =
+        appRoot ??
+        Platform.environment['CONTAINER_APP_ROOT'] ??
+        (home == null
+            ? null
+            : '$home/Library/Application Support/com.apple.container');
+    if (root == null) return false;
+    final uri = Uri.tryParse(root);
+    final path = uri?.scheme == 'file' ? uri!.toFilePath() : root;
+    return Link('$path/kernels/default.kernel-arm64').existsSync();
   }
 
   @override

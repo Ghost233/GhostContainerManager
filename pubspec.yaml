@@ -2,7 +2,7 @@ name: ghost_container_manager
 description: Apple container management tool for macOS.
 publish_to: none
 # 版本由人手动确定（docs/release-versioning.md）；发布入口拒绝 0.0.0。
-version: 1.1.0
+version: 1.1.1
 
 environment:
   sdk: 3.13.5

@@ -25,11 +25,9 @@ class ReadinessController extends ChangeNotifier {
   ReadinessController({
     required SystemService systemService,
     required ContainerBridge bridge,
-  }) : _systemService = systemService,
-       _bridge = bridge;
+  }) : _systemService = systemService;
 
   final SystemService _systemService;
-  final ContainerBridge _bridge;
 
   /// Latest readiness evaluation; null before the first check completes.
   ReadinessResult? readiness;
@@ -37,6 +35,10 @@ class ReadinessController extends ChangeNotifier {
   /// Latest daemon status payload (running flag, resources); may lag
   /// [readiness] by one refresh and is null when the daemon never answered.
   SystemStatusData? statusData;
+
+  /// Saved directory for the next start, or null for the runtime default.
+  String? savedAppRoot;
+  bool appRootLoaded = false;
 
   SystemAction action = SystemAction.none;
 
@@ -54,14 +56,24 @@ class ReadinessController extends ChangeNotifier {
     final info = await _systemService.status();
     readiness = info.readiness;
     statusData = info.statusData;
+    appRootLoaded = false;
+    savedAppRoot = await _systemService.getAppRoot();
+    appRootLoaded = true;
   });
+
+  Future<void> setAppRoot(String? path) =>
+      _run(SystemAction.checking, () async {
+        await _systemService.setAppRoot(path);
+        savedAppRoot = await _systemService.getAppRoot();
+        appRootLoaded = true;
+      });
 
   /// One-click runtime start. The mandatory kernel-install flag is chosen
   /// from the kernel probe: missing kernel → --enable-kernel-install
   /// (installs it in the same pass, onboarding.md Q3), present →
   /// --disable-kernel-install.
   Future<void> startRuntime() => _run(SystemAction.starting, () async {
-    final kernelPresent = await _bridge.kernelInstalled();
+    final kernelPresent = await _systemService.kernelInstalledForStart();
     final result = await _systemService.start(installKernel: !kernelPresent);
     readiness = result.readiness;
     await _refreshStatusOnly();

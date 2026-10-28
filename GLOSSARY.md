@@ -6,6 +6,7 @@ Ghost Container Manager 的领域术语。只含领域概念，不含实现细�
 
 - **Apple container**：Apple 官方的容器工具链与运行时（github.com/apple/container），本仓库管理的唯一容器运行时。每个容器是一个轻量 VM。
 - **Runtime 服务（container-apiserver）**：Apple container 的常驻守护进程，所有管理操作的最终执行者。
+- **运行时数据目录（app-root）**：Runtime 服务存放运行时数据的目录。
 
 ## 资源
 
@@ -15,7 +16,7 @@ Ghost Container Manager 的领域术语。只含领域概念，不含实现细�
 - **Network（网络）**：容器网络，附带 DNS 域；容器有 IP 与 hostname。
 - **Compose 项目**：由 compose 文件定义的一组容器，通过 orchard 作者的 compose 插件（andrew-waters/compose）执行 up/down 等生命周期操作。与「项目」是两个独立概念：Compose 项目来自 compose 文件，项目来自本产品的组合管理。
 - **App 创建的资源**：由 GhostContainerManager 创建、带有应用标识 label 的资源；与用户已有的同名类型资源相区分，但默认可同等查看和管理。
-- **项目（Project）**：本产品的组合管理单元——一组带 `com.ghost233.project=<name>` label 的镜像与容器，镜像按 `{前缀}-{自定义名}` 命名（如 `myapp-go1`）。项目内同名镜像唯一，同名构建默认替换（旧镜像变 dangling 由 GC 兜底）；「项目内唯一」是管理层约定，runtime 的镜像名是全局的。
+- **项目（Project）**：本产品中用于记录和批量管理的具名登记概念，可以在没有资源时存在。项目不是资源访问的安全隔离边界；项目名与用于人工复查的目录都是登记字符串，不构成资源或目录归属约束。
 - **项目前缀（prefix）**：`ghostcontainer.toml` 唯一的字段，声明「这个目录属于哪个项目」。不假定语言、不假定镜像数量、不解释名字含义。
 - **ghostcontainer.toml**：项目根目录的可选配置文件，只存 `prefix` 一个字段。构建/测试参数（dockerfile、context、buildArgs、command）一律由调用方传入，不落配置文件。
 - **项目工作流（Project workflow）**：围绕项目的标准操作链：构建镜像（`project_build`）→ 跑测试容器（`project_test`）→ 清理未被引用的镜像 → 推送本地 registry。构建/测试参数由调用方给出。

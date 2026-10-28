@@ -257,7 +257,11 @@ class _AppShellState extends State<AppShell> {
         return RuntimePage(controller: widget.readiness);
       case '设置':
       case 'MCP': // MCP 是设置页内的区块（ui-ia.md D9）
-        return SettingsPage(mcp: widget.mcp, menuBar: widget.menuBar);
+        return SettingsPage(
+          mcp: widget.mcp,
+          menuBar: widget.menuBar,
+          readiness: widget.readiness,
+        );
       default:
         return PlaceholderSectionPage(
           title: title,

@@ -156,6 +156,145 @@ void main() {
   });
 
   group('start', () {
+    test('服务已在目标目录运行时确认状态而不再次启动', () async {
+      await service.setAppRoot('/app/root');
+      bridge.pingScript = [
+        const BridgePingResult.ok(
+          apiServerVersion: '1.6.0',
+          appRoot: 'file:///app/root/',
+        ),
+      ];
+      final result = await service.start(installKernel: false);
+      expect(result.status, 'running');
+      expect(
+        bridge.calls.where((call) => call.startsWith('systemStart')),
+        isEmpty,
+      );
+    });
+
+    test('已保存的目录设置无法读取时拒绝启动', () async {
+      bridge.appRootReadError = '无法读取运行时数据目录设置';
+      await expectLater(
+        service.start(installKernel: false),
+        throwsA(
+          isA<GcmException>().having(
+            (e) => e.message,
+            'message',
+            contains('无法读取'),
+          ),
+        ),
+      );
+      expect(
+        bridge.calls.where((call) => call.startsWith('systemStart')),
+        isEmpty,
+      );
+    });
+
+    test('内核检测使用保存的运行时数据目录', () async {
+      await service.setAppRoot('/Volumes/data/container');
+      bridge.kernelPresent = false;
+      bridge.kernelsByAppRoot['/Volumes/data/container'] = true;
+
+      expect(await service.kernelInstalledForStart(), isTrue);
+    });
+
+    test('外置卷身份无法确认时拒绝启动且不回退默认目录', () async {
+      await service.setAppRoot('/Volumes/data/container');
+      bridge.appRootValidationError = '外置卷未挂载或身份不匹配';
+      bridge.statusResult = okJson('{"status":"stopped"}');
+
+      await expectLater(
+        service.start(installKernel: false),
+        throwsA(
+          isA<GcmException>().having(
+            (e) => e.message,
+            'message',
+            contains('外置卷'),
+          ),
+        ),
+      );
+      expect(
+        bridge.calls.where((call) => call.startsWith('systemStart')),
+        isEmpty,
+      );
+    });
+
+    test('启动使用保存的目录并核对运行时报告的路径', () async {
+      await service.setAppRoot('/Volumes/data/container');
+      bridge.statusResult = okJson('{"status":"stopped"}');
+      bridge.pingScript = [
+        const BridgePingResult.ok(
+          apiServerVersion: '1.6.0',
+          appRoot: 'file:///Volumes/data/container/',
+        ),
+      ];
+
+      final result = await service.start(installKernel: false);
+
+      expect(result.status, 'running');
+      expect(
+        bridge.calls,
+        contains(
+          'systemStart installKernel=false appRoot=/Volumes/data/container',
+        ),
+      );
+    });
+
+    test('启动后无法确认实际目录时不报告成功', () async {
+      await service.setAppRoot('/Volumes/data/container');
+      bridge.statusResult = okJson('{"status":"stopped"}');
+      bridge.pingScript = [
+        const BridgePingResult.ok(apiServerVersion: '1.6.0'),
+      ];
+      await expectLater(
+        service.start(installKernel: false),
+        throwsA(
+          isA<GcmException>().having(
+            (e) => e.code,
+            'code',
+            GcmErrorCode.conflict,
+          ),
+        ),
+      );
+    });
+
+    test('启动后实际目录不同于设置时不报告成功', () async {
+      await service.setAppRoot('/Volumes/data/container');
+      bridge.statusResult = okJson('{"status":"stopped"}');
+      bridge.pingScript = [
+        const BridgePingResult.ok(
+          apiServerVersion: '1.6.0',
+          appRoot: '/other/root',
+        ),
+      ];
+      await expectLater(
+        service.start(installKernel: false),
+        throwsA(
+          isA<GcmException>().having(
+            (e) => e.code,
+            'code',
+            GcmErrorCode.conflict,
+          ),
+        ),
+      );
+    });
+
+    test('已运行服务的数据目录与设置不一致时报告冲突且不停止服务', () async {
+      await service.setAppRoot('/new/runtime');
+
+      await expectLater(
+        service.start(installKernel: false),
+        throwsA(
+          isA<GcmException>().having(
+            (e) => e.code,
+            'code',
+            GcmErrorCode.conflict,
+          ),
+        ),
+      );
+      expect(bridge.calls, isNot(contains('systemStop')));
+    });
+
     test('成功：CLI 后轮询 ping 并就绪', () async {
       final r = await service.start(installKernel: true);
       expect(bridge.calls, contains('systemStart installKernel=true'));

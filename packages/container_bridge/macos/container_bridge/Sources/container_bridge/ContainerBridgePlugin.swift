@@ -69,6 +69,48 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     let args = call.arguments as? [String: Any]
     switch call.method {
+    case "system.getAppRoot":
+      guard let raw = UserDefaults.standard.object(forKey: "runtimeAppRoot") else {
+        result(["path": NSNull()])
+        return
+      }
+      guard let stored = raw as? [String: Any],
+        let path = stored["path"] as? String, !path.isEmpty,
+        stored["external"] is Bool else {
+        result(FlutterError(code: "runtimeUnavailable", message: "无法读取运行时数据目录设置，请重新选择目录或恢复默认", details: nil))
+        return
+      }
+      result(["path": path])
+    case "system.setAppRoot":
+      guard let path = args?["path"] as? String else {
+        UserDefaults.standard.removeObject(forKey: "runtimeAppRoot")
+        result([:])
+        return
+      }
+      do {
+        let info = try runtimeDirectoryInfo(path)
+        UserDefaults.standard.set(info, forKey: "runtimeAppRoot")
+        result([:])
+      } catch {
+        result(FlutterError(code: "invalidArgument", message: error.localizedDescription, details: nil))
+      }
+    case "system.validateAppRoot":
+      do {
+        guard let path = args?["path"] as? String,
+          let stored = UserDefaults.standard.dictionary(forKey: "runtimeAppRoot"),
+          stored["path"] as? String == path else {
+          throw RuntimeDirectoryError("运行时数据目录设置已变化，请重试")
+        }
+        let info = try runtimeDirectoryInfo(path)
+        guard info["path"] as? String == path,
+          info["external"] as? Bool == stored["external"] as? Bool,
+          info["volumeUUID"] as? String == stored["volumeUUID"] as? String else {
+          throw RuntimeDirectoryError("运行时数据目录所在的磁盘身份不匹配，请重新选择目录")
+        }
+        result([:])
+      } catch {
+        result(FlutterError(code: "runtimeUnavailable", message: error.localizedDescription, details: nil))
+      }
     case "cliRun":
       guard let arguments = args?["arguments"] as? [String], !arguments.isEmpty else {
         result(
@@ -193,7 +235,11 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
       // blocks on readLine and dies with "failed to read user input".
       let installKernel = (args?["installKernel"] as? Bool) ?? false
       let flag = installKernel ? "--enable-kernel-install" : "--disable-kernel-install"
-      runCli(["system", "start", flag], timeout: 120, result: result)
+      var startArgs = ["system", "start", flag]
+      if let appRoot = args?["appRoot"] as? String {
+        startArgs += ["--app-root", appRoot]
+      }
+      runCli(startArgs, timeout: 120, result: result)
     case "system.stop":
       runCli(["system", "stop"], result: result)
     case "system.kernelSet":
@@ -686,6 +732,39 @@ public class ContainerBridgePlugin: NSObject, FlutterPlugin {
       }
     }
   }
+}
+
+private struct RuntimeDirectoryError: LocalizedError {
+  let message: String
+  init(_ message: String) { self.message = message }
+  var errorDescription: String? { message }
+}
+
+private func runtimeDirectoryInfo(_ path: String) throws -> [String: Any] {
+  guard path.hasPrefix("/") else {
+    throw RuntimeDirectoryError("请选择绝对路径的运行时数据目录")
+  }
+  let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+  let canonicalPath = url.path
+  var isDirectory: ObjCBool = false
+  let manager = FileManager.default
+  guard manager.fileExists(atPath: canonicalPath, isDirectory: &isDirectory),
+    isDirectory.boolValue,
+    manager.isReadableFile(atPath: canonicalPath),
+    manager.isWritableFile(atPath: canonicalPath) else {
+    throw RuntimeDirectoryError("运行时数据目录不存在或不可读写，请检查磁盘和权限")
+  }
+  let values = try url.resourceValues(forKeys: [.volumeIsInternalKey, .volumeUUIDStringKey])
+  guard let internalVolume = values.volumeIsInternal else {
+    throw RuntimeDirectoryError("无法确认运行时数据目录所在的磁盘身份")
+  }
+  let uuid = values.volumeUUIDString
+  guard internalVolume || (uuid != nil && !uuid!.isEmpty) else {
+    throw RuntimeDirectoryError("无法确认外置磁盘的身份")
+  }
+  var info: [String: Any] = ["path": canonicalPath, "external": !internalVolume]
+  if let uuid { info["volumeUUID"] = uuid }
+  return info
 }
 
 extension ContainerBridgePlugin: FlutterStreamHandler {

@@ -239,4 +239,56 @@ void main() {
     final summary = (result['content'] as List).single['text'] as String;
     expect(summary, contains('运行时已启动'));
   });
+
+  test('MCP 启动使用保存的目录且不允许调用者覆盖', () async {
+    bridge.appRoot = '/Volumes/data/container';
+    bridge.statusResult = const BridgeCommandResult(
+      exitCode: 0,
+      stdout: '{"status":"stopped"}',
+      stderr: '',
+    );
+    bridge.pingScript = [
+      const BridgePingResult.ok(
+        apiServerVersion: '1.6.0',
+        appRoot: 'file:///Volumes/data/container/',
+      ),
+    ];
+    final (sessionId, protocolVersion) = await initialize();
+
+    Future<Map<String, dynamic>> start(Map<String, dynamic> arguments) async {
+      final (_, body, _) = await rpc(
+        <String, dynamic>{
+          'jsonrpc': '2.0',
+          'id': 8,
+          'method': 'tools/call',
+          'params': <String, dynamic>{
+            'name': 'gcm_call',
+            'arguments': <String, dynamic>{
+              'tool': 'system_start',
+              'arguments': arguments,
+            },
+          },
+        },
+        sessionId: sessionId,
+        protocolVersion: protocolVersion,
+      );
+      return body!['result'] as Map<String, dynamic>;
+    }
+
+    final rejected = await start(<String, dynamic>{'appRoot': '/other'});
+    expect(rejected['isError'], isTrue);
+    expect(
+      bridge.calls.where((call) => call.startsWith('systemStart')),
+      isEmpty,
+    );
+    final result = await start(<String, dynamic>{'installKernel': false});
+    expect(result['isError'], isNot(true));
+    expect(
+      bridge.calls,
+      contains(
+        'systemStart installKernel=false appRoot=/Volumes/data/container',
+      ),
+    );
+    expect(bridge.appRoot, '/Volumes/data/container');
+  });
 }

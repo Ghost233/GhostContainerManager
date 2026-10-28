@@ -206,6 +206,15 @@ class BridgeCallException implements Exception {
 /// use ContainerAPIClient directly while network/compose retain their
 /// documented CLI routes.
 abstract interface class ContainerBridge {
+  /// Saved Runtime data directory, or null for the runtime default.
+  Future<String?> getAppRoot();
+
+  /// Select an existing Runtime data directory, or clear the selection.
+  Future<void> setAppRoot(String? path);
+
+  /// Verify that the selected directory and its original volume are usable.
+  Future<void> validateAppRoot(String path);
+
   /// Absolute path of the `container` CLI, or null when not installed.
   ///
   /// Probes, in order: [customPath], /usr/local/bin/container,
@@ -221,7 +230,10 @@ abstract interface class ContainerBridge {
   /// `container system start` with the kernel-install flag ALWAYS explicit
   /// (`--enable-kernel-install` / `--disable-kernel-install`); without it the
   /// CLI blocks on readLine and dies with "failed to read user input".
-  Future<BridgeCommandResult> systemStart({required bool installKernel});
+  Future<BridgeCommandResult> systemStart({
+    required bool installKernel,
+    String? appRoot,
+  });
 
   /// `container system stop`.
   Future<BridgeCommandResult> systemStop();
@@ -233,7 +245,7 @@ abstract interface class ContainerBridge {
   /// Whether the default kernel symlink
   /// (~/Library/Application Support/com.apple.container/kernels/
   /// default.kernel-arm64) exists.
-  Future<bool> kernelInstalled();
+  Future<bool> kernelInstalled({String? appRoot});
 
   /// XPC health-check ping (`ClientHealthCheck.ping()`). Fails when the
   /// apiserver is not running ("connection invalid") or when the wire format

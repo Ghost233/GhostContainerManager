@@ -15,6 +15,8 @@ library;
 // their public names, so the initializing-formals lint cannot apply here.
 // ignore_for_file: prefer_initializing_formals
 
+import 'dart:io';
+
 import 'system_parser.dart';
 import '../bridge/container_bridge.dart';
 import 'errors.dart';
@@ -179,6 +181,34 @@ class SystemService {
   final int _pingAttempts;
   final Duration _pingInterval;
 
+  Future<String?> getAppRoot() async {
+    try {
+      return await _bridge.getAppRoot();
+    } on BridgeCallException catch (e) {
+      throw GcmException(GcmErrorCode.runtimeUnavailable, e.message);
+    }
+  }
+
+  Future<void> setAppRoot(String? path) async {
+    try {
+      await _bridge.setAppRoot(path);
+    } on BridgeCallException catch (e) {
+      throw GcmException(GcmErrorCode.invalidArgument, e.message);
+    }
+  }
+
+  Future<bool> kernelInstalledForStart() async {
+    final root = await getAppRoot();
+    if (root != null) {
+      try {
+        await _bridge.validateAppRoot(root);
+      } on BridgeCallException catch (e) {
+        throw GcmException(GcmErrorCode.runtimeUnavailable, e.message);
+      }
+    }
+    return _bridge.kernelInstalled(appRoot: root);
+  }
+
   /// Evaluates the five-level short-circuit state machine.
   Future<ReadinessResult> checkReadiness({String? customBinaryPath}) async {
     // 1. Installed?
@@ -264,7 +294,9 @@ class SystemService {
     }
 
     // 5. Kernel installed?
-    if (!await _bridge.kernelInstalled()) {
+    if (!await _bridge.kernelInstalled(
+      appRoot: _tryParseStatus(statusResult.stdout)?.appRoot,
+    )) {
       return ReadinessResult(
         level: ReadinessLevel.kernelMissing,
         cliVersion: versions.cli,
@@ -300,15 +332,39 @@ class SystemService {
   /// `--enable/--disable-kernel-install` CLI flag. After the CLI returns,
   /// polls the XPC health check until the apiserver answers.
   Future<SystemStartResult> start({required bool installKernel}) async {
+    final appRoot = await getAppRoot();
+    var alreadyRunning = false;
+    if (appRoot != null) {
+      try {
+        await _bridge.validateAppRoot(appRoot);
+      } on BridgeCallException catch (e) {
+        throw GcmException(GcmErrorCode.runtimeUnavailable, e.message);
+      }
+      final status = await _bridge.systemStatus();
+      final current = status.ok ? _tryParseStatus(status.stdout) : null;
+      if (current?.running == true &&
+          !await _sameAppRoot(appRoot, current?.appRoot)) {
+        throw const GcmException(
+          GcmErrorCode.conflict,
+          '运行中的服务使用了其他数据目录，请手动停止服务后重试',
+        );
+      }
+      alreadyRunning = current?.running == true;
+    }
     final stopwatch = Stopwatch()..start();
-    final result = await _bridge.systemStart(installKernel: installKernel);
-    if (!result.ok) {
-      throw mapBridgeFailure(
-        result.combinedOutput,
-        operation: 'system start',
-        timedOut: result.timedOut,
-        source: 'cli',
+    if (!alreadyRunning || installKernel) {
+      final result = await _bridge.systemStart(
+        installKernel: installKernel,
+        appRoot: appRoot,
       );
+      if (!result.ok) {
+        throw mapBridgeFailure(
+          result.combinedOutput,
+          operation: 'system start',
+          timedOut: result.timedOut,
+          source: 'cli',
+        );
+      }
     }
     BridgePingResult ping = const BridgePingResult.failure('not polled');
     for (var attempt = 0; attempt < _pingAttempts; attempt++) {
@@ -325,11 +381,17 @@ class SystemService {
         source: 'xpc',
       );
     }
+    if (appRoot != null && !await _sameAppRoot(appRoot, ping.appRoot)) {
+      throw const GcmException(
+        GcmErrorCode.conflict,
+        '无法确认运行时使用了设置的数据目录，请检查服务状态',
+      );
+    }
     stopwatch.stop();
     // Post-start kernel presence is only meaningful when the caller asked
     // for installation; otherwise leave it out of the wire contract.
     final kernelInstalled = installKernel
-        ? await _bridge.kernelInstalled()
+        ? await _bridge.kernelInstalled(appRoot: ping.appRoot ?? appRoot)
         : null;
     return SystemStartResult(
       readiness: await checkReadiness(),
@@ -393,5 +455,21 @@ class SystemService {
     } on FormatException {
       return null;
     }
+  }
+
+  Future<bool> _sameAppRoot(String expected, String? actual) async {
+    if (actual == null || actual.isEmpty) return false;
+    Future<String> normalize(String value) async {
+      final uri = Uri.tryParse(value);
+      final path = uri?.scheme == 'file' ? uri!.toFilePath() : value;
+      final normalized = Uri.file(path).normalizePath().toFilePath();
+      try {
+        return await Directory(normalized).resolveSymbolicLinks();
+      } on FileSystemException {
+        return normalized.replaceFirst(RegExp(r'/+$'), '');
+      }
+    }
+
+    return await normalize(expected) == await normalize(actual);
   }
 }

@@ -83,6 +83,14 @@ class ContainerBridgeChannel {
 
   final MethodChannel _channel;
 
+  Future<Map<String, Object?>> getAppRoot() => _invoke('system.getAppRoot');
+
+  Future<Map<String, Object?>> setAppRoot(String? path) =>
+      _invoke('system.setAppRoot', <String, Object?>{'path': path});
+
+  Future<Map<String, Object?>> validateAppRoot(String path) =>
+      _invoke('system.validateAppRoot', <String, Object?>{'path': path});
+
   Future<Map<String, Object?>> _invoke(
     String method, [
     Map<String, Object?>? arguments,
@@ -109,10 +117,13 @@ class ContainerBridgeChannel {
       _invoke(ContainerBridgeMethods.systemStatus);
 
   /// `container system start` with explicit kernel-install flag.
-  Future<Map<String, Object?>> systemStart({required bool installKernel}) =>
-      _invoke(ContainerBridgeMethods.systemStart, <String, Object?>{
-        'installKernel': installKernel,
-      });
+  Future<Map<String, Object?>> systemStart({
+    required bool installKernel,
+    String? appRoot,
+  }) => _invoke(ContainerBridgeMethods.systemStart, <String, Object?>{
+    'installKernel': installKernel,
+    'appRoot': ?appRoot,
+  });
 
   /// `container system stop`.
   Future<Map<String, Object?>> systemStop() =>
