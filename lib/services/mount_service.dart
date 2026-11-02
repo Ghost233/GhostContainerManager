@@ -1,11 +1,3 @@
-/// Read-only mount aggregation across containers (T6, docs/spec/mcp-tools.md
-/// §3.4, ui-ia.md D7).
-///
-/// Reality check (verified against CLI 1.5.0 output): Apple container has no
-/// first-class volume resource — mounts live in each container's
-/// configuration. A "mount" here is therefore an *aggregated view* keyed by
-/// host source path, listing every container that references it. tmpfs
-/// mounts have no host source and are keyed `tmpfs:<destination>`.
 library;
 
 // ignore_for_file: prefer_initializing_formals

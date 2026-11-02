@@ -406,6 +406,41 @@ void main() {
     );
   });
 
+  test('successful builds persist identities and same-name replacement without deletion', () async {
+    await writeDockerfile(temp);
+    addImage(bridge, 'demo-api:latest', project: 'demo');
+    Future<ProjectBuildResult> build(int code) async {
+      final process = FakeProjectCliProcess();
+      cli.onStart = (_) => process;
+      unawaited(process.finish(code));
+      return service.buildProject(
+        project: 'demo',
+        context: temp.path,
+        name: 'api',
+      );
+    }
+
+    final first = await build(0);
+    final old = (first.resourceTracking!['resource'] as Map)['id'];
+    bridge.images.single['digest'] = 'sha256:new-content';
+    final second = await build(0);
+    expect((second.resourceTracking!['resource'] as Map)['supersedes'], [old]);
+    expect(second.resourceTracking!['cleanupPlan'], isA<Map>());
+    final failed = await build(1);
+    expect(failed.resourceTracking, isNull);
+    final restarted = ProjectService(
+      cli: cli,
+      containerService: containers,
+      imageService: ImageService(bridge: bridge, containerService: containers),
+      buildLogDirectory: '${temp.path}/build-logs',
+    );
+    expect(
+      (await restarted.getProject(project: 'demo')).resources,
+      hasLength(2),
+    );
+    expect(bridge.calls.any((c) => c.contains('Delete')), isFalse);
+  });
+
   test('build uses the fixed image name, CLI flags and progress', () async {
     final projectDir = Directory('${temp.path}/myapp')..createSync();
     await File('${projectDir.path}/ghostcontainer.toml')
@@ -852,24 +887,23 @@ void main() {
     expect(result.truncated, isTrue);
   });
 
-  test('oversized Dockerfile is rejected before starting the CLI', () async {
+  test('Dockerfiles above the former size limit reach Docker build', () async {
     final projectDir = Directory('${temp.path}/myapp')..createSync();
     await File('${projectDir.path}/ghostcontainer.toml')
         .writeAsString('prefix = "myapp"\n');
     await File('${projectDir.path}/Dockerfile')
-        .writeAsString('a' * (16 * 1024 + 1));
-
-    await expectLater(
-      service.buildProject(path: projectDir.path, name: 'go1'),
-      throwsA(
-        isA<GcmException>().having(
-          (e) => e.code,
-          'code',
-          GcmErrorCode.invalidArgument,
-        ),
-      ),
+        .writeAsString('# comment\n' * (32 * 1024));
+    cli.onStart = (_) {
+      final process = FakeProjectCliProcess();
+      unawaited(process.finish(0));
+      return process;
+    };
+    final result = await service.buildProject(
+      path: projectDir.path,
+      name: 'go1',
     );
-    expect(cli.starts, isEmpty);
+    expect(result.exitCode, 0);
+    expect(cli.starts, isNotEmpty);
   });
 
   test(
@@ -1027,8 +1061,6 @@ void main() {
         expect(args, <String>[
           'image',
           'push',
-          '--scheme',
-          'http',
           '127.0.0.1:5056/myapp-go1:latest',
         ]);
         return push;
@@ -1065,8 +1097,6 @@ void main() {
         expect(args, <String>[
           'image',
           'pull',
-          '--scheme',
-          'http',
           '127.0.0.1:5056/myapp-go1:latest',
         ]);
         return pull;
@@ -1154,7 +1184,7 @@ void main() {
         const BridgeCommandResult(exitCode: 0, stdout: '[]', stderr: ''),
       ];
       cli.onRun = (args) async {
-        expect(args, <String>['system', 'df', '--format', 'json']);
+        expect(args, <String>['system', 'df', '--format', '{{json .}}']);
         return results.removeAt(0);
       };
 
@@ -1169,7 +1199,7 @@ void main() {
 
   test('reclaim reads container 1.5 sizeInBytes disk snapshots', () async {
     cli.onRun = (args) async {
-      expect(args, <String>['system', 'df', '--format', 'json']);
+      expect(args, <String>['system', 'df', '--format', '{{json .}}']);
       return BridgeCommandResult(
         exitCode: 0,
         stdout: jsonEncode(<String, Object?>{
@@ -1234,7 +1264,7 @@ void main() {
       final deleted = <String>[];
       var diskReads = 0;
       cli.onRun = (args) async {
-        if (args.join(' ') == 'system df --format json') {
+        if (args.join(' ') == 'system df --format {{json .}}') {
           diskReads += 1;
           return diskUsageResult(diskReads == 1 ? 1000 : 400);
         }
@@ -1281,7 +1311,7 @@ void main() {
     addImage(bridge, 'myapp-go1:latest', project: 'myapp');
     addImage(bridge, 'myapp-unused:latest', project: 'myapp');
     cli.onRun = (args) async {
-      expect(args, <String>['system', 'df', '--format', 'json']);
+      expect(args, <String>['system', 'df', '--format', '{{json .}}']);
       return diskUsageResult(800);
     };
 
@@ -1298,7 +1328,7 @@ void main() {
     expect(report.errors, isEmpty);
     expect(bridge.stopCalls, 0);
     expect(bridge.deleteCalls, 0);
-    expect(cli.runs.single, <String>['system', 'df', '--format', 'json']);
+    expect(cli.runs.single, <String>['system', 'df', '--format', '{{json .}}']);
     expect(report.toJson().keys, <String>{
       'project',
       'containers',
@@ -1321,7 +1351,7 @@ void main() {
       addImage(bridge, 'myapp-go1:latest', project: 'myapp');
       addImage(bridge, 'myapp-unused:latest', project: 'myapp');
       cli.onRun = (args) async {
-        if (args.join(' ') == 'system df --format json') {
+        if (args.join(' ') == 'system df --format {{json .}}') {
           return diskUsageResult(800);
         }
         if (args case ['image', 'delete', 'myapp-unused:latest']) {

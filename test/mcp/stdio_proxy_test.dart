@@ -15,10 +15,7 @@ void main() {
 
   setUp(() async {
     server = GcmMcpServer(
-      systemService: SystemService(
-        bridge: FakeContainerBridge(),
-        pingInterval: Duration.zero,
-      ),
+      systemService: SystemService(bridge: FakeContainerBridge()),
       containerService: ContainerService(bridge: FakeContainerBridge()),
       port: 0,
       enableJsonResponse: true,
@@ -80,17 +77,14 @@ void main() {
     final structured =
         (call['result'] as Map)['structuredContent'] as Map<String, dynamic>;
     expect(structured['level'], 'ready');
-    expect(structured['cliVersion'], '1.6.0');
+    expect(structured['cliVersion'], '29.8.2');
   });
 
   test('forward: SSE 响应解包最后一个 data 行', () async {
     // Rebuild a server without enableJsonResponse so replies come as SSE.
     await server.stop();
     server = GcmMcpServer(
-      systemService: SystemService(
-        bridge: FakeContainerBridge(),
-        pingInterval: Duration.zero,
-      ),
+      systemService: SystemService(bridge: FakeContainerBridge()),
       containerService: ContainerService(bridge: FakeContainerBridge()),
       port: 0,
     );

@@ -1,12 +1,3 @@
-/// Container lifecycle service (T2a/T3): read/write operations, list/inspect/
-/// stats, adaptive polling, local-image choices for create, and log streams,
-/// built on the container-domain bridge seam.
-///
-/// UI and MCP adaptors consume this service; raw XPC/CLI concerns never
-/// cross this boundary (docs/spec/architecture.md §3/§5). Filtering
-/// semantics ([ContainerQuery]) live here — NOT in the XPC
-/// `ContainerListFilters` regex path — so they stay unit-testable with the
-/// fake bridge.
 library;
 
 // Public named parameter `bridge` keeps its name; the initializing-formals
@@ -22,11 +13,6 @@ import 'container_models.dart';
 import 'errors.dart';
 import 'image_models.dart';
 
-/// Filter applied to container lists (Service-layer semantics).
-///
-/// [label] is an exact `key=value` match (MCP `label` parameter). This is
-/// deliberately NOT the XPC regex label filter — precision here, regex
-/// upstream, and tests pin the exact-match behaviour.
 class ContainerQuery {
   const ContainerQuery({this.includeStopped = true, this.label, this.state});
 
@@ -75,8 +61,6 @@ class ContainerExecResult {
   };
 }
 
-/// Read and write side of the container domain: snapshots, adaptive refresh
-/// (2s foreground / 10s background, orchard pattern), stats, logs.
 class ContainerService {
   ContainerService({
     required ContainerBridge bridge,
@@ -210,10 +194,6 @@ class ContainerService {
     _pollTimer = timer;
   }
 
-  /// One-shot unfiltered list from the runtime, parsed and typed.
-  ///
-  /// Skips concurrent refreshes (returns the last good snapshot) so a slow
-  /// apiserver cannot stack up XPC calls.
   Future<List<ContainerSnapshotInfo>> refresh() async {
     if (_refreshInFlight) return currentContainers;
     _refreshInFlight = true;
@@ -322,7 +302,7 @@ class ContainerService {
       final cpuUsageUsec = snapshot.cpuUsageUsec;
       final previousCpuUsageUsec = _lastCpuUsageUsec;
       final previousTimestamp = _lastStatsTimestamp;
-      double? cpuPercent;
+      double? cpuPercent = snapshot.cpuPercent;
       if (cpuUsageUsec != null &&
           previousCpuUsageUsec != null &&
           previousTimestamp != null) {
@@ -440,7 +420,7 @@ class ContainerService {
             'Exec in container "$containerId" timed out after '
             '$timeoutSeconds seconds.',
             hint: 'The process may still be running inside the container.',
-            source: 'xpc',
+            source: 'cli',
           );
         }
         final stdout = _boundedOutput(result.stdout);
@@ -1132,12 +1112,13 @@ GcmException mapContainerFailure(
   final lower = message.toLowerCase();
 
   if ((lower.contains('connection') && lower.contains('invalid')) ||
-      lower.contains('xpc connection')) {
+      lower.contains('cannot connect') ||
+      lower.contains('connection refused')) {
     return GcmException(
       GcmErrorCode.runtimeUnavailable,
       'The container runtime is not reachable.',
-      hint: 'Start the runtime from the System page (system.start).',
-      source: 'xpc',
+      hint: 'Check Docker context, DOCKER_HOST and engine status.',
+      source: 'cli',
       cause: error,
     );
   }
@@ -1145,8 +1126,8 @@ GcmException mapContainerFailure(
     return GcmException(
       GcmErrorCode.versionMismatch,
       'The runtime answered in an unexpected wire format during $operation.',
-      hint: 'Check the container version in Settings (expected 1.6.x).',
-      source: 'xpc',
+      hint: 'Check Docker CLI and endpoint compatibility.',
+      source: 'cli',
       cause: error,
     );
   }
@@ -1154,7 +1135,7 @@ GcmException mapContainerFailure(
     return GcmException(
       GcmErrorCode.permissionDenied,
       'Permission denied during $operation.',
-      source: 'xpc',
+      source: 'cli',
       cause: error,
     );
   }
@@ -1167,7 +1148,7 @@ GcmException mapContainerFailure(
       hint:
           'Check the runtime state before retrying; the operation may '
           'still be in progress.',
-      source: 'xpc',
+      source: 'cli',
       cause: error,
     );
   }
@@ -1185,11 +1166,13 @@ GcmException mapContainerFailure(
       GcmErrorCode.invalidArgument,
       'Invalid container $operation argument: $message',
       hint: 'Correct the port, signal, or network value and retry.',
-      source: 'xpc',
+      source: 'cli',
       cause: error,
     );
   }
-  if (lower.contains('not found') || lower.contains('does not exist')) {
+  if (lower.contains('not found') ||
+      lower.contains('does not exist') ||
+      lower.contains('no such')) {
     if (operation == 'create' &&
         image != null &&
         (lower.contains('image') || lower.contains('reference'))) {
@@ -1197,7 +1180,7 @@ GcmException mapContainerFailure(
         GcmErrorCode.notFound,
         'Image "$image" was not found locally.',
         hint: '先在镜像页拉取或调用 image_pull',
-        source: 'xpc',
+        source: 'cli',
         cause: error,
       );
     }
@@ -1205,7 +1188,7 @@ GcmException mapContainerFailure(
       GcmErrorCode.notFound,
       'Container "${id ?? ''}" was not found.',
       hint: 'Refresh the list; it may have been deleted externally.',
-      source: 'xpc',
+      source: 'cli',
       cause: error,
     );
   }
@@ -1215,7 +1198,7 @@ GcmException mapContainerFailure(
       'Container "${id ?? ''}" is not running; this operation requires a '
       'running container.',
       hint: 'Start the container first.',
-      source: 'xpc',
+      source: 'cli',
       cause: error,
     );
   }
@@ -1231,14 +1214,14 @@ GcmException mapContainerFailure(
       hint: lower.contains('stopping')
           ? 'Wait for the container to stop before deleting it.'
           : 'Refresh the container state and retry with compatible options.',
-      source: 'xpc',
+      source: 'cli',
       cause: error,
     );
   }
   return GcmException(
     GcmErrorCode.internal,
     'Container $operation failed: $message',
-    source: 'xpc',
+    source: 'cli',
     cause: error,
   );
 }

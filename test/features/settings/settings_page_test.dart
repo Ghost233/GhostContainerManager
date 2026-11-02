@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -36,154 +34,144 @@ void main() {
         );
   });
 
-  testWidgets('设置页选择并清除运行时数据目录，显示当前路径', (tester) async {
+  testWidgets('Docker connection settings boundary 1', (tester) async {
+    tester.view.physicalSize = const Size(1440, 2000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final bridge = FakeContainerBridge();
-    final service = SystemService(bridge: bridge);
-    final readiness = ReadinessController(
-      systemService: service,
-      bridge: bridge,
-    );
-    addTearDown(readiness.dispose);
-    await readiness.refresh();
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: SettingsPage(
-            mcp: _controller(),
-            menuBar: _menuBar(),
-            readiness: readiness,
-            selectDirectory: () async => '/Volumes/data/container',
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.scrollUntilVisible(
-      find.text('选择目录'),
-      250,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('使用默认设置'), findsOneWidget);
-    expect(find.text('/app/root/'), findsOneWidget);
-    await tester.tap(find.text('选择目录'));
-    await tester.pumpAndSettle();
-    expect(find.text('/Volumes/data/container'), findsOneWidget);
-    expect(bridge.appRoot, '/Volumes/data/container');
-    await tester.tap(find.text('恢复默认'));
-    await tester.pumpAndSettle();
-    expect(find.text('使用默认设置'), findsOneWidget);
-    expect(bridge.appRoot, isNull);
-  });
-
-  testWidgets('设置损坏时提示读取失败并可恢复默认', (tester) async {
-    final bridge = FakeContainerBridge()..appRootReadError = '无法读取运行时数据目录设置';
-    final readiness = ReadinessController(
+    final controller = ReadinessController(
       systemService: SystemService(bridge: bridge),
       bridge: bridge,
     );
-    addTearDown(readiness.dispose);
-    await readiness.refresh();
+    var selected = false;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: SettingsPage(
             mcp: _controller(),
             menuBar: _menuBar(),
-            readiness: readiness,
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text('恢复默认'),
-      250,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('无法读取设置'), findsOneWidget);
-    expect(find.text('无法读取运行时数据目录设置'), findsOneWidget);
-    await tester.tap(find.text('恢复默认'));
-    await tester.pumpAndSettle();
-    expect(find.text('使用默认设置'), findsOneWidget);
-  });
-
-  testWidgets('离开设置页后目录选择结果不会更新设置', (tester) async {
-    final bridge = FakeContainerBridge();
-    final readiness = ReadinessController(
-      systemService: SystemService(bridge: bridge),
-      bridge: bridge,
-    );
-    addTearDown(readiness.dispose);
-    await readiness.refresh();
-    final choice = Completer<String?>();
-    var pickerOpened = false;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: SettingsPage(
-            mcp: _controller(),
-            menuBar: _menuBar(),
-            readiness: readiness,
-            selectDirectory: () {
-              pickerOpened = true;
-              return choice.future;
+            readiness: controller,
+            selectDirectory: () async {
+              selected = true;
+              return "/remote/engine";
             },
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text('选择目录'),
-      250,
-      scrollable: find.byType(Scrollable).first,
-    );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('选择目录'));
-    expect(pickerOpened, isTrue);
-    await tester.pumpWidget(const MaterialApp(home: Scaffold()));
-    choice.complete('/Volumes/data/container');
-    await tester.pumpAndSettle();
-    expect(bridge.appRoot, isNull);
-    expect(tester.takeException(), isNull);
+    expect(find.text('Docker 连接'), findsOneWidget);
+    expect(find.textContaining('DOCKER_HOST'), findsOneWidget);
+    expect(find.text('选择目录'), findsNothing);
+    expect(selected, isFalse);
   });
-
-  testWidgets('目录选择器失败时显示错误且保留原设置', (tester) async {
-    final bridge = FakeContainerBridge()..appRoot = '/existing/root';
-    final readiness = ReadinessController(
+  testWidgets('Docker connection settings boundary 2', (tester) async {
+    tester.view.physicalSize = const Size(1440, 2000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final bridge = FakeContainerBridge();
+    final controller = ReadinessController(
       systemService: SystemService(bridge: bridge),
       bridge: bridge,
     );
-    addTearDown(readiness.dispose);
-    await readiness.refresh();
+    var selected = false;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: SettingsPage(
             mcp: _controller(),
             menuBar: _menuBar(),
-            readiness: readiness,
-            selectDirectory: () async => throw StateError('选择器不可用'),
+            readiness: controller,
+            selectDirectory: () async {
+              selected = true;
+              return "/remote/engine";
+            },
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text('选择目录'),
-      250,
-      scrollable: find.byType(Scrollable).first,
+    await tester.pumpAndSettle();
+    expect(find.text('Docker 连接'), findsOneWidget);
+    expect(find.textContaining('DOCKER_HOST'), findsOneWidget);
+    expect(find.text('选择目录'), findsNothing);
+    expect(selected, isFalse);
+    await expectLater(controller.setAppRoot("/host"), completes);
+    expect(controller.lastError, isNotNull);
+  });
+  testWidgets('Docker connection settings boundary 3', (tester) async {
+    tester.view.physicalSize = const Size(1440, 2000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final bridge = FakeContainerBridge();
+    final controller = ReadinessController(
+      systemService: SystemService(bridge: bridge),
+      bridge: bridge,
+    );
+    var selected = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsPage(
+            mcp: _controller(),
+            menuBar: _menuBar(),
+            readiness: controller,
+            selectDirectory: () async {
+              selected = true;
+              return "/remote/engine";
+            },
+          ),
+        ),
+      ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('选择目录'));
-    await tester.pump();
-    expect(find.textContaining('无法选择数据目录'), findsOneWidget);
-    expect(bridge.appRoot, '/existing/root');
-  });
+    await tester.pumpAndSettle();
+    expect(find.text('Docker 连接'), findsOneWidget);
+    expect(find.textContaining('DOCKER_HOST'), findsOneWidget);
+    expect(find.text('选择目录'), findsNothing);
+    expect(selected, isFalse);
 
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    await controller.refresh();
+    expect(selected, isFalse);
+  });
+  testWidgets('Docker connection settings boundary 4', (tester) async {
+    tester.view.physicalSize = const Size(1440, 2000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final bridge = FakeContainerBridge();
+    final controller = ReadinessController(
+      systemService: SystemService(bridge: bridge),
+      bridge: bridge,
+    );
+    var selected = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsPage(
+            mcp: _controller(),
+            menuBar: _menuBar(),
+            readiness: controller,
+            selectDirectory: () async {
+              selected = true;
+              throw StateError("unavailable");
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
+    expect(find.text('Docker 连接'), findsOneWidget);
+    expect(find.textContaining('DOCKER_HOST'), findsOneWidget);
+    expect(find.text('选择目录'), findsNothing);
+    expect(selected, isFalse);
+  });
   testWidgets('MCP 区块：开关/端口默认 35731/空最近调用简表', (tester) async {
     final mcp = _controller();
     await tester.pumpWidget(

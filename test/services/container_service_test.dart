@@ -8,7 +8,7 @@ import 'package:ghost_container_manager/services/container_models.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/errors.dart';
 
-/// Realistic apple/container 1.6.0 `ContainerSnapshot` payload (JSON-decoded
+/// Realistic Normalized Docker container snapshot payload (JSON-decoded
 /// shape the Swift bridge produces).
 Map<String, Object?> snapshotPayload({
   required String id,
@@ -46,7 +46,7 @@ Map<String, Object?> snapshotPayload({
         ? <Object?>[]
         : <Object?>[
             <String, Object?>{
-              'network': 'default',
+              'network': 'bridge',
               'hostname': id,
               'ipv4Address': ip,
               'ipv4Gateway': gateway,
@@ -91,7 +91,7 @@ void main() {
       expect(c.image, 'docker.io/library/nginx:latest');
       expect(c.state, ContainerState.running);
       expect(c.labels['com.ghost233.managed'], 'true');
-      expect(c.networks.single.network, 'default');
+      expect(c.networks.single.network, 'bridge');
       expect(c.networks.single.address, '192.168.64.3');
       expect(c.networks.single.gateway, '192.168.64.1');
       expect(c.createdAt, DateTime.utc(2026, 10, 20, 8));

@@ -1,10 +1,3 @@
-/// Abstract seam between the app (Service layer / UI / MCP) and the native
-/// Apple container runtime bridge.
-///
-/// Two implementations exist: `MethodChannelContainerBridge` (real, backed by
-/// the `container_bridge` plugin: ContainerAPIClient over XPC + a CLI process
-/// wrapper) and `FakeContainerBridge` (tests / no-runtime development).
-/// See docs/spec/architecture.md §2/§3.
 library;
 
 /// Raw result of a CLI invocation executed on the native side.
@@ -85,7 +78,6 @@ class BridgeExecResult {
   bool get truncated => stdoutTruncated || stderrTruncated;
 }
 
-/// Result of an XPC health-check ping against the container apiserver.
 class BridgePingResult {
   const BridgePingResult.ok({
     required this.apiServerVersion,
@@ -120,12 +112,6 @@ class BridgePingResult {
   bool get ok => error == null;
 }
 
-/// One event on a container log stream (`container.logs` event channel).
-///
-/// The XPC log route hands over two FileHandles (stdio + boot); the Swift
-/// side forwards their bytes as [data] events tagged with [source]. The
-/// stream terminates with an [eof] event (both handles closed) or an
-/// [error] event.
 class BridgeLogEvent {
   const BridgeLogEvent.data({required this.source, required this.bytes})
     : event = 'data',
@@ -189,9 +175,6 @@ class BridgeImagePullEvent {
   final int? itemsTotal;
 }
 
-/// Failure of an XPC bridge call. [message] carries the raw native error
-/// text so the Service layer can classify it by feature (same fingerprint
-/// approach as `mapBridgeFailure`).
 class BridgeCallException implements Exception {
   const BridgeCallException(this.message);
 
@@ -201,58 +184,19 @@ class BridgeCallException implements Exception {
   String toString() => 'BridgeCallException($message)';
 }
 
-/// Native runtime operations needed by the Service layer. The seam covers
-/// system, container, image, network and compose domains; container writes
-/// use ContainerAPIClient directly while network/compose retain their
-/// documented CLI routes.
 abstract interface class ContainerBridge {
-  /// Saved Runtime data directory, or null for the runtime default.
-  Future<String?> getAppRoot();
-
-  /// Default app-root used by `container system start` without an override.
-  Future<String> defaultAppRoot();
-
-  /// Select an existing Runtime data directory, or clear the selection.
-  Future<void> setAppRoot(String? path);
-
-  /// Verify that the selected directory and its original volume are usable.
-  Future<void> validateAppRoot(String path);
-
   /// Absolute path of the `container` CLI, or null when not installed.
   ///
   /// Probes, in order: [customPath], /usr/local/bin/container,
   /// /opt/homebrew/bin/container.
   Future<String?> locateBinary({String? customPath});
 
-  /// `container system version --format json`.
+  /// `docker version --format '{{json .}}'`.
   Future<BridgeCommandResult> systemVersion();
 
-  /// `container system status --format json`.
+  /// `docker info --format '{{json .}}'`.
   Future<BridgeCommandResult> systemStatus();
 
-  /// `container system start` with the kernel-install flag ALWAYS explicit
-  /// (`--enable-kernel-install` / `--disable-kernel-install`); without it the
-  /// CLI blocks on readLine and dies with "failed to read user input".
-  Future<BridgeCommandResult> systemStart({
-    required bool installKernel,
-    String? appRoot,
-  });
-
-  /// `container system stop`.
-  Future<BridgeCommandResult> systemStop();
-
-  /// `container system kernel set --recommended` (+ `--force` on retry after
-  /// an "already exists" failure).
-  Future<BridgeCommandResult> kernelSetRecommended({bool force = false});
-
-  /// Whether the default kernel symlink
-  /// (~/Library/Application Support/com.apple.container/kernels/
-  /// default.kernel-arm64) exists.
-  Future<bool> kernelInstalled({String? appRoot});
-
-  /// XPC health-check ping (`ClientHealthCheck.ping()`). Fails when the
-  /// apiserver is not running ("connection invalid") or when the wire format
-  /// is incompatible ("failed to decode ... in health check").
   Future<BridgePingResult> ping();
 
   /// Runs an arbitrary `container` CLI argument vector. The bridge performs
@@ -266,31 +210,12 @@ abstract interface class ContainerBridge {
   /// Launch failures are delivered through [BridgeCliProcess.exitCode].
   BridgeCliProcess cliStart(List<String> arguments);
 
-  /// `ContainerClient.list()` — ALL containers as JSON-decoded snapshot
-  /// maps. Filtering (label/status) happens in the Service layer so its
-  /// semantics stay testable with the fake bridge.
-  ///
-  /// Throws [BridgeCallException] on XPC failure.
   Future<List<Map<String, Object?>>> containerList();
 
-  /// `ContainerClient.get(id:)` — full snapshot (incl. configuration:
-  /// image, mounts, env, ports, resources, labels).
-  ///
-  /// Throws [BridgeCallException] on XPC failure (e.g. unknown id).
   Future<Map<String, Object?>> containerInspect(String id);
 
-  /// `ContainerClient.stats(id:)` — single snapshot. Streaming is the
-  /// caller's job (poll 2s foreground / 10s background, orchard pattern).
-  /// Fails for non-running containers.
-  ///
-  /// Throws [BridgeCallException] on XPC failure.
   Future<Map<String, Object?>> containerStats(String id);
 
-  /// `ContainerClient.create(configuration:options:kernel:)` using a local
-  /// image. [command] and [env] retain Apple container's CLI-shaped values;
-  /// [mounts] contains source/target/readonly dictionaries. The Service
-  /// validates and normalizes input; the native boundary still parses and
-  /// validates runtime-specific port and mount configuration.
   Future<void> containerCreate({
     required String id,
     required String image,
@@ -302,22 +227,12 @@ abstract interface class ContainerBridge {
     Map<String, String> labels = const {},
   });
 
-  /// `ContainerClient.bootstrap` + `ClientProcess.start`; already-running
-  /// containers are an upstream idempotent no-op.
   Future<void> containerStart(String id);
 
-  /// `ContainerClient.stop` with [timeoutSeconds] of grace (default five),
-  /// after which Apple container sends SIGKILL. The returned bool is a
-  /// conservative derivation: true only when the container was already
-  /// stopped or the stop call completed in less than [timeoutSeconds].
   Future<bool> containerStop(String id, {int timeoutSeconds = 5});
 
-  /// `ContainerClient.delete(id:force:)`. Running containers require force;
-  /// native stopping containers are rejected regardless of force.
   Future<void> containerDelete(String id, {bool force = false});
 
-  /// `ContainerClient.kill(id:signal:)`, followed by an inspect. Returns the
-  /// container's observed runtime status after the signal was delivered.
   Future<String> containerKill(String id, {String signal = 'KILL'});
 
   /// Execute a one-shot non-TTY process. Output is captured independently and
@@ -331,14 +246,10 @@ abstract interface class ContainerBridge {
     int timeoutSeconds = 60,
   });
 
-  /// Log byte stream for [id] (XPC fd handover: stdio + boot handles).
-  /// UI-only surface — MCP deliberately has no logs tool (#13 decision).
   Stream<BridgeLogEvent> containerLogs(String id);
 
   // -- network domain (T6, read-only) ---------------------------------------
 
-  /// `container network ls --format json` (CLI route — XPC exposes no
-  /// network-list surface in 1.5/1.6, and reads here are low-frequency).
   Future<BridgeCommandResult> networkList();
 
   /// `container network inspect <id>` (CLI; JSON output by default).
@@ -346,13 +257,9 @@ abstract interface class ContainerBridge {
 
   // -- compose domain (T6, plugin CLI route) --------------------------------
 
-  /// `container compose --help` — the official plugin-presence probe
-  /// (exit 0 + subcommand listing = plugin installed). Run on every use;
-  /// upgrading container wipes the plugin directory (apple/container#1617),
-  /// so the result is NEVER cached.
   Future<BridgeCommandResult> composeHelp();
 
-  /// `container compose <arguments>` — executes the compose plugin. The
+  /// `docker compose <arguments>` — executes the compose plugin. The
   /// argument vector is built by the Service layer (flag decisions live
   /// there); this seam only forwards and reports raw output.
   ///
@@ -363,42 +270,12 @@ abstract interface class ContainerBridge {
     Duration? timeout,
   });
 
-  // -- image domain (T5, issue #20) ----------------------------------------
-  // XPC image operations route to the independent
-  // com.apple.container.core.container-core-images service (not the
-  // apiserver router). Addressing is validated name:tag in the Service
-  // layer BEFORE calls reach here — the bridge passes references verbatim.
-
-  /// `ClientImage.list()` — ALL images (incl. infra/dangling) as
-  /// ImageDescription maps: {reference, digest, mediaType, sizeBytes,
-  /// createdAt?}. Dangling images arrive with tag-less references.
-  ///
-  /// Throws [BridgeCallException] on XPC failure.
   Future<List<Map<String, Object?>>> imageList();
 
-  /// `ClientImage.get()` + index/manifest/config rebuild — config summary
-  /// payload: {reference, digest, sizeBytes, layers, platforms, config:
-  /// {env, entrypoint, cmd, exposedPorts, labels}}.
-  ///
-  /// Throws [BridgeCallException] on XPC failure (e.g. unknown reference).
   Future<Map<String, Object?>> imageInspect(String reference);
 
-  /// `ClientImage.delete(reference:, garbageCollect: false)` — removes the
-  /// tag; blob GC is the runtime's business. In-use pre-check happens in
-  /// the Service layer (clearer error than the upstream refusal).
-  ///
-  /// Throws [BridgeCallException] on XPC failure.
   Future<void> imageDelete(String reference);
 
-  /// `ClientImage.pull(...)` — pulls [reference] (validated name:tag).
-  /// Progress flows on [imagePullEvents] tagged with [pullId]; the method
-  /// call itself resolves with the pulled ImageDescription map, or with
-  /// `{reference, cancelled: true}` after [imagePullCancel].
-  ///
-  /// v1 cancel semantics: no server-side cancel route exists; cancelling
-  /// drops the local wait (the runtime may finish the pull in background).
-  ///
-  /// Throws [BridgeCallException] on XPC failure.
   Future<Map<String, Object?>> imagePull({
     required String pullId,
     required String reference,

@@ -165,7 +165,7 @@ ${APP_NAME} ${VERSION}
 系统要求
 --------
 macOS 26 或更高版本（Apple Silicon）。
-安装并启动 Apple container 运行时；本安装包不安装或启动运行时。
+配置 Docker CLI、标准 Docker Compose 和可用端点；本安装包不安装或启动底层引擎。
 
 完整性校验
 ----------

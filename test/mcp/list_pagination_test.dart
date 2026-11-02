@@ -45,8 +45,8 @@ void main() {
     final payload = snapshotPayload(
       id: id,
       labels: const {
-        'com.compose.project': 'zblog',
-        'com.compose.service': 'web',
+        'com.docker.compose.project': 'zblog',
+        'com.docker.compose.service': 'web',
       },
     );
     (payload['configuration']
@@ -71,8 +71,8 @@ void main() {
         snapshotPayload(
           id: 'alpha',
           labels: const {
-            'com.compose.project': 'ashop',
-            'com.compose.service': 'web',
+            'com.docker.compose.project': 'ashop',
+            'com.docker.compose.service': 'web',
           },
         ),
         snapshotPayload(id: 'mid', status: 'stopped', startedAt: null),
@@ -99,12 +99,7 @@ void main() {
       ]
       ..networkListResult = const BridgeCommandResult(
         exitCode: 0,
-        stdout:
-            '[{"configuration":{"name":"zzz","mode":"nat","plugin":"p"},'
-            '"status":{"ipv4Subnet":"10.0.0.0/24","ipv4Gateway":"10.0.0.1"}},'
-            '{"configuration":{"name":"default","mode":"nat","plugin":"p"},'
-            '"status":{"ipv4Subnet":"192.168.64.0/24",'
-            '"ipv4Gateway":"192.168.64.1"}}]',
+        stdout: '[{"Name":"zzz","Scope":"local","Driver":"bridge","Labels":{},"IPAM":{"Config":[{"Subnet":"10.0.0.0/24","Gateway":"10.0.0.1"}]}},{"Name":"bridge","Scope":"local","Driver":"bridge","Labels":{},"IPAM":{"Config":[{"Subnet":"192.168.64.0/24","Gateway":"192.168.64.1"}]}}]',
         stderr: '',
       );
     projectService = _FakeProjectService(const [
@@ -430,7 +425,7 @@ void main() {
       expect(data['hasMore'], isFalse);
       expect(data['nextOffset'], isNull);
       expect((data['networks'] as List).map((n) => (n as Map)['id']).toList(), [
-        'default',
+        'bridge',
         'zzz',
       ]);
     });

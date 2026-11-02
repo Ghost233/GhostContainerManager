@@ -143,7 +143,7 @@ class _ComposePageState extends State<ComposePage> {
           children: [
             SectionHeader(
               title: 'Compose 项目',
-              subtitle: 'orchard compose 插件（up/down）· 项目按容器 label 聚合',
+              subtitle: '标准 Docker Compose· 项目按容器 label 聚合',
               loading: _compose.loading,
               onRefresh: _compose.refresh,
             ),
@@ -273,7 +273,7 @@ class _PluginMissingBanner extends StatelessWidget {
                   Text('未检测到 compose 插件', style: theme.textTheme.titleSmall),
                   const SizedBox(height: 8),
                   Text(
-                    'container compose 是独立插件，需安装到系统插件目录后使用：',
+                    '需要标准 Docker Compose，请安装后核验 docker compose version：',
                     style: theme.textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 8),
@@ -326,7 +326,7 @@ class _ProjectList extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 12),
         child: Text(
-          '当前没有 Compose 项目（由 com.compose.project label 聚合）',
+          '当前没有 Compose 项目（由 com.docker.compose.project label 聚合）',
           style: theme.textTheme.bodyMedium,
         ),
       );

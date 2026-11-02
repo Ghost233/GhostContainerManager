@@ -69,35 +69,35 @@ void main() {
     }
     expect(kSidebarItems.length, 9);
     expect(find.text('暂无容器'), findsOneWidget); // 容器页空态（#17）
-    expect(find.text('运行时未启动'), findsNothing);
+    expect(find.text('Docker 端点不可达，请检查 context 或引擎状态'), findsNothing);
   });
 
   testWidgets('serviceNotRunning：降级壳横幅 + 一键启动 + 可导航到运行时页', (tester) async {
     final fake = FakeContainerBridge()..statusResult = _stopped();
     await _pumpApp(tester, fake);
 
-    expect(find.text('运行时未启动'), findsOneWidget);
-    expect(find.text('启动运行时'), findsWidgets); // 横幅按钮
+    expect(find.text('Docker 端点不可达，请检查 context 或引擎状态'), findsOneWidget);
+    expect(find.text('检查连接'), findsWidgets); // 横幅按钮
     expect(find.text('打开引导检查'), findsWidgets);
 
     await tester.tap(find.text('运行时'));
     await tester.pumpAndSettle();
-    expect(find.text('服务未运行'), findsWidgets);
+    expect(find.text('Docker 端点未就绪'), findsWidgets);
   });
 
-  testWidgets('kernelMissing：横幅提示内核缺失 + 一键安装', (tester) async {
-    final fake = FakeContainerBridge()..kernelPresent = false;
+  testWidgets('Docker connection does not require an app-installed kernel', (
+    tester,
+  ) async {
+    final fake = FakeContainerBridge();
     await _pumpApp(tester, fake);
-
-    expect(find.text('运行时缺少默认内核，容器无法启动'), findsOneWidget);
-    expect(find.text('安装推荐内核'), findsWidgets);
+    expect(find.byType(ContainersPage), findsOneWidget);
+    expect(fake.calls.where((c) => c.startsWith('kernel')), isEmpty);
   });
-
   testWidgets('notInstalled：阻塞向导 + 跳过出口进入设置', (tester) async {
     final fake = FakeContainerBridge()..binaryPath = null;
     await _pumpApp(tester, fake);
 
-    expect(find.text('未安装 Apple container 运行时'), findsOneWidget);
+    expect(find.text('配置 Docker 连接'), findsOneWidget);
     expect(find.text('容器'), findsNothing); // 主壳被阻塞
 
     await tester.tap(find.text('跳过并仅查看设置'));
@@ -106,21 +106,21 @@ void main() {
     expect(find.text('容器'), findsWidgets); // 壳已可见
   });
 
-  testWidgets('unsupportedMajor：阻塞向导，不提供「勉强继续」', (tester) async {
-    final fake = FakeContainerBridge()
-      ..versionResult = const BridgeCommandResult(
-        exitCode: 0,
-        stdout:
-            '[{"appName":"container","version":"2.0.0"},'
-            '{"appName":"container-apiserver","version":"2.0.0"}]',
-        stderr: '',
-      );
-    await _pumpApp(tester, fake);
-
-    expect(find.text('运行时大版本不兼容'), findsOneWidget);
-    expect(find.text('跳过并仅查看设置'), findsOneWidget);
-  });
-
+  testWidgets(
+    'Different Docker client and server major versions remain usable',
+    (tester) async {
+      final fake = FakeContainerBridge()
+        ..versionResult = const BridgeCommandResult(
+          exitCode: 0,
+          stdout:
+              '{"Client":{"Version":"30.0.0"},"Server":{"Version":"28.0.0"}}',
+          stderr: '',
+        );
+      await _pumpApp(tester, fake);
+      expect(find.byType(ContainersPage), findsOneWidget);
+      expect(find.text('配置 Docker 连接'), findsNothing);
+    },
+  );
   testWidgets('菜单偏好决定启动页，原生导航动作切换主窗口页面', (tester) async {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1;

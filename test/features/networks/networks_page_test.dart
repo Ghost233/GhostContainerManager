@@ -13,11 +13,7 @@ import 'package:ghost_container_manager/ui/components.dart';
 import '../../services/container_service_test.dart' show snapshotPayload;
 
 const _networkListJson =
-    '[{"configuration":{"name":"default","mode":"nat","plugin":"builtin",'
-    '"labels":{"com.apple.container.resource.role":"builtin"}},'
-    '"status":{"ipv4Subnet":"192.168.64.0/24","ipv4Gateway":"192.168.64.1"}},'
-    '{"configuration":{"name":"backend","mode":"nat","plugin":"builtin",'
-    '"labels":{}},"status":{"ipv4Subnet":"192.168.65.0/24"}}]';
+    '[{"Name":"bridge","Scope":"local","Driver":"bridge","Labels":{},"IPAM":{"Config":[{"Subnet":"192.168.64.0/24","Gateway":"192.168.64.1"}]}},{"Name":"backend","Scope":"local","Driver":"bridge","Labels":{},"IPAM":{"Config":[{"Subnet":"192.168.65.0/24","Gateway":null}]}}]';
 
 Future<ReadinessController> _readyReadiness(FakeContainerBridge fake) async {
   final controller = ReadinessController(
@@ -92,7 +88,7 @@ void main() {
 
     expect(find.byType(SectionCard), findsNWidgets(2));
     expect(find.text('网络'), findsOneWidget);
-    expect(find.text('default'), findsOneWidget);
+    expect(find.text('bridge'), findsOneWidget);
     expect(find.text('backend'), findsOneWidget);
     expect(find.text('内建'), findsOneWidget);
     expect(find.textContaining('192.168.64.0/24'), findsOneWidget);
@@ -134,6 +130,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('打开引导检查'), findsOneWidget);
-    expect(find.text('default'), findsNothing);
+    expect(find.text('bridge'), findsNothing);
   });
 }

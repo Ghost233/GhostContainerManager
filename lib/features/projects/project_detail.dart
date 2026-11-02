@@ -64,7 +64,7 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
   Object? _error;
   bool _loading = true;
   final Map<String, _ImageFootprintState> _footprints = {};
-  final Map<String, int> _containerDiskBytes = {};
+  final Map<String, int?> _containerDiskBytes = {};
   int _footprintGeneration = 0;
   int _footprintDone = 0;
   int _footprintTotal = 0;
@@ -176,10 +176,15 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
     });
     for (final container in details.containers) {
       unawaited(() async {
-        final bytes = await widget.footprintService.containerDirectoryBytes(
-          container.id,
-          appRoot: root,
-        );
+        int? bytes;
+        try {
+          bytes = await widget.footprintService.containerDirectoryBytes(
+            container.id,
+            appRoot: root,
+          );
+        } catch (_) {
+          // A missing daemon value is unavailable, never a fabricated zero.
+        }
         if (!mounted || generation != _footprintGeneration) return;
         setState(() => _containerDiskBytes[container.id] = bytes);
       }());
@@ -557,9 +562,8 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
                 const SizedBox(width: 6),
                 Tooltip(
                   message:
-                      '下载＝压缩层体积；展开＝各层解压后的逻辑大小（真实解压计算）；'
-                      '实占＝磁盘真实占用（按块计，含该镜像容器的 initfs 系统盘、'
-                      'kernel 与稀疏 rootfs 的实占，rootfs 外观 513 GB 是稀疏文件）。',
+                      '镜像大小和逻辑大小由 Docker 引擎报告；组合大小加上容器可写层。'
+                      '共享镜像层可能重复，不代表可独立回收的宿主磁盘字节。',
                   child: Icon(
                     Icons.info_outline,
                     size: 14,
@@ -716,10 +720,7 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
                 Text('成员容器', style: theme.textTheme.titleSmall),
                 const SizedBox(width: 6),
                 Tooltip(
-                  message:
-                      '实占＝容器运行时目录的磁盘真实占用（按块计）。每个容器都有 '
-                      'initfs.ext4 系统盘（约 0.5–0.6 GB）、kernel（约 29 MB）与可写 '
-                      'rootfs.ext4；rootfs 外观 513 GB 是稀疏文件，真实占用看这里。',
+                  message: 'Docker 引擎报告的容器可写层大小；不包含镜像共享层、卷或绑定挂载数据。',
                   child: Icon(
                     Icons.info_outline,
                     size: 14,
@@ -816,10 +817,11 @@ class _ProjectDetailViewState extends State<ProjectDetailView> {
           SizedBox(
             width: 80,
             child: Tooltip(
-              message: '实占（磁盘块）：含 initfs 系统盘、kernel 与稀疏 rootfs。',
+              message: 'Docker 容器可写层大小，不包含卷和绑定挂载。',
               child: Text(switch (_containerDiskBytes[container.id]) {
                 final int bytes => formatBytes(bytes),
-                null => '…',
+                null =>
+                  _containerDiskBytes.containsKey(container.id) ? '—' : '…',
               }, style: theme.textTheme.bodySmall),
             ),
           ),

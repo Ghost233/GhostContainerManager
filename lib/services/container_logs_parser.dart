@@ -1,10 +1,3 @@
-/// Decoding of raw container log byte streams (T2a).
-///
-/// The bridge emits [BridgeLogEvent] chunks from the two XPC log
-/// FileHandles (stdio + boot). UTF-8 sequences may span chunk boundaries,
-/// so decoding must be chunked; this module binds that decoding to typed
-/// [ContainerLogEvent]s for the UI layer. MCP deliberately has no logs
-/// tool (#13 decision — logs are a UI surface).
 library;
 
 import 'dart:async';

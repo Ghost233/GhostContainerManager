@@ -12,10 +12,7 @@ import 'package:ghost_container_manager/services/system_service.dart';
 void main() {
   test('tool calls are recorded in the bounded audit trail', () async {
     final bridge = FakeContainerBridge();
-    final systemService = SystemService(
-      bridge: bridge,
-      pingInterval: Duration.zero,
-    );
+    final systemService = SystemService(bridge: bridge);
     final containerService = ContainerService(bridge: bridge);
     final server = GcmMcpServer(
       systemService: systemService,

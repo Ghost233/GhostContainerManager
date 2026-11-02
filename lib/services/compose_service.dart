@@ -1,14 +1,3 @@
-/// Compose v1: thin passthrough onto the orchard compose plugin
-/// (`container compose up|down`), plus project discovery by labels.
-///
-/// Locked facts (docs/research/compose-plugin-integration.md):
-/// - The plugin ships only up/down — no ps/diff/logs/build.
-/// - Output is human text, never JSON → pass through verbatim (truncated).
-/// - Projects are discoverable via labels `com.compose.project` /
-///   `com.compose.service` on containers.
-/// - Plugin lives in /usr/local/libexec/container-plugins/ (sudo install)
-///   and upgrading container wipes that directory → probe on EVERY use,
-///   never cache detection.
 library;
 
 // Private fields assigned from named parameters (T1b precedent).
@@ -19,7 +8,7 @@ import 'container_models.dart';
 import 'container_service.dart';
 import 'errors.dart';
 
-/// Result of the `container compose --help` plugin-presence probe.
+/// Result of the `docker compose --help` plugin-presence probe.
 class ComposePluginStatus {
   const ComposePluginStatus({required this.installed, required this.detail});
 
@@ -108,19 +97,12 @@ class ComposeService {
   static const int defaultMaxOutputBytes = 64 * 1024;
   final int maxOutputBytes;
 
-  static const String projectLabel = 'com.compose.project';
-  static const String serviceLabel = 'com.compose.service';
+  static const String projectLabel = 'com.docker.compose.project';
+  static const String serviceLabel = 'com.docker.compose.service';
 
   static const String installHint =
-      'Install the compose plugin, then retry: download the '
-      'container-compose binary from its release page and run\n'
-      '  sudo mkdir -p /usr/local/libexec/container-plugins && '
-      'sudo cp container-compose /usr/local/libexec/container-plugins/\n'
-      'Note: upgrading container wipes the plugin directory — reinstall '
-      'after every container upgrade.';
+      'Install standard Docker Compose and verify docker compose version.';
 
-  /// Official plugin probe (`container compose --help`). Never cached —
-  /// upgrading the container CLI deletes plugin binaries.
   Future<ComposePluginStatus> detect() async {
     final result = await _bridge.composeHelp();
     if (result.exitCode == 0 &&
@@ -180,7 +162,7 @@ class ComposeService {
         .toList(growable: false);
   }
 
-  /// `container compose up`. [file] must be an absolute path (the CLI runs
+  /// `docker compose up`. [file] must be an absolute path (the CLI runs
   /// with an unspecified working directory, so relative paths are unsafe).
   Future<ComposeRunResult> up({
     required String file,
@@ -199,7 +181,6 @@ class ComposeService {
       );
     }
     final arguments = <String>[
-      'up',
       '--file',
       file,
       if (projectName != null && projectName.isNotEmpty) ...[
@@ -207,6 +188,8 @@ class ComposeService {
         projectName,
       ],
       if (dryRun) '--dry-run',
+      'up',
+      '--detach',
       if (forceRecreate) '--force-recreate',
       '--pull',
       pull,
@@ -214,12 +197,12 @@ class ComposeService {
     return _run(arguments);
   }
 
-  /// `container compose down`. At least one of [file] / [projectName] is
+  /// `docker compose down`. At least one of [file] / [projectName] is
   /// required (the plugin cannot guess the project otherwise).
   Future<ComposeRunResult> down({
     String? file,
     String? projectName,
-    bool keepNetworks = false,
+    bool removeOrphans = false,
   }) {
     final hasFile = file != null && file.isNotEmpty;
     final hasProject = projectName != null && projectName.isNotEmpty;
@@ -231,10 +214,10 @@ class ComposeService {
     }
     if (hasFile) _requireAbsolute(file);
     final arguments = <String>[
-      'down',
       if (hasFile) ...['--file', file],
       if (hasProject) ...['--project-name', projectName],
-      if (keepNetworks) '--keep-networks',
+      'down',
+      if (removeOrphans) '--remove-orphans',
     ];
     return _run(arguments);
   }
@@ -243,7 +226,7 @@ class ComposeService {
     await _requirePlugin();
     final result = await _bridge.composeRun(arguments);
     final output = _combine(result);
-    if (result.exitCode != 0) {
+    if (!result.ok) {
       throw GcmException(
         GcmErrorCode.internal,
         'compose ${arguments.first} failed (exit ${result.exitCode}).',

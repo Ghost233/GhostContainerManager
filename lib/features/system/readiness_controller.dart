@@ -47,10 +47,6 @@ class ReadinessController extends ChangeNotifier {
 
   bool get busy => action != SystemAction.none;
 
-  /// True while a version gate was skipped via
-  /// GCM_DEBUG_ALLOW_UNSUPPORTED_RUNTIME (debug builds only).
-  bool get debugBypassUsed => readiness?.debugBypassUsed ?? false;
-
   /// Full re-check: readiness state machine + daemon status.
   Future<void> refresh() => _run(SystemAction.checking, () async {
     final info = await _systemService.status();
@@ -68,30 +64,16 @@ class ReadinessController extends ChangeNotifier {
         appRootLoaded = true;
       });
 
-  /// One-click runtime start. The mandatory kernel-install flag is chosen
-  /// from the kernel probe: missing kernel → --enable-kernel-install
-  /// (installs it in the same pass, onboarding.md Q3), present →
-  /// --disable-kernel-install.
   Future<void> startRuntime() => _run(SystemAction.starting, () async {
-    final kernelPresent = await _systemService.kernelInstalledForStart();
-    final result = await _systemService.start(installKernel: !kernelPresent);
+    final result = await _systemService.start();
     readiness = result.readiness;
     await _refreshStatusOnly();
   });
 
-  /// Stops the runtime (`container system stop`). The caller is responsible
-  /// for the confirmation dialog (issue #16 / ui-ia.md D8).
   Future<void> stopRuntime() => _run(SystemAction.stopping, () async {
     await _systemService.stop();
     await _refreshStatusOnly();
     readiness = await _systemService.checkReadiness();
-  });
-
-  /// One-click recommended-kernel install (kernelMissing 引导动作).
-  Future<void> installKernel() => _run(SystemAction.installingKernel, () async {
-    await _systemService.installKernel();
-    readiness = await _systemService.checkReadiness();
-    await _refreshStatusOnly();
   });
 
   Future<void> _refreshStatusOnly() async {

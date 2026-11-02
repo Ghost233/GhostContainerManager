@@ -6,10 +6,10 @@ import 'package:ghost_container_manager/mcp/tool_registry.dart';
 /// 定义数与注册表一致、catalogRevision 跨实例稳定、lookup 未知名返回 null。
 void main() {
   group('GcmToolRegistry（issue #30）', () {
-    test('definitions 覆盖全部 35 个注册表条目且不可修改', () {
+    test('definitions 覆盖全部 38 个注册表条目且不可修改', () {
       final registry = GcmToolRegistry();
       final definitions = registry.definitions();
-      expect(definitions, hasLength(35));
+      expect(definitions, hasLength(38));
       expect(definitions.keys, containsAll(kToolCatalog.map((e) => e.name)));
       final existing = registry.lookup('container_create')!;
       expect(

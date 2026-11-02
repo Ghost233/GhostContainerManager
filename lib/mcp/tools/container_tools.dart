@@ -18,7 +18,6 @@ import 'system_tools.dart';
 Map<String, Object?> _containerSummaryJson(ContainerSnapshotInfo c) {
   return <String, Object?>{
     'id': c.id,
-    // apple/container has no separate display name — id is the name.
     'name': c.id,
     'image': c.image,
     'status': c.state.wireName,
@@ -132,6 +131,7 @@ void registerContainerTools(
         'memoryLimitBytes': stats.memoryLimitBytes,
         'memoryUtilization': utilization,
         'cpuUsageUsec': stats.cpuUsageUsec,
+        'cpuPercent': stats.cpuPercent,
         'networkRxBytes': stats.networkRxBytes,
         'networkTxBytes': stats.networkTxBytes,
         'blockReadBytes': stats.blockReadBytes,
@@ -300,10 +300,6 @@ void registerContainerTools(
               const <String, String>{},
         );
       } on GcmException catch (e) {
-        // issue #32 长任务核对：超时 = 放弃等待，进程可能仍在容器内运行
-        // （上游 apple/container#1941，exec 进程无可靠 kill 路由）。补全
-        // 查询途径：资源标识在 message 里（容器 id），查询方法在此补进
-        // hint——不得让 agent 把超时读成「进程已停止」。
         if (e.code == GcmErrorCode.timeout) {
           throw GcmException(
             GcmErrorCode.timeout,

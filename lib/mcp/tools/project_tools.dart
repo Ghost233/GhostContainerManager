@@ -151,6 +151,59 @@ void registerProjectTools(
 
   registerCatalogTool(
     service,
+    'project_resource_record',
+    callback: (args, extra) => guardToolCall(() async {
+      final result = await projectService.recordProjectResource(
+        project: args['project'] as String?,
+        path: args['path'] as String?,
+        kind: args['kind'] as String,
+        reference: args['reference'] as String,
+        purpose: args['purpose'] as String,
+        taskId: args['taskId'] as String?,
+        dependsOn: (args['dependsOn'] as List?)?.cast<String>() ?? const [],
+        supersedes: (args['supersedes'] as List?)?.cast<String>() ?? const [],
+        temporary: args['temporary'] as bool? ?? false,
+        resultsCollected: args['resultsCollected'] as bool? ?? false,
+        keep: args['keep'] as bool? ?? false,
+      );
+      return (data: result, summary: '已登记项目资源 ${result['id']}');
+    }),
+  );
+  registerCatalogTool(
+    service,
+    'project_cleanup_plan',
+    callback: (args, extra) => guardToolCall(() async {
+      final result = await projectService.planProjectCleanup(
+        project: args['project'] as String?,
+        path: args['path'] as String?,
+      );
+      return (
+        data: result,
+        summary:
+            '待 agent 确认清理计划 ${result['planId']}：${(result['candidates'] as List).length} 个候选，尚未删除',
+      );
+    }),
+  );
+  registerCatalogTool(
+    service,
+    'project_cleanup_execute',
+    callback: (args, extra) => guardToolCall(() async {
+      final result = await projectService.executeProjectCleanup(
+        project: args['project'] as String?,
+        path: args['path'] as String?,
+        planId: args['planId'] as String,
+        approved: (args['approved'] as List).cast<String>(),
+      );
+      return (
+        data: result,
+        summary:
+            '清理完成：删除 ${(result['deleted'] as List).length} 项，跳过 ${(result['skipped'] as List).length} 项，失败 ${(result['failed'] as List).length} 项',
+      );
+    }),
+  );
+
+  registerCatalogTool(
+    service,
     'project_reclaim',
     callback: (args, extra) => guardToolCall(() async {
       final result = await projectService.reclaimProject(

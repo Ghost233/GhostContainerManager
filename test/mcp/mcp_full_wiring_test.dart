@@ -12,6 +12,7 @@ import 'package:ghost_container_manager/services/image_service.dart';
 import 'package:ghost_container_manager/services/mount_service.dart';
 import 'package:ghost_container_manager/services/network_service.dart';
 import 'package:ghost_container_manager/services/project_service.dart';
+import 'package:ghost_container_manager/services/project_cleanup.dart';
 import 'package:ghost_container_manager/services/registry_service.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
 
@@ -59,7 +60,7 @@ void main() {
 
   setUp(() {
     bridge = FakeContainerBridge();
-    systemService = SystemService(bridge: bridge, pingInterval: Duration.zero);
+    systemService = SystemService(bridge: bridge);
     containerService = ContainerService(bridge: bridge);
     imageService = ImageService(
       bridge: bridge,
@@ -78,6 +79,10 @@ void main() {
       cli: _FakeProjectCli(),
       containerService: containerService,
       imageService: imageService,
+      cleanup: ProjectCleanup(
+        containers: containerService,
+        images: imageService,
+      ),
     );
     registryService = RegistryService(
       containers: containerService,
@@ -99,7 +104,7 @@ void main() {
     enableJsonResponse: true,
   );
 
-  test('tools/list exposes the slim two-tool surface; gcm_help catalogs all 35 v1 tools', () async {
+  test('tools/list exposes the slim two-tool surface; gcm_help catalogs all 38 tools', () async {
     final server = makeServer();
     await server.start();
     addTearDown(server.stop);
@@ -223,13 +228,16 @@ void main() {
       'project_build',
       'project_test',
       'project_reclaim',
+      'project_resource_record',
+      'project_cleanup_plan',
+      'project_cleanup_execute',
       'project_publish',
       'project_restore',
       'registry_status',
       'registry_start',
       'registry_stop',
     };
-    expect(catalogNames, hasLength(35), reason: 'catalog: $catalogNames');
+    expect(catalogNames, hasLength(38), reason: 'catalog: $catalogNames');
     expect(
       catalogNames,
       expected,
@@ -237,7 +245,7 @@ void main() {
           'missing: ${expected.difference(catalogNames)}; '
           'unexpected: ${catalogNames.difference(expected)}',
     );
-    expect(structured['totalTools'], 35);
+    expect(structured['totalTools'], 38);
   });
 
   test('settings switch on launch starts the server; off stops it', () async {

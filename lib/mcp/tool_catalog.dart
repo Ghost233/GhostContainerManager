@@ -1,7 +1,7 @@
 /// MCP 业务工具声明式注册表（单一事实来源，ADR-0001 / issue #29）。
 ///
 /// 精简注册模式（2026-10-26 用户拍板）：MCP 只对外注册 `gcm_help` 与
-/// `gcm_call` 两个工具，35 个业务工具不再逐个出现在 tools/list，改由本
+/// `gcm_call` 两个工具，38 个业务工具不再逐个出现在 tools/list，改由本
 /// 注册表描述、`gcm_call` 按名分发。每个工具的名称、域、title、
 /// description、inputSchema、outputSchema、五字段注解与 meta 全部在
 /// 条目里声明；gcm_help 渲染、gcm_call 分发前校验（ADR-0002）、各域
@@ -160,6 +160,7 @@ JsonObject _projectDetailsOutput() => JsonObject(
     'path': const JsonString(),
     'images': const JsonArray(items: JsonObject()),
     'containers': const JsonArray(items: JsonObject()),
+    'resources': const JsonArray(items: JsonObject()),
   },
   required: ['project', 'images', 'containers'],
 );
@@ -173,6 +174,7 @@ JsonObject _projectBuildOutput() => JsonObject(
     'durationMs': const JsonInteger(),
     'output': const JsonString(),
     'failureLogPath': const JsonString(),
+    'resourceTracking': const JsonObject(),
   },
   required: ['project', 'image', 'exitCode', 'durationMs'],
 );
@@ -215,8 +217,7 @@ JsonObject _registryStatusOutput() => JsonObject(
 );
 
 const String _referenceDescription =
-    '镜像引用，必须 name:tag（如 alpine:3.19，省略 tag 默认 :latest）。'
-    '不支持 digest 寻址（apple/container#1962）。';
+    'Docker 镜像引用：name:tag、name@sha256:digest 或镜像 ID；普通名称省略 tag 时默认 :latest。';
 
 /// issue #31：全部列表工具统一的分页入参。limit 默认 50、上限 500；
 /// 超出 [1, 500] 由 gcm_call 分发前的 schema 校验拒绝（INVALID_ARGUMENT），
@@ -253,7 +254,7 @@ const List<String> _listPageRequired = <String>[
   'nextOffset',
 ];
 
-/// v1 业务工具注册表（35 个，与 docs/spec/mcp-tools.md §3 一一对应；
+/// v1 业务工具注册表（38 个，与 docs/spec/mcp-tools.md §3 一一对应；
 /// 域顺序即 gcm_help 目录顺序）。
 final List<ToolCatalogEntry> kToolCatalog = [
   // ---- system（3）----
@@ -261,34 +262,23 @@ final List<ToolCatalogEntry> kToolCatalog = [
     name: 'system_status',
     domain: 'system',
     title: 'Runtime Status',
-    description:
-        '返回 Apple container 运行时状态：五级就绪级别（未安装/版本低/主版本不兼容/'
-        '服务未起/内核缺失/就绪）、CLI 与 apiserver 版本、版本是否受支持、'
-        '服务状态与资源计数。',
+    description: '返回 Docker 端点连接状态、CLI 与 Engine 版本和资源计数；不按引擎品牌或固定大版本设门槛。',
     inputSchema: const JsonObject(properties: {}, additionalProperties: false),
     outputSchema: JsonObject(
       properties: <String, JsonSchema>{
         'level': const JsonString(
           description: '就绪级别',
-          enumValues: [
-            'notInstalled',
-            'versionTooLow',
-            'unsupportedMajor',
-            'serviceNotRunning',
-            'kernelMissing',
-            'ready',
-          ],
+          enumValues: ['notInstalled', 'serviceNotRunning', 'ready'],
         ),
         'ready': const JsonBoolean(),
         'versionSupported': const JsonBoolean(
-          description: '运行时版本是否通过基线（≥1.6.0）与大版本（1.x）门槛',
+          description: 'Docker CLI 是否可用；具体操作以端点实际能力为准',
         ),
         'cliVersion': const JsonString(),
         'apiServerVersion': const JsonString(),
         'installPath': const JsonString(),
         'detail': const JsonString(),
-        'debugBypass': const JsonBoolean(),
-        'status': const JsonString(description: 'apiserver 状态，如 running'),
+        'status': const JsonString(description: 'Engine 状态，如 running'),
         'appRoot': const JsonString(),
         'installRoot': const JsonString(),
         'resources': const JsonObject(),
@@ -301,26 +291,13 @@ final List<ToolCatalogEntry> kToolCatalog = [
     name: 'system_start',
     domain: 'system',
     title: 'Start Runtime',
-    description:
-        '启动 Apple container 运行时（container system start，内核安装标志始终显式传递），'
-        '随后轮询健康检查直到 apiserver 应答，并返回最新就绪级别。',
-    inputSchema: const JsonObject(
-      properties: <String, JsonSchema>{
-        'installKernel': JsonBoolean(
-          description: '是否同时安装/更新默认内核（对应 --enable-kernel-install）',
-          defaultValue: true,
-        ),
-      },
-      additionalProperties: false,
-    ),
+    description: '检查当前 Docker 端点是否已连接；引擎须在外部启动，不执行品牌专用启动命令。',
+    inputSchema: const JsonObject(properties: {}, additionalProperties: false),
     outputSchema: JsonObject(
       properties: <String, JsonSchema>{
         'status': const JsonString(description: '启动后守护进程状态，如 running'),
-        'kernelInstalled': const JsonBoolean(
-          description: '请求安装内核时的安装结果；installKernel=false 时不返回',
-        ),
         'startupMs': const JsonInteger(
-          description: '从 CLI 调用到 apiserver 应答的耗时（毫秒）',
+          description: '从 CLI 调用到 Docker 端点应答的耗时（毫秒）',
         ),
         'level': const JsonString(),
         'ready': const JsonBoolean(),
@@ -334,9 +311,7 @@ final List<ToolCatalogEntry> kToolCatalog = [
     name: 'system_stop',
     domain: 'system',
     title: 'Stop Runtime',
-    description:
-        '停止 Apple container 运行时（container system stop），'
-        '运行中的容器随守护进程一并停止。',
+    description: 'Docker 兼容接口没有通用的引擎停止命令，本工具返回明确的不支持错误；通过引擎自身入口管理。',
     inputSchema: const JsonObject(properties: {}, additionalProperties: false),
     outputSchema: JsonObject(
       properties: <String, JsonSchema>{
@@ -359,7 +334,7 @@ final List<ToolCatalogEntry> kToolCatalog = [
     domain: 'container',
     title: 'List Containers',
     description:
-        '列出 Apple container 容器（id/镜像/状态/标签/网络）。'
+        '列出 Docker 容器（id/镜像/状态/标签/网络）。'
         'label 参数为精确 key=value 过滤（如 com.ghost233.compose.project=web）；'
         'all=false 时只返回运行中的容器。'
         '结果按 id 升序；分页：limit（默认 50，上限 500，超限报错）+ '
@@ -423,7 +398,7 @@ final List<ToolCatalogEntry> kToolCatalog = [
     domain: 'container',
     title: 'Container Stats',
     description:
-        '返回单个运行中容器的一次性资源快照（内存/CPU 微秒/网络/块设备/进程数）。'
+        '返回单个运行中容器的一次性资源快照（内存/CPU 百分比/网络/块设备/进程数）。'
         '需要速率时请自行轮询本工具（建议 2 秒间隔）。容器未运行时返回 CONFLICT 错误。',
     inputSchema: JsonObject(
       properties: <String, JsonSchema>{
@@ -441,6 +416,7 @@ final List<ToolCatalogEntry> kToolCatalog = [
             'memoryLimitBytes': const JsonInteger(),
             'memoryUtilization': const JsonNumber(),
             'cpuUsageUsec': const JsonInteger(),
+            'cpuPercent': const JsonNumber(),
             'networkRxBytes': const JsonInteger(),
             'networkTxBytes': const JsonInteger(),
             'blockReadBytes': const JsonInteger(),
@@ -461,7 +437,8 @@ final List<ToolCatalogEntry> kToolCatalog = [
     description:
         '从本地镜像创建容器，默认只创建不启动。镜像不存在时不会自动拉取；'
         'name 重名会返回 CONFLICT。env 是键值对象，ports 是 host/container 端口对象数组。'
-        'mounts 定义主机目录挂载，labels 是字符串标签对象。',
+        'mounts 定义主机目录挂载，labels 是字符串标签对象。'
+        '项目工程容器应先维护 Compose 及环境配置，传入参数须与配置一致；可优先使用 compose_up。',
     inputSchema: JsonObject(
       properties: <String, JsonSchema>{
         'name': const JsonString(description: '容器名称；省略时生成名称'),
@@ -840,7 +817,7 @@ final List<ToolCatalogEntry> kToolCatalog = [
     title: 'List Mounts',
     description:
         '聚合所有容器（含已停止）的挂载配置，按主机源路径归组。'
-        '每个挂载给出类型（virtiofs/tmpfs）、主机路径与使用它的容器及容器内目标路径。'
+        '每个挂载给出类型（bind/volume/tmpfs）、主机路径与使用它的容器及容器内目标路径。'
         '结果按 name 升序；分页：limit（默认 50，上限 500，超限报错）+ '
         'offset（默认 0），响应带 total/returned/hasMore/nextOffset。',
     inputSchema: const JsonObject(
@@ -968,7 +945,7 @@ final List<ToolCatalogEntry> kToolCatalog = [
     domain: 'compose',
     title: 'List Compose Projects',
     description:
-        '按容器 label（com.compose.project / com.compose.service）聚合当前存在的 '
+        '按容器 label（com.docker.compose.project / com.docker.compose.service）聚合当前存在的 '
         'Compose 项目：项目名、服务清单、各服务对应容器与状态。'
         '插件只提供 up/down，项目发现走 label 聚合（不需要插件也可工作）。'
         '结果按 name 升序；分页：limit（默认 50，上限 500，超限报错）+ '
@@ -991,10 +968,10 @@ final List<ToolCatalogEntry> kToolCatalog = [
     domain: 'compose',
     title: 'Compose Up',
     description:
-        '运行 container compose up（需要本机已安装 compose 插件；未安装时返回'
+        '运行标准 docker compose up --detach（未安装 Docker Compose 时返回'
         ' NOT_FOUND 与安装指引）。file 必须是绝对路径。输出为插件的人类可读文本'
         '原样透传（超长时保留尾部并标记 truncated）。'
-        '可用 dryRun 只打印计划不改动任何资源。',
+        '可用 dryRun 只打印计划不改动任何资源。项目工程容器以项目内维护的 Compose 及环境配置固定运行参数。',
     inputSchema: const JsonObject(
       properties: <String, JsonSchema>{
         'file': JsonString(description: 'compose 文件绝对路径'),
@@ -1025,14 +1002,14 @@ final List<ToolCatalogEntry> kToolCatalog = [
     title: 'Compose Down',
     description:
         '运行 container compose down，停止并移除项目的容器与其创建的网络'
-        '（keepNetworks 可保留网络）。file 与 projectName 至少提供一项；'
+        '（removeOrphans 可同时删除孤立容器）。file 与 projectName 至少提供一项；'
         '输出为人类可读文本原样透传。',
     inputSchema: const JsonObject(
       properties: <String, JsonSchema>{
         'file': JsonString(description: 'compose 文件绝对路径（与 projectName 至少一项）'),
         'projectName': JsonString(description: '项目名（与 file 至少一项）'),
-        'keepNetworks': JsonBoolean(
-          description: '保留项目创建的网络',
+        'removeOrphans': JsonBoolean(
+          description: '删除项目中未声明的孤立容器',
           defaultValue: false,
         ),
       },
@@ -1045,7 +1022,7 @@ final List<ToolCatalogEntry> kToolCatalog = [
       idempotent: true,
     ),
   ),
-  // ---- project（8）----
+  // ---- project（11）----
   ToolCatalogEntry(
     name: 'project_list',
     domain: 'project',
@@ -1071,7 +1048,7 @@ final List<ToolCatalogEntry> kToolCatalog = [
     name: 'project_get',
     domain: 'project',
     title: 'Get Project',
-    description: '返回项目镜像、容器与使用状态；project 与 path 二选一。',
+    description: '返回项目镜像、容器与使用状态，以及持久化资源关系 resources；project 与 path 二选一。',
     inputSchema: _selectorInput(),
     outputSchema: _projectDetailsOutput(),
     annotations: _readOnly('Get Project'),
@@ -1107,7 +1084,7 @@ final List<ToolCatalogEntry> kToolCatalog = [
     title: 'Build Project Image',
     description:
         '构建 {prefix}-{name}:latest。MCP 默认跳过测试；'
-        '显式测试使用 project_test 的 command。失败返回末50行与持久日志路径。',
+        '显式测试使用 project_test 的 command。成功登记镜像身份并返回 resourceTracking（资源记录及待批准清理计划）；关系获取失败仅返回 warning。失败返回末50行与持久日志路径。',
     inputSchema: _selectorInput(
       properties: <String, JsonSchema>{
         'name': const JsonString(
@@ -1129,7 +1106,7 @@ final List<ToolCatalogEntry> kToolCatalog = [
     name: 'project_test',
     domain: 'project',
     title: 'Test Project Image',
-    description: '用必传 command 运行一次性测试容器；非零退出是结果数据。',
+    description: '用必传 command 运行一次性测试容器；非零退出是结果数据。项目测试的运行配置应在 Compose 及环境配置中固定，调用方核对参数一致后使用本工具。',
     inputSchema: _selectorInput(
       properties: <String, JsonSchema>{
         'name': const JsonString(pattern: _prefixPattern),
@@ -1208,6 +1185,83 @@ final List<ToolCatalogEntry> kToolCatalog = [
     ),
     outputSchema: _projectRestoreOutput(),
     annotations: _annotations('Restore Project Image', idempotent: true),
+  ),
+  ToolCatalogEntry(
+    name: 'project_resource_record',
+    domain: 'project',
+    title: 'Record Project Resource',
+    description: '登记或更新资源用途、任务、依赖与替代关系；显式登记可接管无标签资源。依赖使用资源 ID，替代对象仅限本项目同类资源。完整更新元数据，缺省标志为 false；资源清单由 project_get.resources 读取。',
+    inputSchema: _selectorInput(
+      properties: <String, JsonSchema>{
+        'kind': const JsonString(enumValues: ['image', 'container']),
+        'reference': const JsonString(description: '镜像完整 name:tag 或容器 ID'),
+        'purpose': const JsonString(
+          description: '资源用途，如 toolchain/dependency/test/service',
+        ),
+        'taskId': const JsonString(),
+        'dependsOn': const JsonArray(items: JsonString()),
+        'supersedes': const JsonArray(items: JsonString()),
+        'temporary': const JsonBoolean(defaultValue: false),
+        'resultsCollected': const JsonBoolean(defaultValue: false),
+        'keep': const JsonBoolean(defaultValue: false),
+      },
+      required: ['kind', 'reference', 'purpose'],
+    ),
+    outputSchema: const JsonObject(),
+    annotations: _annotations('Record Project Resource', idempotent: true),
+  ),
+  ToolCatalogEntry(
+    name: 'project_cleanup_plan',
+    domain: 'project',
+    title: 'Plan Project Cleanup',
+    description: '仅生成清理候选与保留原因，不删除资源。返回计划 ID、资源身份、用途、依赖和数据影响，交给 agent 决定；计划有效 30 分钟，新的同项目计划替换旧计划，应用重启后失效。',
+    inputSchema: _selectorInput(),
+    outputSchema: const JsonObject(
+      properties: {
+        'project': JsonString(),
+        'planId': JsonString(),
+        'expiresAt': JsonString(),
+        'requiresApproval': JsonBoolean(),
+        'candidates': JsonArray(items: JsonObject()),
+        'retained': JsonArray(items: JsonObject()),
+      },
+      required: [
+        'project',
+        'planId',
+        'expiresAt',
+        'requiresApproval',
+        'candidates',
+        'retained',
+      ],
+    ),
+    annotations: _annotations('Plan Project Cleanup'),
+  ),
+  ToolCatalogEntry(
+    name: 'project_cleanup_execute',
+    domain: 'project',
+    title: 'Execute Approved Cleanup',
+    description: '仅执行 agent 明确批准的计划候选 ID；未批准不删除，不停止或强制删除运行中容器。执行前重查身份、状态和全局引用，变化项跳过。计划一次性消费，失败需重新生成计划。不会删除宿主挂载数据。',
+    inputSchema: _selectorInput(
+      properties: <String, JsonSchema>{
+        'planId': const JsonString(),
+        'approved': const JsonArray(
+          items: JsonString(),
+          description: '明确批准删除的候选资源 ID，非空且不重复',
+        ),
+      },
+      required: ['planId', 'approved'],
+    ),
+    outputSchema: const JsonObject(
+      properties: {
+        'project': JsonString(),
+        'planId': JsonString(),
+        'deleted': JsonArray(items: JsonString()),
+        'skipped': JsonArray(items: JsonObject()),
+        'failed': JsonArray(items: JsonObject()),
+      },
+      required: ['project', 'planId', 'deleted', 'skipped', 'failed'],
+    ),
+    annotations: _annotations('Execute Approved Cleanup', destructive: true),
   ),
   // ---- registry（3）----
   ToolCatalogEntry(

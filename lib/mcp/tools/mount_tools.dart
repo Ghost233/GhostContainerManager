@@ -1,9 +1,3 @@
-/// MCP `mount_*` tool handlers (docs/spec/mcp-tools.md §3.4) — read-only
-/// mount aggregation. Apple container has no volume primitive; mounts are
-/// container config aggregated by host source path.
-///
-/// Declarative metadata lives in lib/mcp/tool_catalog.dart (ADR-0001);
-/// this module only binds handlers to registry entries.
 library;
 
 import '../tool_catalog.dart';

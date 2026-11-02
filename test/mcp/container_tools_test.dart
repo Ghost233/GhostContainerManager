@@ -45,7 +45,7 @@ void main() {
         ),
       ];
     server = GcmMcpServer(
-      systemService: SystemService(bridge: bridge, pingInterval: Duration.zero),
+      systemService: SystemService(bridge: bridge),
       containerService: ContainerService(bridge: bridge),
       port: 0,
       enableJsonResponse: true,

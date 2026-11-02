@@ -53,8 +53,8 @@ void main() {
   });
 
   group('tool catalog', () {
-    test('35 entries across eight domains, matching the v1 spec', () {
-      expect(kToolCatalog, hasLength(35));
+    test('38 entries across eight domains, matching the v1 spec', () {
+      expect(kToolCatalog, hasLength(38));
       final byDomain = catalogByDomain();
       expect(byDomain.keys, <String>[
         'system',
@@ -72,7 +72,7 @@ void main() {
       expect(byDomain['mount'], hasLength(2));
       expect(byDomain['network'], hasLength(2));
       expect(byDomain['compose'], hasLength(3));
-      expect(byDomain['project'], hasLength(8));
+      expect(byDomain['project'], hasLength(11));
       expect(byDomain['registry'], hasLength(3));
     });
 
@@ -169,7 +169,7 @@ void main() {
       }
     });
 
-    test('idempotentHint 与生命周期并发契约逐一核对（issue #32，穷举 35 条）', () {
+    test('idempotentHint 与生命周期并发契约逐一核对（issue #32，穷举 38 条）', () {
       // 对照 docs/spec/container-lifecycle.md §3 并发契约核对：
       // start/stop/kill 幂等（重试无额外效果）；delete 对 notFound 视为
       // 成功（幂等）；create 重名报 CONFLICT（非幂等）；restart 每次执行
@@ -207,6 +207,9 @@ void main() {
         'project_build': false,
         'project_test': false,
         'project_reclaim': true,
+        'project_resource_record': true,
+        'project_cleanup_plan': false,
+        'project_cleanup_execute': false,
         'project_publish': true,
         'project_restore': true,
         'registry_status': true,

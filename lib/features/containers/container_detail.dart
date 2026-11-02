@@ -1,9 +1,3 @@
-/// 容器检查器（#26 P1b 重做）：概览卡片化 + stats 实时图表 + 日志 + 终端。
-///
-/// 概览 = SectionCard 分组（Overview/Image/Process/Network/Labels/Environment）
-///   + 四张 fl_chart 实时折线（CPU%/内存/网络速率/磁盘速率）；
-/// 日志 = XPC 双 FileHandle 流；终端 = 非 TTY argv exec。
-/// 设计基线 docs/design.md；共享组件 lib/ui/。
 library;
 
 import 'dart:async';
@@ -1141,7 +1135,7 @@ class _ContainerLogTabState extends State<ContainerLogTab>
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 8, 24, 4),
           child: Text(
-            'stdio / boot 双源 · 实时滚动${_ended ? ' · 已结束' : ''}',
+            'Docker 日志 · 实时滚动${_ended ? ' · 已结束' : ''}',
             style: theme.textTheme.bodySmall?.copyWith(
               color: GcmColors.textSecondary(context),
             ),

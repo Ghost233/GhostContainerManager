@@ -21,7 +21,10 @@ import '../services/container_service_test.dart' show snapshotPayload;
 Map<String, Object?> shopWebPayload() {
   final payload = snapshotPayload(
     id: 'shop-web',
-    labels: const {'com.compose.project': 'shop', 'com.compose.service': 'web'},
+    labels: const {
+      'com.docker.compose.project': 'shop',
+      'com.docker.compose.service': 'web',
+    },
   );
   (payload['configuration']
       as Map<String, Object?>)['mounts'] = <Map<String, Object?>>[
@@ -36,9 +39,7 @@ Map<String, Object?> shopWebPayload() {
 }
 
 const _networkListJson =
-    '[{"configuration":{"name":"default","mode":"nat","plugin":"builtin",'
-    '"labels":{"com.apple.container.resource.role":"builtin"}},'
-    '"status":{"ipv4Subnet":"192.168.64.0/24","ipv4Gateway":"192.168.64.1"}}]';
+    '[{"Name":"bridge","Scope":"local","Driver":"bridge","Labels":{},"IPAM":{"Config":[{"Subnet":"192.168.64.0/24","Gateway":"192.168.64.1"}]}}]';
 
 /// End-to-end evidence for issue #21 acceptance 3: the seven T6 tools
 /// (mount_list/mount_inspect/network_list/network_get/compose_up/
@@ -220,12 +221,12 @@ void main() {
     final networks =
         (list['structuredContent'] as Map<String, dynamic>)['networks'] as List;
     final defaultNetwork = networks.single as Map<String, dynamic>;
-    expect(defaultNetwork['id'], 'default');
+    expect(defaultNetwork['id'], 'bridge');
     expect(defaultNetwork['builtin'], isTrue);
     expect(defaultNetwork['containerCount'], 1);
 
     final detail = await callTool('network_get', <String, dynamic>{
-      'id': 'default',
+      'id': 'bridge',
     });
     final containers =
         (detail['structuredContent'] as Map<String, dynamic>)['containers']
@@ -269,8 +270,8 @@ void main() {
     expect(
       bridge.calls,
       contains(
-        'composeRun up --file /tmp/compose.yaml --project-name shop '
-        '--dry-run --pull missing',
+        'composeRun --file /tmp/compose.yaml --project-name shop '
+        '--dry-run up --detach --pull missing',
       ),
     );
   });

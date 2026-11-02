@@ -298,6 +298,47 @@ void main() {
     },
   );
 
+  test('resource intent and approval round trip through MCP', () async {
+    await initialize();
+    final registered = await callTool(
+      'project_resource_record',
+      <String, dynamic>{
+        'project': 'myapp',
+        'kind': 'container',
+        'reference': 'test-one',
+        'purpose': 'test',
+        'taskId': 'task-one',
+        'dependsOn': ['sdk'],
+        'supersedes': ['old'],
+        'temporary': true,
+        'resultsCollected': true,
+        'keep': false,
+      },
+    );
+    expect((registered['structuredContent'] as Map)['id'], 'resource-one');
+    expect(projects.lastResource!['dependsOn'], ['sdk']);
+    expect(projects.lastResource!['resultsCollected'], isTrue);
+    final plan = await callTool('project_cleanup_plan', <String, dynamic>{
+      'project': 'myapp',
+    });
+    expect((plan['structuredContent'] as Map)['requiresApproval'], isTrue);
+    expect(projects.lastApproved, isNull);
+    await callTool('project_cleanup_execute', <String, dynamic>{
+      'project': 'myapp',
+      'planId': 'plan-one',
+      'approved': ['resource-one'],
+    });
+    expect(projects.lastApproved, ['resource-one']);
+    projects.lastApproved = null;
+    final invalid = await callTool('project_cleanup_execute', <String, dynamic>{
+      'project': 'myapp',
+      'planId': 'plan-one',
+      'approved': 'all',
+    });
+    expect(invalid['isError'], isTrue);
+    expect(projects.lastApproved, isNull);
+  });
+
   test('all eight tools expose honest annotations and input schemas', () async {
     await initialize();
     final tools = await listTools();
@@ -369,6 +410,73 @@ void main() {
 
 class _FakeProjectService implements ProjectService {
   final calls = <String>[];
+  Map<String, Object?>? lastResource;
+  List<String>? lastApproved;
+  @override
+  Future<Map<String, Object?>> recordProjectResource({
+    String? project,
+    String? path,
+    required String kind,
+    required String reference,
+    required String purpose,
+    String? taskId,
+    List<String> dependsOn = const [],
+    List<String> supersedes = const [],
+    bool temporary = false,
+    bool resultsCollected = false,
+    bool keep = false,
+  }) async {
+    _throwError();
+    lastResource = {
+      'kind': kind,
+      'reference': reference,
+      'purpose': purpose,
+      'taskId': taskId,
+      'dependsOn': dependsOn,
+      'supersedes': supersedes,
+      'temporary': temporary,
+      'resultsCollected': resultsCollected,
+      'keep': keep,
+    };
+    return {'id': 'resource-one', ...lastResource!};
+  }
+
+  @override
+  Future<Map<String, Object?>> planProjectCleanup({
+    String? project,
+    String? path,
+  }) async {
+    _throwError();
+    return {
+      'project': 'myapp',
+      'planId': 'plan-one',
+      'expiresAt': '2026-10-30T12:00:00Z',
+      'requiresApproval': true,
+      'candidates': [
+        {'id': 'resource-one'},
+      ],
+      'retained': [],
+    };
+  }
+
+  @override
+  Future<Map<String, Object?>> executeProjectCleanup({
+    String? project,
+    String? path,
+    required String planId,
+    required List<String> approved,
+  }) async {
+    _throwError();
+    lastApproved = approved;
+    return {
+      'project': 'myapp',
+      'planId': planId,
+      'deleted': approved,
+      'skipped': [],
+      'failed': [],
+    };
+  }
+
   Object? error;
   bool? lastSkipTests;
   bool? lastNoCache;

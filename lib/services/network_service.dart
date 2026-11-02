@@ -1,9 +1,3 @@
-/// Read-only network listing (T6, docs/spec/mcp-tools.md §3.4, ui-ia.md D7).
-///
-/// Network list goes through the CLI (`container network ls --format json`)
-/// because the XPC surface exposes no network enumeration in 1.5/1.6
-/// (docs/research/bridge-flutter-apple-container.md). Membership joins
-/// against container snapshots' `networks` attachments.
 library;
 
 // ignore_for_file: prefer_initializing_formals
@@ -36,7 +30,6 @@ class NetworkInfo {
 
   final String? gateway;
 
-  /// `com.apple.container.resource.role=builtin` (verified wire label).
   final bool builtin;
 
   final Map<String, String> labels;
@@ -91,8 +84,6 @@ class NetworkDetail {
   };
 }
 
-/// Lists networks (CLI) and joins container membership (XPC snapshots).
-/// Read-only: create/delete stay CLI-side in v1.
 class NetworkService {
   NetworkService({
     required ContainerBridge bridge,
@@ -103,7 +94,7 @@ class NetworkService {
   final ContainerBridge _bridge;
   final ContainerService _containerService;
 
-  static const String builtinRoleLabel = 'com.apple.container.resource.role';
+  static const String builtinRoleLabel = 'com.ghost233.resource.role';
 
   /// All networks with member counts. Includes `default` even when no
   /// container is attached.
@@ -197,28 +188,26 @@ class NetworkService {
     for (final entry in decoded) {
       if (entry is! Map) continue;
       final map = entry.cast<String, Object?>();
-      final config =
-          (map['configuration'] as Map?)?.cast<String, Object?>() ??
-          const <String, Object?>{};
-      final status =
-          (map['status'] as Map?)?.cast<String, Object?>() ??
-          const <String, Object?>{};
-      final id = config['name'] as String?;
+      final config = map;
+      final ipam = map['IPAM'] as Map?;
+      final configurations = ipam?['Config'] as List? ?? [];
+      final status = configurations.isEmpty
+          ? <String, Object?>{}
+          : Map<String, Object?>.from(configurations.first as Map);
+      final id = config['Name'] as String?;
       if (id == null) continue;
-      final rawLabels = config['labels'];
+      final rawLabels = config['Labels'];
       final labels = rawLabels is Map
-          ? rawLabels.map(
-              (key, value) => MapEntry(key.toString(), value.toString()),
-            )
-          : const <String, String>{};
+          ? rawLabels.map((k, v) => MapEntry(k.toString(), v.toString()))
+          : <String, String>{};
       result.add(
         NetworkInfo(
           id: id,
-          plugin: config['plugin'] as String? ?? '',
-          mode: config['mode'] as String? ?? '',
-          subnet: status['ipv4Subnet'] as String?,
-          gateway: status['ipv4Gateway'] as String?,
-          builtin: labels[builtinRoleLabel] == 'builtin',
+          plugin: config['Driver'] as String? ?? '',
+          mode: config['Scope'] as String? ?? '',
+          subnet: status['Subnet'] as String?,
+          gateway: status['Gateway'] as String?,
+          builtin: const {'bridge', 'host', 'none'}.contains(id),
           labels: labels,
           containerCount: 0,
         ),

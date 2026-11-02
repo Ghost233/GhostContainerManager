@@ -1,14 +1,7 @@
-/// Container domain model for the Service layer (T2a).
-///
-/// The bridge hands over JSON-decoded `ContainerSnapshot` dictionaries from
-/// apple/container 1.6.0; this module turns them into typed, immutable
-/// objects. Unknown extra keys are ignored so newer runtime versions do not
-/// break the parser.
 library;
 
 import 'errors.dart';
 
-/// Runtime lifecycle status (apple/container `RuntimeStatus`).
 enum ContainerState {
   unknown('unknown'),
   stopped('stopped'),
@@ -25,7 +18,6 @@ enum ContainerState {
   }
 }
 
-/// One network attachment (`Attachment` in apple/container).
 class ContainerNetworkAttachment {
   const ContainerNetworkAttachment({
     required this.network,
@@ -91,8 +83,6 @@ class PublishedPort {
   }
 }
 
-/// Container snapshot as needed by list/inspect (parsed from the bridge
-/// payload — see apple/container `ContainerSnapshot`).
 class ContainerSnapshotInfo {
   const ContainerSnapshotInfo({
     required this.id,
@@ -217,6 +207,7 @@ class ContainerStatsInfo {
     this.memoryUsageBytes,
     this.memoryLimitBytes,
     this.cpuUsageUsec,
+    this.cpuPercent,
     this.networkRxBytes,
     this.networkTxBytes,
     this.blockReadBytes,
@@ -228,6 +219,7 @@ class ContainerStatsInfo {
   final int? memoryUsageBytes;
   final int? memoryLimitBytes;
   final int? cpuUsageUsec;
+  final double? cpuPercent;
   final int? networkRxBytes;
   final int? networkTxBytes;
   final int? blockReadBytes;
@@ -248,6 +240,7 @@ class ContainerStatsInfo {
       memoryUsageBytes: _asIntOrNull(map['memoryUsageBytes']),
       memoryLimitBytes: _asIntOrNull(map['memoryLimitBytes']),
       cpuUsageUsec: _asIntOrNull(map['cpuUsageUsec']),
+      cpuPercent: (map['cpuPercent'] as num?)?.toDouble(),
       networkRxBytes: _asIntOrNull(map['networkRxBytes']),
       networkTxBytes: _asIntOrNull(map['networkTxBytes']),
       blockReadBytes: _asIntOrNull(map['blockReadBytes']),

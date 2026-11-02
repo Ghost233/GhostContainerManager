@@ -12,6 +12,7 @@ import 'package:ghost_container_manager/services/image_footprint_service.dart';
 import 'package:ghost_container_manager/services/image_service.dart';
 import 'package:ghost_container_manager/services/project_build_log_store.dart';
 import 'package:ghost_container_manager/services/project_service.dart';
+import 'package:ghost_container_manager/services/project_cleanup.dart';
 import 'package:ghost_container_manager/services/system_service.dart';
 
 import '../../services/container_service_test.dart' show snapshotPayload;
@@ -78,6 +79,7 @@ _pumpPage(
     cli: fakeCli,
     containerService: containers,
     imageService: images,
+    cleanup: ProjectCleanup(containers: containers, images: images),
     projectPaths: projectPaths ?? const [],
     buildLogDirectory: Directory.systemTemp
         .createTempSync('gcm-projects-page-logs-')
@@ -133,7 +135,7 @@ _pumpPage(
     sizeBytes: 100,
   );
   final cli = FakeProjectCli()
-    ..runResults['system df --format json'] = [diskUsageResult(350)];
+    ..runResults['system df --format {{json .}}'] = [diskUsageResult(350)];
   return (bridge: bridge, cli: cli);
 }
 
@@ -159,7 +161,9 @@ void main() {
     // 工具栏全局快照（df）单一展示位。
     expect(find.text('磁盘 350 B'), findsOneWidget);
 
-    fixture.cli.runResults['system df --format json'] = [diskUsageResult(2048)];
+    fixture.cli.runResults['system df --format {{json .}}'] = [
+      diskUsageResult(2048),
+    ];
     await tester.tap(find.text('⟳ 刷新磁盘快照'));
     await tester.pumpAndSettle();
 
@@ -376,10 +380,21 @@ void main() {
       );
 
       await buildProcess.finish(0);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump();
-      expect(find.text('成功'), findsOneWidget);
+      // runAsync 的真实事件循环与 Widget 泵分开推进，等待业务完成态。
+      final deadline = DateTime.now().add(const Duration(seconds: 2));
+      while (find.text('成功').evaluate().isEmpty &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        await tester.pump();
+      }
+      expect(
+        find.text('成功'),
+        findsOneWidget,
+        reason: tester
+            .widgetList<Text>(find.byType(Text))
+            .map((text) => text.data)
+            .join(' | '),
+      );
     });
   });
 
@@ -410,6 +425,7 @@ void main() {
         cli: fixture.cli,
         containerService: containers,
         imageService: images,
+        cleanup: ProjectCleanup(containers: containers, images: images),
         projectPaths: [temp.path],
         buildLogStore: logStore,
       );
@@ -486,7 +502,7 @@ void main() {
     );
     // reclaim 内部 system df 需脚本化（空 stdout 会抛解析错误）。
     fixture.cli.onRun = (args) async {
-      if (args.join(' ') == 'system df --format json') {
+      if (args.join(' ') == 'system df --format {{json .}}') {
         return diskUsageResult(800);
       }
       return const BridgeCommandResult(exitCode: 0, stdout: '', stderr: '');
@@ -633,7 +649,7 @@ void main() {
   testWidgets('回收报告卡：时间注记 + 执行链路注记', (tester) async {
     final fixture = _mysiteFixture();
     fixture.cli.onRun = (args) async {
-      if (args.join(' ') == 'system df --format json') {
+      if (args.join(' ') == 'system df --format {{json .}}') {
         return diskUsageResult(800);
       }
       return const BridgeCommandResult(exitCode: 0, stdout: '', stderr: '');

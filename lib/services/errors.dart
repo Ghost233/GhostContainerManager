@@ -39,7 +39,6 @@ class GcmException implements Exception {
   /// Actionable next step for the caller (docs link, retry advice, …).
   final String? hint;
 
-  /// Origin of the failure ('xpc' | 'cli' | …), per the §5 wire example.
   final String? source;
 
   /// Original error / raw output kept for diagnostics.

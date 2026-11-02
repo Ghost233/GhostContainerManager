@@ -1,9 +1,3 @@
-/// Pure parsers/validators for Apple container CLI JSON output.
-///
-/// Parses `container system version/status --format json` payloads into
-/// typed data. Throws [FormatException] on malformed input; callers (the
-/// Service layer) wrap it into `GcmException`. Kept pure so tests can feed
-/// real captured payloads.
 library;
 
 import 'dart:convert';
@@ -44,25 +38,18 @@ class RuntimeVersion implements Comparable<RuntimeVersion> {
   String toString() => '$major.$minor.$patch';
 }
 
-/// Versions reported by `container system version --format json`
-/// (a JSON array of {appName, version, ...} entries).
 class RuntimeVersions {
   const RuntimeVersions({required this.cli, this.apiServer});
 
   /// Version of the `container` CLI itself.
   final RuntimeVersion cli;
 
-  /// Version of `container-apiserver`; null when the CLI did not report it
-  /// (very old versions) — treated as a skew signal by the caller.
   final RuntimeVersion? apiServer;
 
-  /// CLI and apiserver report different versions; remediation is
-  /// `container system restart` (or stop+start).
   bool get skewed =>
       apiServer != null && apiServer.toString() != cli.toString();
 }
 
-/// Parses `container system version --format json`.
 RuntimeVersions parseSystemVersions(String stdout) {
   final Object? decoded;
   try {
@@ -70,31 +57,18 @@ RuntimeVersions parseSystemVersions(String stdout) {
   } on FormatException catch (e) {
     throw FormatException('system version output is not JSON: ${e.message}');
   }
-  if (decoded is! List) {
-    throw const FormatException('system version output is not a JSON array');
+  if (decoded is! Map || decoded['Client'] is! Map) {
+    throw const FormatException('Docker version output has no Client object');
   }
-  String? cli;
-  String? api;
-  for (final entry in decoded) {
-    if (entry is! Map) continue;
-    final name = entry['appName'];
-    final version = entry['version'];
-    if (name is! String || version is! String) continue;
-    if (name == 'container') cli = version;
-    if (name == 'container-apiserver') api = version;
-  }
-  if (cli == null) {
-    throw const FormatException(
-      'system version output has no "container" entry',
-    );
-  }
+  final server = decoded['Server'];
   return RuntimeVersions(
-    cli: RuntimeVersion.parse(cli),
-    apiServer: api == null ? null : RuntimeVersion.parse(api),
+    cli: RuntimeVersion.parse('${decoded['Client']['Version']}'),
+    apiServer: server is Map && server['Version'] is String
+        ? RuntimeVersion.parse(server['Version'] as String)
+        : null,
   );
 }
 
-/// Resource counters from `container system status --format json`.
 class SystemResources {
   const SystemResources({
     required this.containersRunning,
@@ -113,7 +87,6 @@ class SystemResources {
   };
 }
 
-/// Parsed `container system status --format json` payload.
 class SystemStatusData {
   const SystemStatusData({
     required this.status,
@@ -131,7 +104,6 @@ class SystemStatusData {
   bool get running => status == 'running';
 }
 
-/// Parses `container system status --format json`.
 SystemStatusData parseSystemStatus(String stdout) {
   final Object? decoded;
   try {
@@ -142,29 +114,17 @@ SystemStatusData parseSystemStatus(String stdout) {
   if (decoded is! Map) {
     throw const FormatException('system status output is not a JSON object');
   }
-  final paths = decoded['paths'];
-  final resources = decoded['resources'];
   return SystemStatusData(
-    status: decoded['status'] is String ? decoded['status'] as String : '',
-    appRoot: paths is Map ? paths['appRoot'] as String? : null,
-    installRoot: paths is Map ? paths['installRoot'] as String? : null,
-    resources: resources is Map
-        ? SystemResources(
-            containersRunning:
-                (resources['containersRunning'] as num?)?.toInt() ?? 0,
-            containersTotal:
-                (resources['containersTotal'] as num?)?.toInt() ?? 0,
-            images: (resources['images'] as num?)?.toInt() ?? 0,
-          )
-        : null,
+    status: 'running',
+    appRoot: decoded['DockerRootDir'] as String?,
+    resources: SystemResources(
+      containersRunning: (decoded['ContainersRunning'] as num?)?.toInt() ?? 0,
+      containersTotal: (decoded['Containers'] as num?)?.toInt() ?? 0,
+      images: (decoded['Images'] as num?)?.toInt() ?? 0,
+    ),
   );
 }
 
-/// Maps raw bridge failure text to a structured [GcmException].
-///
-/// Feature fingerprints (same approach as orchard):
-/// - "connection invalid"            → apiserver not reachable
-/// - "failed to decode" + "health check" → XPC wire-format mismatch
 GcmException mapBridgeFailure(
   String combinedOutput, {
   required String operation,
@@ -175,37 +135,19 @@ GcmException mapBridgeFailure(
     return GcmException(
       GcmErrorCode.timeout,
       '$operation 超时',
-      hint: '运行时可能卡住；重试或 container system restart',
+      hint: '运行时可能卡住；检查 Docker 端点和引擎状态后重试',
       source: source,
       cause: combinedOutput,
     );
   }
   final text = combinedOutput.toLowerCase();
-  if (text.contains('connection invalid')) {
+  if (text.contains('cannot connect') ||
+      text.contains('connection refused') ||
+      text.contains('is the docker daemon running')) {
     return GcmException(
       GcmErrorCode.runtimeUnavailable,
-      'container apiserver 不可达',
-      hint: '先执行 container system start',
-      source: source,
-      cause: combinedOutput,
-    );
-  }
-  if (text.contains('failed to decode') && text.contains('health check')) {
-    return GcmException(
-      GcmErrorCode.versionMismatch,
-      '客户端与 apiserver 版本不兼容',
-      hint: 'container system restart；仍失败则对齐 CLI 与 app 内置客户端版本',
-      source: source,
-      cause: combinedOutput,
-    );
-  }
-  if (text.contains('failed to read user input')) {
-    // system start without an explicit kernel-install flag blocks on
-    // readLine; the bridge must always pass one — reaching here is a bug.
-    return GcmException(
-      GcmErrorCode.internal,
-      '$operation 卡在交互式输入（kernel-install 标志缺失）',
-      hint: '这是 app 缺陷：system start 必须显式传 --enable/--disable-kernel-install',
+      'Docker 端点不可达',
+      hint: '检查 Docker context、DOCKER_HOST 和引擎状态',
       source: source,
       cause: combinedOutput,
     );

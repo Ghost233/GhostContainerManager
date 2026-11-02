@@ -67,7 +67,7 @@ void registerSystemTools(ToolRegistrar service, SystemService systemService) {
             '运行时级别 ${info.readiness.level.name}（ready=${info.readiness.ready}，'
             'versionSupported=${info.readiness.versionSupported}）；'
             'CLI ${_versionText(info.readiness.cliVersion)} / '
-            'apiserver ${_versionText(info.readiness.apiServerVersion)}',
+            'Engine ${_versionText(info.readiness.apiServerVersion)}',
       );
     }),
   );
@@ -76,17 +76,11 @@ void registerSystemTools(ToolRegistrar service, SystemService systemService) {
     service,
     'system_start',
     callback: (args, extra) => guardToolCall(() async {
-      final installKernel = args['installKernel'] as bool? ?? true;
-      final result = await systemService.start(installKernel: installKernel);
-      final kernelNote = switch (result.kernelInstalled) {
-        true => '，内核已安装',
-        false => '，内核仍未安装',
-        null => '',
-      };
+      final result = await systemService.start();
       return (
         data: result.toJson(),
         summary:
-            '运行时已启动（耗时 ${result.startupMs} ms$kernelNote，'
+            'Docker 端点已连接（耗时 ${result.startupMs} ms，'
             '就绪级别 ${result.readiness.level.name}）',
       );
     }),

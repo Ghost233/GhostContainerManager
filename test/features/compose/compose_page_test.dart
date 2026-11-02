@@ -96,8 +96,8 @@ void main() {
       snapshotPayload(
         id: 'shop-web',
         labels: const {
-          'com.compose.project': 'shop',
-          'com.compose.service': 'web',
+          'com.docker.compose.project': 'shop',
+          'com.docker.compose.service': 'web',
         },
       ),
     ];
@@ -125,7 +125,7 @@ void main() {
     expect(
       fake.calls,
       contains(
-        'composeRun up --file /tmp/compose.yaml --dry-run --pull missing',
+        'composeRun --file /tmp/compose.yaml --dry-run up --detach --pull missing',
       ),
     );
     expect(find.text('插件输出'), findsOneWidget);
@@ -140,16 +140,16 @@ void main() {
       snapshotPayload(
         id: 'shop-web',
         labels: const {
-          'com.compose.project': 'shop',
-          'com.compose.service': 'web',
+          'com.docker.compose.project': 'shop',
+          'com.docker.compose.service': 'web',
         },
       ),
       snapshotPayload(
         id: 'shop-db',
         status: 'stopped',
         labels: const {
-          'com.compose.project': 'shop',
-          'com.compose.service': 'db',
+          'com.docker.compose.project': 'shop',
+          'com.docker.compose.service': 'db',
         },
       ),
     ];

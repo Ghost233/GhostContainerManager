@@ -30,7 +30,7 @@ Issue 和规格保存在本仓库的 GitHub Issues 中。读写前参见 `docs/a
 
 - 修改 Dart、Flutter、原生桥接或检查脚本前，读取 `docs/engineering.md`。
 - 接入 MacLauncher 前，读取 `docs/integration/maclauncher-sdk.md`；固定 SDK 提交，只注册已实现的能力。
-- 修改容器管理行为前，读取 `docs/project-scope.md`；运行时采用 Apple container。涉及原生 API 与 CLI 的具体分工，在对应开发任务中确认。
+- 修改容器管理行为前，读取 `docs/project-scope.md`；运行时统一采用 Docker 兼容接口和标准 Docker Compose，不绑定底层引擎。依赖复用与提前准备 SDK 的约束保持。
 - 修改前定义可验证的成功标准。缺陷先复现；验证使用真实退出码并记录源码版本和检查范围。
 - 提交或推送前，完成受影响的完整测试及仓库必需检查。当前尚无 Flutter 应用，不得把基础配置检查记为应用验收。
 - Git 远端集成在当前本地分支完成，默认只作 fast-forward 同步。完成前核对工作区、本地与实际远端提交；保留用户未提交和未跟踪文件。

@@ -1,7 +1,7 @@
 /// 数据区占位页（T1b 只实现运行时/设置两页，其余侧栏项用占位）。
 ///
 /// 按 ui-ia.md D8：运行时未就绪是全局态——占位页在非就绪时显示统一的
-/// 「运行时未启动」占位（主按钮「启动运行时」+ 次按钮「打开引导检查」），
+/// 「运行时未启动」占位（主按钮「检查连接」+ 次按钮「打开引导检查」），
 /// 就绪后显示各资源页的空态占位（真实列表由后续任务实现）。
 library;
 
@@ -28,9 +28,7 @@ class PlaceholderSectionPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final ready = controller.readiness?.ready ?? false;
     final level = controller.readiness?.level;
-    final selfFixable =
-        level == ReadinessLevel.serviceNotRunning ||
-        level == ReadinessLevel.kernelMissing;
+    final selfFixable = level == ReadinessLevel.serviceNotRunning;
 
     return Center(
       child: Column(
@@ -60,16 +58,8 @@ class PlaceholderSectionPage extends StatelessWidget {
               children: [
                 if (selfFixable)
                   FilledButton(
-                    onPressed: controller.busy
-                        ? null
-                        : (level == ReadinessLevel.kernelMissing
-                              ? controller.installKernel
-                              : controller.startRuntime),
-                    child: Text(
-                      level == ReadinessLevel.kernelMissing
-                          ? '安装推荐内核'
-                          : '启动运行时',
-                    ),
+                    onPressed: controller.busy ? null : controller.refresh,
+                    child: const Text('检查连接'),
                   ),
                 OutlinedButton(
                   onPressed: onOpenRuntime,

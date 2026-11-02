@@ -1,6 +1,6 @@
 /// 应用根：构建 Service/Controller 层并按就绪状态分级路由
 /// （onboarding.md §4 方案 C）：
-/// - 阻塞级（未安装/版本过低/主版本不兼容）→ 全窗 OnboardingPage
+/// - CLI 未安装→ 全窗 OnboardingPage
 ///   （带「跳过并仅查看设置」出口）；
 /// - 其余 → AppShell（自修复级在壳内显示降级横幅）。
 library;
@@ -10,7 +10,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../bridge/container_bridge.dart';
-import '../bridge/method_channel_container_bridge.dart';
+import '../bridge/docker_container_bridge.dart';
 import '../bridge/project_cli_adapter.dart';
 import '../features/settings/mcp_settings_controller.dart';
 import '../features/system/onboarding_page.dart';
@@ -31,17 +31,13 @@ class GhostContainerManagerApp extends StatefulWidget {
   const GhostContainerManagerApp({
     super.key,
     this.bridge,
-    this.debugBypass = false,
     this.enableMcp = true,
     this.enableLauncher = true,
     this.menuBarChannel,
   });
 
-  /// 测试注入点：fake 桥接；缺省用 MethodChannel 真实桥接。
+  /// 测试注入点：fake 桥接；缺省用 Docker 适配器。
   final ContainerBridge? bridge;
-
-  /// GCM_DEBUG_ALLOW_UNSUPPORTED_RUNTIME（仅 debug 构建传入）。
-  final bool debugBypass;
 
   /// 是否按设置启动 MCP server（测试关闭以避免绑定真实端口）。
   final bool enableMcp;
@@ -78,11 +74,8 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
   @override
   void initState() {
     super.initState();
-    final bridge = widget.bridge ?? MethodChannelContainerBridge();
-    _systemService = SystemService(
-      bridge: bridge,
-      debugBypassEnabled: widget.debugBypass,
-    );
+    final bridge = widget.bridge ?? DockerContainerBridge();
+    _systemService = SystemService(bridge: bridge);
     _containerService = ContainerService(bridge: bridge);
     _imageService = ImageService(
       bridge: bridge,
@@ -175,9 +168,7 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
           final blocking =
               !_skipToSettings &&
               switch (readiness.level) {
-                ReadinessLevel.notInstalled ||
-                ReadinessLevel.versionTooLow ||
-                ReadinessLevel.unsupportedMajor => true,
+                ReadinessLevel.notInstalled => true,
                 _ => false,
               };
           if (blocking) {

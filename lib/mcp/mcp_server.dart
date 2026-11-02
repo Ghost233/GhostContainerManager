@@ -116,14 +116,33 @@ class GcmMcpServer {
       auditor: auditor,
       options: McpServerOptions(
         instructions:
-            'Manages the local Apple container runtime on macOS. This server '
+            'Provides container management on macOS. The selected workflow uses '
+            'Docker-compatible interfaces and standard Docker Compose, independent '
+            'of the underlying engine. This server '
             'exposes exactly two tools: gcm_help lists every available '
             'management tool (grouped by domain, with parameters and risk '
             'annotations), and gcm_call invokes one of them by name. Always '
             'call gcm_help first to discover tool names and arguments. '
             'Every gcm_help response carries a catalogRevision hash: cache '
             'the catalog by it and re-fetch with gcm_help only when it '
-            'changes. Confirm with the user before calling tools whose catalog entry '
+            'changes. For containers belonging to a project, read or create a '
+            'project-maintained Docker Compose file and environment configuration to fix '
+            'runtime parameters. Validate with docker compose config and prefer '
+            'standard Docker Compose for declared services through compose_up. Direct '
+            'container_create and project_test remain available, but their effective '
+            'project runtime parameters must match that configuration; update it '
+            'before changing the environment. Use container_exec for work inside '
+            'an existing development container, or recreate it from the same verified '
+            'dependency image. Reuse matching toolchain, dependency images and '
+            'compilation caches. Prepare and verify SDKs and dependencies before '
+            'business builds; do not download or install SDKs during final image '
+            'assembly or startup. Keep temporary test data inside containers, '
+            'export required results before removal, and mount host paths only '
+            'for required persistence or input/output exchange. Track resource '
+            'ownership, dependencies and replacements per project; return a '
+            'cleanup plan for agent approval before deleting approved resources. '
+            'Do not forcibly stop running old containers to replace them. '
+            'Confirm with the user before calling tools whose catalog entry '
             'has destructiveHint: true.',
       ),
     );

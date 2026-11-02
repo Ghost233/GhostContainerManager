@@ -215,15 +215,14 @@ void main() {
     expect((image['config'] as Map)['env'], ['PATH=/usr/bin']);
   });
 
-  test('image_delete digest 寻址 → isError + INVALID_ARGUMENT + hint', () async {
+  test('image_delete malformed digest → INVALID_ARGUMENT', () async {
     await initialize();
     final result = await callTool('image_delete', <String, dynamic>{
-      'reference': 'alpine@sha256:${'a' * 64}',
+      'reference': 'alpine@sha256:invalid',
     });
     expect(result['isError'], isTrue);
     final structured = result['structuredContent'] as Map<String, dynamic>;
     expect((structured['error'] as Map)['code'], 'INVALID_ARGUMENT');
-    expect((structured['error'] as Map)['hint'], contains('name:tag'));
     expect(bridge.deletedImages, isEmpty);
   });
 
@@ -265,6 +264,6 @@ void main() {
     expect(result['isError'], isTrue);
     final structured = result['structuredContent'] as Map<String, dynamic>;
     expect((structured['error'] as Map)['code'], 'RUNTIME_UNAVAILABLE');
-    expect((structured['error'] as Map)['source'], 'xpc');
+    expect((structured['error'] as Map)['source'], 'cli');
   });
 }

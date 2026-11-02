@@ -1,8 +1,3 @@
-/// Scriptable fake of [ContainerBridge] for tests and no-runtime development.
-///
-/// Each getter returns the scripted value; CLI calls record their arguments
-/// in [calls] so tests can assert e.g. that system start always carries an
-/// explicit kernel-install flag.
 library;
 
 import 'dart:async';
@@ -10,59 +5,23 @@ import 'dart:async';
 import 'container_bridge.dart';
 
 class FakeContainerBridge implements ContainerBridge {
-  String? appRoot;
-  String defaultAppRootPath = '/app/root';
-  String? appRootReadError;
-  String? appRootValidationError;
-
-  @override
-  Future<String?> getAppRoot() async {
-    if (appRootReadError case final error?) {
-      throw BridgeCallException(error);
-    }
-    return appRoot;
-  }
-
-  @override
-  Future<String> defaultAppRoot() async => defaultAppRootPath;
-
-  @override
-  Future<void> setAppRoot(String? path) async {
-    appRoot = path;
-    appRootReadError = null;
-  }
-
-  @override
-  Future<void> validateAppRoot(String path) async {
-    if (appRootValidationError case final error?) {
-      throw BridgeCallException(error);
-    }
-  }
-
   /// Probed CLI path; null simulates "not installed".
-  String? binaryPath = '/opt/homebrew/bin/container';
+  String? binaryPath = '/opt/homebrew/bin/docker';
 
   BridgeCommandResult versionResult = _jsonOk(
-    '[{"appName":"container","version":"1.6.0","buildType":"release","commit":"unspecified"},'
-    '{"appName":"container-apiserver","version":"1.6.0","buildType":"release","commit":"unspecified"}]',
+    '{"Client":{"Version":"29.8.2"},"Server":{"Version":"28.1.0"}}',
   );
-
   BridgeCommandResult statusResult = _jsonOk(
-    '{"status":"running","paths":{"appRoot":"/app/root/","installRoot":"/install/root/"},'
-    '"resources":{"containersRunning":1,"containersTotal":2,"images":3}}',
+    '{"ContainersRunning":1,"Containers":2,"Images":3,"DockerRootDir":"/engine/data"}',
   );
-
-  BridgeCommandResult startResult = _ok;
-  BridgeCommandResult stopResult = _ok;
-  BridgeCommandResult kernelSetResult = _ok;
-
-  bool kernelPresent = true;
-  final Map<String, bool> kernelsByAppRoot = <String, bool>{};
 
   /// Scripted ping outcomes, consumed one per call; repeats the last entry
   /// when exhausted. Defaults to a single success.
   List<BridgePingResult> pingScript = [
-    const BridgePingResult.ok(apiServerVersion: '1.6.0', appRoot: '/app/root/'),
+    const BridgePingResult.ok(
+      apiServerVersion: '28.1.0',
+      appRoot: '/engine/data',
+    ),
   ];
 
   /// Recorded calls as "method arg1 arg2 ..." strings.
@@ -89,35 +48,6 @@ class FakeContainerBridge implements ContainerBridge {
   Future<BridgeCommandResult> systemStatus() async {
     calls.add('systemStatus');
     return statusResult;
-  }
-
-  @override
-  Future<BridgeCommandResult> systemStart({
-    required bool installKernel,
-    String? appRoot,
-  }) async {
-    calls.add(
-      'systemStart installKernel=$installKernel${appRoot == null ? '' : ' appRoot=$appRoot'}',
-    );
-    return startResult;
-  }
-
-  @override
-  Future<BridgeCommandResult> systemStop() async {
-    calls.add('systemStop');
-    return stopResult;
-  }
-
-  @override
-  Future<BridgeCommandResult> kernelSetRecommended({bool force = false}) async {
-    calls.add('kernelSetRecommended force=$force');
-    return kernelSetResult;
-  }
-
-  @override
-  Future<bool> kernelInstalled({String? appRoot}) async {
-    calls.add('kernelInstalled');
-    return kernelsByAppRoot[appRoot] ?? kernelPresent;
   }
 
   @override
@@ -441,7 +371,7 @@ class FakeContainerBridge implements ContainerBridge {
 
   // -- compose domain (T6) ---------------------------------------------------
 
-  /// Scripted `container compose --help` probe. Defaults to "installed"
+  /// Scripted `docker compose --help` probe. Defaults to "installed"
   /// (exit 0, up/down listed); set to a failure to simulate a missing plugin.
   BridgeCommandResult composeHelpResult = _jsonOk(
     'OVERVIEW: Bring a set of services up and down from a compose file.\n'

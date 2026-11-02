@@ -1,7 +1,3 @@
-/// Image domain models (T5, issue #20): list snapshots, inspect summaries,
-/// pull progress, and the name:tag addressing contract
-/// (docs/spec/mcp-tools.md §3.2; 寻址一律 name:tag，禁裸 digest——
-/// 上游 digest 寻址会误回退 docker.io，apple/container#1962)。
 library;
 
 import 'errors.dart';
@@ -10,22 +6,20 @@ import 'errors.dart';
 /// `name:tag` form (tag-less input defaults to `:latest`, matching upstream
 /// CLI behaviour).
 ///
-/// Digest addressing (`name@sha256:…` or a bare digest) is rejected with
-/// [GcmErrorCode.invalidArgument] — never pass digests to the runtime.
+/// Immutable Docker references and image IDs are accepted.
 ({String reference, bool defaultedTag}) validateImageReference(String raw) {
   final input = raw.trim();
   if (input.isEmpty) {
     throw GcmException(GcmErrorCode.invalidArgument, '镜像引用不能为空');
   }
+  if (RegExp(r'^(sha256:)?[0-9a-f]{12,64}$').hasMatch(input) ||
+      RegExp(r'^\S+@sha256:[0-9a-f]{64}$').hasMatch(input)) {
+    return (reference: input, defaultedTag: false);
+  }
   if (input.contains('@') ||
-      RegExp(r'^(sha256:)?[0-9a-f]{64}$').hasMatch(input)) {
-    throw GcmException(
-      GcmErrorCode.invalidArgument,
-      '不支持 digest 寻址：$input',
-      hint:
-          '请改用 name:tag 形式（如 alpine:3.19）；digest 寻址在上游存在'
-          '误解析风险（apple/container#1962）。',
-    );
+      input.startsWith('-') ||
+      RegExp(r'\s').hasMatch(input)) {
+    throw GcmException(GcmErrorCode.invalidArgument, '非法镜像引用：$input');
   }
   final split = splitImageReference(input);
   if (split.name.isEmpty || (split.tag != null && split.tag!.isEmpty)) {
@@ -46,6 +40,10 @@ import 'errors.dart';
 /// [tag] is null for untagged (dangling) references as reported by the
 /// runtime after a same-name rebuild.
 ({String name, String? tag}) splitImageReference(String reference) {
+  if (reference.contains('@') ||
+      RegExp(r'^(sha256:)?[0-9a-f]{12,64}$').hasMatch(reference)) {
+    return (name: reference, tag: null);
+  }
   final lastSlash = reference.lastIndexOf('/');
   final lastColon = reference.lastIndexOf(':');
   if (lastColon > lastSlash) {
@@ -57,7 +55,6 @@ import 'errors.dart';
   return (name: reference, tag: null);
 }
 
-/// One row of the image list (XPC `ClientImage.list()` → ImageDescription).
 class ImageInfo {
   const ImageInfo({
     required this.reference,
@@ -98,9 +95,6 @@ class ImageInfo {
   final String? digest;
   final String? mediaType;
 
-  /// Descriptor size in bytes. NOTE: this is the index-descriptor size
-  /// upstream, not the full on-disk size; accurate sizes are computed
-  /// lazily (orchard pattern). Good enough for list display.
   final int? sizeBytes;
   final DateTime? createdAt;
 
@@ -123,9 +117,6 @@ class ImageInfo {
   };
 }
 
-/// Config summary of one image (`image_inspect` output): OCI image config
-/// plus layer/platform counts. Rebuilt client-side from index + manifest +
-/// config blobs (orchard inspect pattern).
 class ImageInspection {
   const ImageInspection({
     required this.reference,
@@ -196,9 +187,6 @@ class ImageInspection {
       const <String>[];
 }
 
-/// One pull-progress sample, folded upstream to ~10 Hz at the bridge (the
-/// single throttle point shared by the UI event channel and MCP progress
-/// notifications — docs/research/bridge-flutter-apple-container.md).
 class ImagePullProgress {
   const ImagePullProgress({
     required this.pullId,

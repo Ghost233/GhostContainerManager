@@ -39,50 +39,34 @@ void main() {
         );
   });
 
-  testWidgets('未安装：pkg 步骤 + brew 次引导 + 复制按钮 + 重新检测', (tester) async {
+  testWidgets('Missing Docker CLI explains installation and rechecks', (
+    tester,
+  ) async {
     final (controller, _) = await _pumpOnboarding(
       tester,
       FakeContainerBridge()..binaryPath = null,
     );
-
-    expect(find.text('未安装 Apple container 运行时'), findsOneWidget);
-    expect(
-      find.textContaining('container-1.6.0-installer-signed.pkg'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('brew install container'), findsWidgets);
-    expect(find.text('复制官方下载页地址'), findsOneWidget);
-    expect(find.text('复制 brew 安装命令'), findsOneWidget);
-
-    await tester.tap(find.text('复制官方下载页地址'));
+    expect(find.text('配置 Docker 连接'), findsOneWidget);
+    expect(find.textContaining('DOCKER_HOST'), findsOneWidget);
+    expect(find.text(kContainerReleaseUrl), findsOneWidget);
+    await tester.tap(find.text('重新检查'));
     await tester.pumpAndSettle();
-    expect(find.text('已复制下载页地址'), findsOneWidget);
-
-    await tester.tap(find.text('重新检测'));
-    await tester.pumpAndSettle();
-    expect(controller.lastError, isNull);
+    expect(controller.readiness!.ready, isFalse);
   });
-
-  testWidgets('版本过低：显示检测值与基线 + 升级指引', (tester) async {
-    await _pumpOnboarding(
+  testWidgets('Independent Docker versions are accepted', (tester) async {
+    final (controller, _) = await _pumpOnboarding(
       tester,
       FakeContainerBridge()
         ..versionResult = const BridgeCommandResult(
           exitCode: 0,
           stdout:
-              '[{"appName":"container","version":"1.5.0"},'
-              '{"appName":"container-apiserver","version":"1.5.0"}]',
+              '{"Client":{"Version":"30.0.0"},"Server":{"Version":"28.0.0"}}',
           stderr: '',
         ),
     );
-
-    expect(find.text('运行时版本过低'), findsOneWidget);
-    expect(find.textContaining('1.5.0'), findsWidgets);
-    expect(find.textContaining('1.6.0'), findsWidgets);
-    expect(find.text('复制 pkg 升级命令'), findsOneWidget);
-    expect(find.text('复制 brew 升级命令'), findsOneWidget);
+    expect(controller.readiness!.ready, isTrue);
+    expect(find.textContaining('底层引擎不限'), findsOneWidget);
   });
-
   testWidgets('跳过出口回调生效', (tester) async {
     final (_, skipped) = await _pumpOnboarding(
       tester,

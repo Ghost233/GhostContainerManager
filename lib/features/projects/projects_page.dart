@@ -346,7 +346,7 @@ class _ListHeader extends StatelessWidget {
             child: Tooltip(
               message:
                   '实占合计：镜像层 blob 的磁盘块 + 该项目容器的运行时目录（含 '
-                  'initfs 系统盘、kernel 与稀疏 rootfs 的真实占用）。',
+                  '镜像共享层及容器可写层）。',
               child: Text('实占', style: style),
             ),
           ),

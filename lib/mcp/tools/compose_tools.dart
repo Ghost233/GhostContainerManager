@@ -1,12 +1,3 @@
-/// MCP `compose_*` tool handlers (docs/spec/mcp-tools.md §3.5) — orchard
-/// compose plugin passthrough (up/down) plus label-aggregated project
-/// listing.
-///
-/// The plugin emits human text, never JSON → up/down pass the raw output
-/// through verbatim (tail-truncated to the service cap).
-///
-/// Declarative metadata lives in lib/mcp/tool_catalog.dart (ADR-0001);
-/// this module only binds handlers to registry entries.
 library;
 
 import '../tool_catalog.dart';
@@ -88,7 +79,7 @@ void registerComposeTools(
       final result = await composeService.down(
         file: args['file'] as String?,
         projectName: args['projectName'] as String?,
-        keepNetworks: args['keepNetworks'] == true,
+        removeOrphans: args['removeOrphans'] == true,
       );
       return (
         data: result.toWire(),

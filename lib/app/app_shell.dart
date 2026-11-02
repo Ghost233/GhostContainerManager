@@ -1,9 +1,3 @@
-/// 三列工作台导航框架（ui-ia.md D1 方案 A；侧栏 224，9 项）。
-///
-/// 侧栏 = 资源类型 + 运行时 + 设置/MCP；内容区 = 当前页；
-/// 检查器列留给后续列表任务（T1b 仅占位）。
-/// 降级壳（onboarding.md §4 方案 C）：serviceNotRunning / kernelMissing
-/// 时主界面可进，内容区顶部显示横幅 + 一键修复。
 library;
 
 import 'dart:async';
@@ -202,8 +196,7 @@ class _AppShellState extends State<AppShell> {
 
   bool get _showDegradedBanner {
     final level = widget.readiness.readiness?.level;
-    return level == ReadinessLevel.serviceNotRunning ||
-        level == ReadinessLevel.kernelMissing;
+    return level == ReadinessLevel.serviceNotRunning;
   }
 
   Widget _page(BuildContext context) {
@@ -273,7 +266,6 @@ class _AppShellState extends State<AppShell> {
   }
 }
 
-/// 降级壳横幅：服务未运行 / 内核缺失时的一键修复入口（方案 C 非阻塞侧）。
 class _DegradedBanner extends StatelessWidget {
   const _DegradedBanner({
     required this.controller,
@@ -285,8 +277,6 @@ class _DegradedBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final level = controller.readiness!.level;
-    final kernelMissing = level == ReadinessLevel.kernelMissing;
     final theme = Theme.of(context);
 
     return Material(
@@ -303,7 +293,7 @@ class _DegradedBanner extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                kernelMissing ? '运行时缺少默认内核，容器无法启动' : '运行时未启动',
+                'Docker 端点不可达，请检查 context 或引擎状态',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSecondaryContainer,
                 ),
@@ -314,16 +304,8 @@ class _DegradedBanner extends StatelessWidget {
             FilledButton(
               onPressed: controller.busy
                   ? null
-                  : () => unawaited(
-                      kernelMissing
-                          ? controller.installKernel()
-                          : controller.startRuntime(),
-                    ),
-              child: Text(
-                controller.busy
-                    ? '正在处理…'
-                    : (kernelMissing ? '安装推荐内核' : '启动运行时'),
-              ),
+                  : () => unawaited(controller.refresh()),
+              child: Text(controller.busy ? '正在处理…' : '检查连接'),
             ),
           ],
         ),

@@ -45,7 +45,7 @@ void main() {
                 'hint',
                 'The process may still be running inside the container.',
               )
-              .having((error) => error.source, 'source', 'xpc'),
+              .having((error) => error.source, 'source', 'cli'),
         ),
       );
     },

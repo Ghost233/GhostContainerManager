@@ -1,5 +1,5 @@
 name: ghost_container_manager
-description: Apple container management tool for macOS.
+description: Docker-compatible container management tool for macOS.
 publish_to: none
 # 版本由人手动确定（docs/release-versioning.md）；发布入口拒绝 0.0.0。
 version: 1.1.1
@@ -11,8 +11,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  container_bridge:
-    path: packages/container_bridge
   maclauncher_sdk:
     git:
       url: https://github.com/Ghost233/MacLauncher.git

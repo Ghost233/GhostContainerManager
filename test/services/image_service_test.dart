@@ -72,37 +72,21 @@ void main() {
       expect(parsed.reference, '127.0.0.1:5056/myapp-go1:latest');
     });
 
-    test('rejects name@digest addressing with the #1962 hint', () {
-      try {
-        validateImageReference('alpine@sha256:${'a' * 64}');
-        fail('expected GcmException');
-      } on GcmException catch (e) {
-        expect(e.code, GcmErrorCode.invalidArgument);
-        expect(e.hint, contains('name:tag'));
-        expect(e.hint, contains('1962'));
-      }
+    test('accepts immutable name@digest references', () {
+      final ref = 'alpine@sha256:${'a' * 64}';
+      expect(validateImageReference(ref).reference, ref);
     });
-
-    test('rejects bare digests', () {
-      expect(
-        () => validateImageReference('sha256:${'a' * 64}'),
-        throwsA(
-          isA<GcmException>().having(
-            (e) => e.code,
-            'code',
-            GcmErrorCode.invalidArgument,
-          ),
-        ),
-      );
+    test('accepts image IDs', () {
+      final ref = 'sha256:${'a' * 64}';
+      expect(validateImageReference(ref).reference, ref);
     });
-
     test('rejects empty input', () {
       expect(() => validateImageReference('  '), throwsA(isA<GcmException>()));
     });
   });
 
   group('mapImageFailure', () {
-    test('marks every bridge failure branch as XPC-sourced', () {
+    test('marks every bridge failure branch as CLI-sourced', () {
       final cases = <(String, GcmErrorCode)>[
         ('connection invalid', GcmErrorCode.runtimeUnavailable),
         ('failed to decode response', GcmErrorCode.versionMismatch),
@@ -118,7 +102,7 @@ void main() {
           operation: 'test',
         );
         expect(error.code, code, reason: message);
-        expect(error.source, 'xpc', reason: message);
+        expect(error.source, 'cli', reason: message);
       }
     });
   });
@@ -170,7 +154,7 @@ void main() {
 
     test('validates the reference before touching the bridge', () async {
       await expectLater(
-        service.inspect('alpine@sha256:${'a' * 64}'),
+        service.inspect('invalid image reference'),
         throwsA(
           isA<GcmException>().having(
             (e) => e.code,

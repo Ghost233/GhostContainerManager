@@ -1,6 +1,6 @@
 # 工程规范
 
-通用要求迁移自 GhostModelDeck，已按 Apple container 管理工具调整。适用于 Dart、Flutter、原生桥接和检查脚本。产品方向见 [项目说明](project-scope.md)，具体行为由后续确认的规格和工单确定。
+通用要求迁移自 GhostModelDeck，已按 Docker 兼容引擎管理工具调整。适用于 Dart、Flutter、原生桥接和检查脚本。产品方向见 [项目说明](project-scope.md)，具体行为由后续确认的规格和工单确定。
 
 ## 编码与模块边界
 
@@ -23,7 +23,7 @@
 
 本仓库固定 Flutter **3.47.7**（`abaf9c523780a608bd46686fd5e53740a07077f8`）、Dart **3.13.5**。本机已核实该工具链，CI 使用同一版本。来源项目的 3.47.6 在本次迁移中提升至本机已安装版本。
 
-产品基线为 macOS 26、Apple Silicon，只构建和提供 arm64 产物。原生 API、Apple container 版本及系统权限须在实现桥接时按实际能力核验。框架支持的最低系统版本不能代替产品运行时要求。
+产品基线为 macOS 26、Apple Silicon，只构建和提供 arm64 产物。Docker CLI、Compose 与端点能力按实际操作核验，不限制底层引擎品牌或固定大版本。框架支持的最低系统版本不能代替产品运行时要求。
 
 应用、App.framework 和 FlutterMacOS.framework 均核对实际 Mach-O 架构。构建使用命令级开关：
 
@@ -33,7 +33,7 @@ FLUTTER_MACOS_ARM64_ONLY=true "$GCM_FLUTTER_SDK/bin/flutter" build macos --relea
 
 ## 准备与检查
 
-本机检查使用 macOS arm64 宿主机。应用管理 Apple container 不代表 Flutter 构建和测试需要容器；本次配置不创建或启动容器。
+本机检查使用 macOS arm64 宿主机。应用的 Flutter 检查在宿主机执行；真实 Docker 验证使用独立 Compose 项目，测试完成后只清理该项目资源。
 
 ```sh
 export GCM_FLUTTER_SDK="$HOME/flutter"
@@ -50,7 +50,7 @@ export GCM_TEST_PYTHON="$(command -v python3.14)"
 ./scripts/test-host.sh check
 ```
 
-`check` 执行格式检查、分析和完整 Flutter 测试。当前基础配置阶段没有 `lib/` 和 `test/`，应用检查会停止并说明缺少应用工程。
+`check` 执行格式检查、分析和完整 Flutter 测试。检查覆盖当前 `lib/`、`test/` 和 macOS 应用工程。
 
 ## 脚本与完成证据
 

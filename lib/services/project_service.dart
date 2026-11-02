@@ -14,6 +14,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../bridge/container_bridge.dart';
+import '../bridge/docker_container_bridge.dart';
 import 'app_constants.dart';
 import 'container_models.dart';
 import 'container_service.dart';
@@ -21,6 +22,7 @@ import 'errors.dart';
 import 'image_models.dart';
 import 'image_service.dart';
 import 'project_build_log_store.dart';
+import 'project_cleanup.dart';
 
 const projectLabel = 'com.ghost233.project';
 const projectTestRoleLabel = 'com.ghost233.role';
@@ -103,16 +105,19 @@ class ProjectDetails {
     required this.images,
     required this.containers,
     this.path,
+    this.resources = const [],
   });
 
   final String project;
   final String? path;
+  final List<Map<String, Object?>> resources;
   final List<ProjectImageStatus> images;
   final List<ContainerSnapshotInfo> containers;
 
   Map<String, Object?> toJson() => <String, Object?>{
     'project': project,
     if (path != null) 'path': path,
+    'resources': resources,
     'images': images.map((image) => image.toJson()).toList(growable: false),
     'containers': containers
         .map(
@@ -151,6 +156,7 @@ class ProjectBuildResult {
     this.testsPassed,
     this.output,
     this.failureLogPath,
+    this.resourceTracking,
   });
 
   final String project;
@@ -160,6 +166,7 @@ class ProjectBuildResult {
   final bool? testsPassed;
   final String? output;
   final String? failureLogPath;
+  final Map<String, Object?>? resourceTracking;
 
   Map<String, Object?> toJson() => <String, Object?>{
     'project': project,
@@ -168,6 +175,7 @@ class ProjectBuildResult {
     'exitCode': exitCode,
     'durationMs': durationMs,
     if (output != null) 'output': output,
+    if (resourceTracking != null) 'resourceTracking': resourceTracking,
   };
 }
 
@@ -348,6 +356,8 @@ class ProjectService {
     Iterable<String> projectPaths = const <String>[],
     String? buildLogDirectory,
     ProjectBuildLogStore? buildLogStore,
+    String? resourceDirectory,
+    ProjectCleanup? cleanup,
     DateTime Function()? clock,
   }) => ProjectService._(
     cli,
@@ -356,6 +366,8 @@ class ProjectService {
     projectPaths: projectPaths,
     buildLogDirectory: buildLogDirectory,
     buildLogStore: buildLogStore,
+    resourceDirectory: resourceDirectory,
+    cleanup: cleanup,
     clock: clock,
   );
 
@@ -366,8 +378,25 @@ class ProjectService {
     Iterable<String> projectPaths = const <String>[],
     String? buildLogDirectory,
     ProjectBuildLogStore? buildLogStore,
+    String? resourceDirectory,
+    ProjectCleanup? cleanup,
     DateTime Function()? clock,
   }) : _projectPaths = <String>{...projectPaths},
+       _cleanup =
+           cleanup ??
+           ProjectCleanup(
+             directory:
+                 resourceDirectory ??
+                 (buildLogDirectory == null
+                     ? _defaultBuildLogDirectory().replaceFirst(
+                         RegExp(r'/build-logs$'),
+                         '/project-resources',
+                       )
+                     : '$buildLogDirectory/project-resources'),
+             containers: _containerService,
+             images: _imageService,
+             clock: clock,
+           ),
        _clock = clock ?? DateTime.now,
        _buildLogStore =
            buildLogStore ??
@@ -381,6 +410,7 @@ class ProjectService {
   final ImageService _imageService;
   final Set<String> _projectPaths;
   final ProjectBuildLogStore _buildLogStore;
+  final ProjectCleanup _cleanup;
   final DateTime Function() _clock;
   final Map<String, DateTime> _lastBuildAt = <String, DateTime>{};
   final Set<String> _lockedProjects = <String>{};
@@ -428,6 +458,7 @@ class ProjectService {
     final names = <String>{
       ...known.where(_isValidPrefix),
       ...images.map((image) => image.project),
+      ...await _cleanup.projects(),
     };
     final result = <ProjectSummary>[];
     for (final name in names.toList()..sort()) {
@@ -464,7 +495,11 @@ class ProjectService {
     final projectImages = images
         .where((image) => image.project == resolved.project)
         .toList(growable: false);
-    if (resolved.path == null && members.isEmpty && projectImages.isEmpty) {
+    final resources = await _cleanup.resources(resolved.project);
+    if (resolved.path == null &&
+        members.isEmpty &&
+        projectImages.isEmpty &&
+        resources.isEmpty) {
       throw GcmException(
         GcmErrorCode.notFound,
         '项目 ${resolved.project} 不存在',
@@ -495,6 +530,7 @@ class ProjectService {
       path: resolved.path,
       images: statuses,
       containers: members,
+      resources: resources,
     );
   }
 
@@ -617,6 +653,9 @@ class ProjectService {
           testsPassed: testsPassed,
           output: failureOutput,
           failureLogPath: failureLogPath,
+          resourceTracking: testsPassed == false
+              ? null
+              : await _trackBuiltImage(resolved.project, image),
         );
       } catch (error) {
         if (!failureRecorded) {
@@ -673,6 +712,102 @@ class ProjectService {
     });
   }
 
+  Future<Map<String, Object?>> recordProjectResource({
+    String? project,
+    String? path,
+    required String kind,
+    required String reference,
+    required String purpose,
+    String? taskId,
+    List<String> dependsOn = const [],
+    List<String> supersedes = const [],
+    bool temporary = false,
+    bool resultsCollected = false,
+    bool keep = false,
+  }) async {
+    final resolved = await _resolveProject(project: project, path: path);
+    return _withProjectLock(
+      resolved.project,
+      () => _cleanup.record(
+        project: resolved.project,
+        kind: kind,
+        reference: reference,
+        purpose: purpose,
+        taskId: taskId,
+        dependsOn: dependsOn,
+        supersedes: supersedes,
+        temporary: temporary,
+        resultsCollected: resultsCollected,
+        keep: keep,
+      ),
+    );
+  }
+
+  Future<Map<String, Object?>> planProjectCleanup({
+    String? project,
+    String? path,
+  }) async {
+    final resolved = await _resolveProject(project: project, path: path);
+    return _withProjectLock(
+      resolved.project,
+      () => _cleanup.plan(resolved.project),
+    );
+  }
+
+  Future<Map<String, Object?>> executeProjectCleanup({
+    String? project,
+    String? path,
+    required String planId,
+    required List<String> approved,
+  }) async {
+    final resolved = await _resolveProject(project: project, path: path);
+    return _withProjectLock(
+      resolved.project,
+      () => _cleanup.execute(
+        project: resolved.project,
+        planId: planId,
+        approved: approved,
+      ),
+    );
+  }
+
+  Future<Map<String, Object?>> _trackBuiltImage(
+    String project,
+    String image,
+  ) async {
+    try {
+      final rows = await _cleanup.resources(project);
+      final live = (await _imageService.listImages())
+          .where((i) => i.reference == image)
+          .firstOrNull;
+      if (live?.digest == null) {
+        return {'warning': '构建完成，但未取得镜像内容摘要；未登记或生成清理候选'};
+      }
+      final existing = rows.where(
+        (r) => r['kind'] == 'image' && r['reference'] == image,
+      );
+      final current = existing
+          .where((r) => r['identity'] == live!.digest)
+          .firstOrNull;
+      final resource =
+          current ??
+          await _cleanup.record(
+            project: project,
+            kind: 'image',
+            reference: image,
+            purpose: 'project_build',
+            supersedes: existing.map((r) => r['id'] as String).toList(),
+          );
+      return {
+        'resource': resource,
+        'cleanupPlan': await _cleanup.plan(project),
+      };
+    } on Object catch (error) {
+      // Tracking cannot turn a successful runtime build into a failed build.
+      return {'warning': '构建成功，但资源关系登记或清理计划生成失败：$error'};
+    }
+  }
+
   Future<ProjectPublishResult> publishProject({
     String? project,
     String? path,
@@ -690,7 +825,7 @@ class ProjectService {
       await _runCli(<String>['image', 'tag', source, target]);
       try {
         final pushed = await _collectProcess(
-          _cli.start(<String>['image', 'push', '--scheme', 'http', target]),
+          _cli.start(<String>['image', 'push', target]),
           onProgress: onProgress,
           cancellation: cancellation,
         );
@@ -744,7 +879,7 @@ class ProjectService {
       final reference = _projectImage(resolved.project, name);
       final remote = '$localRegistryPrefix/$reference';
       final pulled = await _collectProcess(
-        _cli.start(<String>['image', 'pull', '--scheme', 'http', remote]),
+        _cli.start(<String>['image', 'pull', remote]),
         onProgress: onProgress,
         cancellation: cancellation,
       );
@@ -906,15 +1041,26 @@ class ProjectService {
   }
 
   Future<int> _diskUsageBytes() async {
-    final result = await _runCli(<String>['system', 'df', '--format', 'json']);
+    final result = await _runCli(<String>[
+      'system',
+      'df',
+      '--format',
+      '{{json .}}',
+    ]);
     try {
-      final bytes = _readDfSizes(jsonDecode(result.stdout));
+      Object? decoded;
+      try {
+        decoded = jsonDecode(result.stdout);
+      } on FormatException {
+        decoded = result.stdout.trim().split('\n').map(jsonDecode).toList();
+      }
+      final bytes = _readDfSizes(decoded);
       if (bytes == null) throw const FormatException('missing size');
       return bytes;
     } on FormatException catch (error) {
       throw GcmException(
         GcmErrorCode.internal,
-        '无法解析 container system df 的 JSON 输出。',
+        '无法解析 docker system df 的 JSON 输出。',
         source: 'cli',
         cause: error,
       );
@@ -935,9 +1081,17 @@ class ProjectService {
       return found ? total : null;
     }
     if (node is Map) {
-      for (final key in const <String>['sizeInBytes', 'sizeBytes', 'size']) {
+      for (final key in const <String>[
+        'Size',
+        'SizeRw',
+        'sizeInBytes',
+        'sizeBytes',
+        'size',
+      ]) {
         final raw = node[key];
-        final value = raw is num ? raw : num.tryParse('$raw');
+        final value = raw is num
+            ? raw
+            : num.tryParse('$raw') ?? DockerContainerBridge.parseSize('$raw');
         if (value != null && value >= 0) return value.toInt();
       }
       var total = 0;
@@ -1172,9 +1326,6 @@ class ProjectService {
         'Dockerfile 不存在：$path',
         hint: '请检查 path、context 或 dockerfile 参数。',
       );
-    }
-    if (await file.length() > 16 * 1024) {
-      _invalid('Dockerfile 超过 16 KiB 上限：$path', hint: '上游限制为 16 KiB。');
     }
   }
 

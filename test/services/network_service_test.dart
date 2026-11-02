@@ -10,18 +10,13 @@ import 'container_service_test.dart' show snapshotPayload;
 void main() {
   group('parseNetworkList', () {
     test('parses builtin + custom networks with subnets and labels', () {
-      final json =
-          '''
-[
-  ${'{"configuration":{"name":"default","mode":"nat","plugin":"builtin","labels":{"com.apple.container.resource.role":"builtin"}},"status":{"ipv4Subnet":"192.168.64.0/24","ipv4Gateway":"192.168.64.1"}}'},
-  {"configuration":{"name":"backend","mode":"nat","plugin":"builtin","labels":{}},"status":{}}
-]
-''';
+      const json =
+          '[{"Name":"bridge","Scope":"local","Driver":"bridge","Labels":{},"IPAM":{"Config":[{"Subnet":"192.168.64.0/24","Gateway":"192.168.64.1"}]}},{"Name":"backend","Scope":"local","Driver":"bridge","Labels":{},"IPAM":{"Config":[]}}]';
 
       final networks = NetworkService.parseNetworkList(json);
 
       expect(networks, hasLength(2));
-      expect(networks[0].id, 'default');
+      expect(networks[0].id, 'bridge');
       expect(networks[0].builtin, isTrue);
       expect(networks[0].subnet, '192.168.64.0/24');
       expect(networks[0].gateway, '192.168.64.1');
@@ -52,12 +47,7 @@ void main() {
       bridge = FakeContainerBridge()
         ..networkListResult = const BridgeCommandResult(
           exitCode: 0,
-          stdout:
-              '[{"configuration":{"name":"default","mode":"nat","plugin":"builtin",'
-              '"labels":{"com.apple.container.resource.role":"builtin"}},'
-              '"status":{"ipv4Subnet":"192.168.64.0/24","ipv4Gateway":"192.168.64.1"}},'
-              '{"configuration":{"name":"backend","mode":"nat","plugin":"builtin",'
-              '"labels":{}},"status":{}}]',
+          stdout: '[{"Name":"bridge","Scope":"local","Driver":"bridge","Labels":{},"IPAM":{"Config":[{"Subnet":"192.168.64.0/24","Gateway":"192.168.64.1"}]}},{"Name":"backend","Scope":"local","Driver":"bridge","Labels":{},"IPAM":{"Config":[]}}]',
           stderr: '',
         );
       service = NetworkService(
@@ -76,7 +66,7 @@ void main() {
       final networks = await service.listNetworks();
 
       expect(networks, hasLength(2));
-      expect(networks[0].id, 'default');
+      expect(networks[0].id, 'bridge');
       expect(networks[0].containerCount, 1);
       expect(networks[0].builtin, isTrue);
       expect(networks[1].id, 'backend');
@@ -87,7 +77,7 @@ void main() {
     test('getNetwork returns members; unknown id → NOT_FOUND', () async {
       bridge.containers = [snapshotPayload(id: 'web')];
 
-      final detail = await service.getNetwork('default');
+      final detail = await service.getNetwork('bridge');
       expect(detail.containers, hasLength(1));
       expect(detail.containers.single.containerId, 'web');
       expect(detail.containers.single.hostname, 'web');

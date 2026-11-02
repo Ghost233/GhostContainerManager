@@ -1,23 +1,12 @@
-# 项目方向
+# 项目范围
 
-GhostContainerManager 是 Apple container 的 macOS 管理工具。桌面技术采用 Flutter；Swift 原生桥接的接口和实现留给后续开发任务确认。当前只有基础配置和发布工具。
+GCM 管理 Docker 兼容端点。桌面 UI、MCP 和 MacLauncher 使用同一服务层；后端通过标准 Docker CLI 访问当前 context、`DOCKER_HOST`、TLS 与认证配置，标准 Docker Compose 负责项目编排。
 
-## Orchard 参考
+- 不绑定引擎品牌；不自动切换 context，不接管引擎的安装、启停、内核或数据目录。
+- 项目维护 Compose 文件及环境配置固定运行参数；直接 CLI/MCP 调用的有效参数应与配置一致。
+- 工具链、依赖镜像和编译缓存按输入复用。SDK 提前下载、校验和准备，最终组装及启动不下载 SDK。
+- 临时测试数据留在容器内；必要持久化或输入输出交换才挂载宿主目录。Docker 管理的持久依赖卷不作为临时测试目录。
+- 项目记录资源归属、依赖、替代和保留要求。创建替代资源不强制停止旧服务；清理先返回计划，由 agent 确认范围，执行时复核身份和引用。
+- 应用退出、客户端断连与资源删除分别处理。只有真实实现和验证后才声明对应能力。
 
-参考来源：[andrew-waters/orchard](https://github.com/andrew-waters/orchard)，查阅于 2026-10-23。
-
-Orchard 是 Apple container 的原生管理界面。其主要管理路径通过 `ContainerAPIClient` 和 XPC 获取结构化数据；系统启停等部分操作使用 CLI。Compose 来自独立的 `andrew-waters/compose` 包。这些是参考项目的实现方式，本仓库尚未选择具体桥接接口。
-
-## 本仓库的边界
-
-- 运行时使用 Apple container；桌面界面、MacLauncher SDK 和原生桥接复用同一管理入口。
-- 只有实际实现后，才声明启动、停止、状态和日志能力。连接启动器或 CLI 命令受理不等于容器已经就绪。
-- 区分应用创建的资源与用户已有的容器、镜像、网络和挂载。应用退出、SDK 断连和业务资源回收分别定义。
-- 本机编排使用 Apple container 原生命令及 `andrew-waters/compose`。Docker socket/API 依赖须单独适配。
-- 本地持久化采用用户指定目录的绑定挂载。具体目录、权限和清理行为在功能任务中确定。
-
-## 开发前待确认
-
-首期功能、页面、容器及 Compose 的管理范围；Swift API 与 CLI 的分工；权限和系统要求；资源所有权；MacLauncher 服务粒度；退出与后台运行行为。
-
-后续按确认的规格初始化 Flutter macOS 工程、实现功能并补充测试。Orchard 的功能列表和验收记录不构成本仓库的完成范围。
+应用平台基线为 macOS 26、arm64；端点可运行于本机或远程。宿主机文件路径不能当成远程引擎的数据目录。

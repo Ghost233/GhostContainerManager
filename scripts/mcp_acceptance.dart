@@ -225,11 +225,11 @@ class StdioChannel extends Channel {
 
   Future<void> _ensureStarted() async {
     if (_process != null) return;
-    final process = await Process.start(
-      dartExe,
-      <String>['lib/mcp/stdio_proxy.dart', '--port', '$port'],
-      workingDirectory: repo,
-    );
+    final process = await Process.start(dartExe, <String>[
+      'lib/mcp/stdio_proxy.dart',
+      '--port',
+      '$port',
+    ], workingDirectory: repo);
     _process = process;
     _lines = process.stdout
         .transform(utf8.decoder)
@@ -382,10 +382,7 @@ Future<void> _chain(Channel channel, String label, Check check) async {
 Future<void> _concurrency(Channel channel, String label, Check check) async {
   await channel.initialize();
   final results = await Future.wait(
-    List.generate(
-      5,
-      (_) => channel.callStructured('system_status', const {}),
-    ),
+    List.generate(5, (_) => channel.callStructured('system_status', const {})),
   );
   final canonical = results.map(jsonEncode).toSet();
   check(
@@ -472,37 +469,43 @@ Future<void> _pagination(Channel channel, String label, Check check) async {
   final mcpImages = await walk('image_list', 'images', 'reference');
   final mcpContainers = await walk('container_list', 'containers', 'name');
 
-  // Cross-check against the container CLI (GUI 对照的 CLI 等价物)。集合级
-  // 核对：MCP（XPC）与 CLI 对同一运行时的视图必须互相解释得通。
-  // 已知差异：CLI 的 `image ls` 会隐藏 Apple 内部基础设施镜像（builder
-  // shim、vminit），XPC 视图包含它们——允许 MCP 多出且仅多出这类镜像。
-  final cliImages = await Process.run('container', <String>[
+  // Cross-check the same Docker endpoint without brand-specific exclusions.
+  final cliImages = await Process.run('docker', [
     'image',
     'ls',
+    '--all',
+    '--no-trunc',
     '--format',
-    'json',
+    '{{json .}}',
   ]);
-  final cliContainers = await Process.run('container', <String>[
+  final cliContainers = await Process.run('docker', [
+    'container',
     'ls',
-    '-a',
+    '--all',
     '--format',
-    'json',
+    '{{.Names}}',
   ]);
   if (cliImages.exitCode == 0 && cliContainers.exitCode == 0) {
-    bool isInternalImage(String ref) =>
-        ref.startsWith('ghcr.io/apple/container-builder-shim/') ||
-        ref.startsWith('ghcr.io/apple/containerization/vminit');
+    final rows = (cliImages.stdout as String)
+        .trim()
+        .split('\n')
+        .where((s) => s.isNotEmpty)
+        .map((s) => jsonDecode(s) as Map);
     final cliImageSet = <String>{
-      for (final i in jsonDecode(cliImages.stdout as String) as List)
-        ((i as Map)['configuration'] as Map)['name'] as String,
+      for (final row in rows)
+        if (row['Repository'] == '<none>' || row['Tag'] == '<none>')
+          row['ID'] as String
+        else
+          '${row['Repository']}:${row['Tag']}',
     };
-    final cliContainerSet = <String>{
-      for (final c in jsonDecode(cliContainers.stdout as String) as List)
-        ((c as Map)['configuration'] as Map)['id'] as String,
-    };
+    final cliContainerSet = (cliContainers.stdout as String)
+        .trim()
+        .split('\n')
+        .where((s) => s.isNotEmpty)
+        .toSet();
     final missingImages = cliImageSet.difference(mcpImages);
     final extraImages = mcpImages.difference(cliImageSet);
-    final unexplainedExtra = extraImages.where((r) => !isInternalImage(r));
+    final unexplainedExtra = extraImages;
     check(
       label,
       'cli-cross-check.images',

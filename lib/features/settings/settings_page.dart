@@ -3,7 +3,6 @@ library;
 
 import 'dart:async';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -64,74 +63,12 @@ class _RuntimeDirectorySection extends StatelessWidget {
     required this.controller,
     this.selectDirectory,
   });
-
   final ReadinessController controller;
   final Future<String?> Function()? selectDirectory;
-
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-    listenable: controller,
-    builder: (context, _) => SectionCard(
-      title: '运行时数据目录',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('下次启动使用'),
-          Text(
-            controller.appRootLoaded
-                ? controller.savedAppRoot ?? '使用默认设置'
-                : '无法读取设置',
-          ),
-          const SizedBox(height: 8),
-          const Text('当前运行时数据目录'),
-          Text(controller.statusData?.appRoot ?? '运行时未运行或路径不可用'),
-          const SizedBox(height: 8),
-          const Text('修改将在下次启动运行时生效；选择新目录不会迁移已有数据。'),
-          if (controller.lastError != null)
-            Text(
-              controller.lastError!.message,
-              style: TextStyle(color: GcmColors.stateFailed(context)),
-            ),
-          Wrap(
-            spacing: 12,
-            children: [
-              OutlinedButton(
-                onPressed: controller.busy
-                    ? null
-                    : () async {
-                        try {
-                          final path =
-                              await (selectDirectory?.call() ??
-                                  getDirectoryPath(
-                                    confirmButtonText: '选择数据目录',
-                                  ));
-                          if (path != null && context.mounted) {
-                            await controller.setAppRoot(path);
-                          }
-                        } catch (error) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('无法选择数据目录：$error')),
-                            );
-                          }
-                        }
-                      },
-                child: const Text('选择目录'),
-              ),
-              TextButton(
-                onPressed:
-                    controller.busy ||
-                        (controller.appRootLoaded &&
-                            controller.savedAppRoot == null)
-                    ? null
-                    : () => unawaited(controller.setAppRoot(null)),
-                child: const Text('恢复默认'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    ),
+  Widget build(BuildContext context) => const SectionCard(
+    title: 'Docker 连接',
+    child: Text('沿用当前 Docker context、DOCKER_HOST 与 TLS 配置。数据目录由所选引擎管理。'),
   );
 }
 

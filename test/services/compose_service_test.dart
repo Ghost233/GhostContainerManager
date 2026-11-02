@@ -47,43 +47,46 @@ void main() {
   });
 
   group('listProjects', () {
-    test('aggregates by com.compose.project with service names', () async {
-      bridge.containers = [
-        snapshotPayload(
-          id: 'shop-web',
-          labels: const {
-            'com.compose.project': 'shop',
-            'com.compose.service': 'web',
-          },
-        ),
-        snapshotPayload(
-          id: 'shop-db',
-          status: 'stopped',
-          startedAt: null,
-          labels: const {
-            'com.compose.project': 'shop',
-            'com.compose.service': 'db',
-          },
-        ),
-        snapshotPayload(
-          id: 'blog-web',
-          labels: const {'com.compose.project': 'blog'},
-        ),
-        snapshotPayload(id: 'plain'), // no compose labels
-      ];
+    test(
+      'aggregates by com.docker.compose.project with service names',
+      () async {
+        bridge.containers = [
+          snapshotPayload(
+            id: 'shop-web',
+            labels: const {
+              'com.docker.compose.project': 'shop',
+              'com.docker.compose.service': 'web',
+            },
+          ),
+          snapshotPayload(
+            id: 'shop-db',
+            status: 'stopped',
+            startedAt: null,
+            labels: const {
+              'com.docker.compose.project': 'shop',
+              'com.docker.compose.service': 'db',
+            },
+          ),
+          snapshotPayload(
+            id: 'blog-web',
+            labels: const {'com.docker.compose.project': 'blog'},
+          ),
+          snapshotPayload(id: 'plain'), // no compose labels
+        ];
 
-      final projects = await service.listProjects();
+        final projects = await service.listProjects();
 
-      expect(projects, hasLength(2));
-      final shop = projects.firstWhere((p) => p.name == 'shop');
-      expect(shop.services, hasLength(2));
-      expect(shop.runningCount, 1);
-      expect(
-        shop.services.map((s) => s.serviceName),
-        containsAll(['web', 'db']),
-      );
-      expect(projects.firstWhere((p) => p.name == 'blog').runningCount, 1);
-    });
+        expect(projects, hasLength(2));
+        final shop = projects.firstWhere((p) => p.name == 'shop');
+        expect(shop.services, hasLength(2));
+        expect(shop.runningCount, 1);
+        expect(
+          shop.services.map((s) => s.serviceName),
+          containsAll(['web', 'db']),
+        );
+        expect(projects.firstWhere((p) => p.name == 'blog').runningCount, 1);
+      },
+    );
   });
 
   group('up', () {
@@ -135,8 +138,8 @@ void main() {
       expect(
         bridge.calls,
         contains(
-          'composeRun up --file /tmp/compose.yaml --project-name shop '
-          '--dry-run --pull missing',
+          'composeRun --file /tmp/compose.yaml --project-name shop '
+          '--dry-run up --detach --pull missing',
         ),
       );
     });
@@ -156,7 +159,7 @@ void main() {
               .having(
                 (e) => e.hint,
                 'hint',
-                contains('/usr/local/libexec/container-plugins/'),
+                contains('docker compose version'),
               ),
         ),
       );
@@ -217,12 +220,12 @@ void main() {
       );
     });
 
-    test('projectName + keepNetworks map to plugin arguments', () async {
-      await service.down(projectName: 'shop', keepNetworks: true);
+    test('projectName + removeOrphans map to plugin arguments', () async {
+      await service.down(projectName: 'shop', removeOrphans: true);
 
       expect(
         bridge.calls,
-        contains('composeRun down --project-name shop --keep-networks'),
+        contains('composeRun --project-name shop down --remove-orphans'),
       );
     });
   });

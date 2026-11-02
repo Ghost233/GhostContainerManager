@@ -49,7 +49,7 @@ import '../services/container_service_test.dart' show snapshotPayload;
 ///   ImageService.pull 的 cancel 语义注释），查询途径：镜像用
 ///   image_list/image_inspect，容器用 container_inspect。
 /// - exec 超时=放弃等待，进程可能仍在容器内运行（上游
-///   apple/container#1941，exec 进程无可靠 kill 路由）；TIMEOUT 错误的
+///   Docker exec timeout，exec 进程无可靠 kill 路由）；TIMEOUT 错误的
 ///   hint 必须带容器 id 对应的查询方法（下方超时测试钉住）。
 void main() {
   late FakeContainerBridge bridge;
@@ -60,7 +60,7 @@ void main() {
 
   setUp(() {
     bridge = FakeContainerBridge()..containers = [snapshotPayload(id: 'web')];
-    systemService = SystemService(bridge: bridge, pingInterval: Duration.zero);
+    systemService = SystemService(bridge: bridge);
     containerService = ContainerService(bridge: bridge);
     imageService = ImageService(
       bridge: bridge,

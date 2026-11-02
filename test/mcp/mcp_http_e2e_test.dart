@@ -21,7 +21,7 @@ void main() {
   setUp(() async {
     bridge = FakeContainerBridge();
     server = GcmMcpServer(
-      systemService: SystemService(bridge: bridge, pingInterval: Duration.zero),
+      systemService: SystemService(bridge: bridge),
       containerService: ContainerService(bridge: bridge),
       port: 0,
       enableJsonResponse: true,
@@ -138,7 +138,7 @@ void main() {
     expect(structured['level'], 'ready');
     expect(structured['ready'], isTrue);
     expect(structured['versionSupported'], isTrue);
-    expect(structured['cliVersion'], '1.6.0');
+    expect(structured['cliVersion'], '29.8.2');
     expect((structured['resources'] as Map)['images'], 3);
     // 成功路径 content 是人工一行摘要，不是整串 JSON。
     final summary = (result['content'] as List).single['text'] as String;
@@ -146,178 +146,148 @@ void main() {
     expect(summary, isNot(startsWith('{')));
   });
 
-  test('system_stop 失败映射为 isError + 错误码（RUNTIME_UNAVAILABLE）', () async {
-    bridge.stopResult = const BridgeCommandResult(
-      exitCode: 1,
-      stdout: '',
-      stderr: 'XPC connection invalid',
-    );
-    final (sessionId, protocolVersion) = await initialize();
-    final (status, body, _) = await rpc(
-      <String, dynamic>{
-        'jsonrpc': '2.0',
-        'id': 4,
-        'method': 'tools/call',
-        'params': <String, dynamic>{
-          'name': 'gcm_call',
-          'arguments': <String, dynamic>{
-            'tool': 'system_stop',
-            'arguments': <String, dynamic>{},
-          },
-        },
-      },
-      sessionId: sessionId,
-      protocolVersion: protocolVersion,
-    );
-    expect(status, 200);
-    final result = body!['result'] as Map<String, dynamic>;
-    expect(result['isError'], isTrue);
-    final structured = result['structuredContent'] as Map<String, dynamic>;
-    final error = structured['error'] as Map<String, dynamic>;
-    expect(error['code'], 'RUNTIME_UNAVAILABLE');
-    expect(error['source'], 'cli');
-  });
-
-  test('system_stop 成功：返回 stopped 与容器计数', () async {
-    bridge.containers = <Map<String, Object?>>[
-      <String, Object?>{'status': 'running'},
-      <String, Object?>{'status': 'stopped'},
-    ];
-    final (sessionId, protocolVersion) = await initialize();
-    final (status, body, _) = await rpc(
-      <String, dynamic>{
-        'jsonrpc': '2.0',
-        'id': 4,
-        'method': 'tools/call',
-        'params': <String, dynamic>{
-          'name': 'gcm_call',
-          'arguments': <String, dynamic>{
-            'tool': 'system_stop',
-            'arguments': <String, dynamic>{},
-          },
-        },
-      },
-      sessionId: sessionId,
-      protocolVersion: protocolVersion,
-    );
-    expect(status, 200);
-    final result = body!['result'] as Map<String, dynamic>;
-    expect(result['isError'], isNot(true));
-    final structured = result['structuredContent'] as Map<String, dynamic>;
-    expect(structured['status'], 'stopped');
-    expect(structured['containersStopped'], 1);
-    final summary = (result['content'] as List).single['text'] as String;
-    expect(summary, contains('连带停止 1 个'));
-  });
-
-  test('system_start 调用桥接并返回就绪级别', () async {
-    final (sessionId, protocolVersion) = await initialize();
-    final (status, body, _) = await rpc(
-      <String, dynamic>{
-        'jsonrpc': '2.0',
-        'id': 5,
-        'method': 'tools/call',
-        'params': <String, dynamic>{
-          'name': 'gcm_call',
-          'arguments': <String, dynamic>{
-            'tool': 'system_start',
-            'arguments': <String, dynamic>{'installKernel': true},
-          },
-        },
-      },
-      sessionId: sessionId,
-      protocolVersion: protocolVersion,
-    );
-    expect(status, 200);
-    final result = body!['result'] as Map<String, dynamic>;
-    final structured = result['structuredContent'] as Map<String, dynamic>;
-    expect(structured['level'], 'ready');
-    expect(structured['status'], 'running');
-    expect(structured['kernelInstalled'], isTrue);
-    expect(structured['startupMs'], isA<int>());
-    expect(bridge.calls, contains('systemStart installKernel=true'));
-    final summary = (result['content'] as List).single['text'] as String;
-    expect(summary, contains('运行时已启动'));
-  });
-
-  test('MCP 启动使用保存的目录且不允许调用者覆盖', () async {
-    bridge.appRoot = '/Volumes/data/container';
-    bridge.statusResult = const BridgeCommandResult(
-      exitCode: 0,
-      stdout: '{"status":"stopped"}',
-      stderr: '',
-    );
-    bridge.pingScript = [
-      const BridgePingResult.ok(
-        apiServerVersion: '1.6.0',
-        appRoot: 'file:///Volumes/data/container/',
-      ),
-    ];
-    final (sessionId, protocolVersion) = await initialize();
-
-    Future<Map<String, dynamic>> start(Map<String, dynamic> arguments) async {
-      final (_, body, _) = await rpc(
-        <String, dynamic>{
-          'jsonrpc': '2.0',
-          'id': 8,
-          'method': 'tools/call',
-          'params': <String, dynamic>{
-            'name': 'gcm_call',
-            'arguments': <String, dynamic>{
-              'tool': 'system_start',
-              'arguments': arguments,
-            },
-          },
-        },
-        sessionId: sessionId,
-        protocolVersion: protocolVersion,
-      );
-      return body!['result'] as Map<String, dynamic>;
-    }
-
-    final rejected = await start(<String, dynamic>{'appRoot': '/other'});
-    expect(rejected['isError'], isTrue);
-    expect(
-      bridge.calls.where((call) => call.startsWith('systemStart')),
-      isEmpty,
-    );
-    final result = await start(<String, dynamic>{'installKernel': false});
-    expect(result['isError'], isNot(true));
-    expect(
-      bridge.calls,
-      contains(
-        'systemStart installKernel=false appRoot=/Volumes/data/container',
-      ),
-    );
-    expect(bridge.appRoot, '/Volumes/data/container');
-  });
-
-  test('MCP 恢复默认后拒绝使用旧目录运行的服务', () async {
-    bridge.defaultAppRootPath = '/default/root';
-    bridge.appRoot = null;
+  test('Docker lifecycle HTTP contract 1', () async {
     final (sessionId, protocolVersion) = await initialize();
     final (_, body, _) = await rpc(
-      <String, dynamic>{
+      {
         'jsonrpc': '2.0',
-        'id': 9,
+        'id': 8,
         'method': 'tools/call',
-        'params': <String, dynamic>{
+        'params': {
           'name': 'gcm_call',
-          'arguments': <String, dynamic>{
+          'arguments': {'tool': 'system_stop', 'arguments': {}},
+        },
+      },
+      sessionId: sessionId,
+      protocolVersion: protocolVersion,
+    );
+    final result = body!['result'] as Map;
+    expect(result['isError'], isTrue);
+    expect(
+      (result['structuredContent'] as Map)['error']['code'],
+      'INVALID_ARGUMENT',
+    );
+    expect(
+      bridge.calls.where(
+        (c) => c.startsWith('systemStart') || c.startsWith('systemStop'),
+      ),
+      isEmpty,
+    );
+  });
+  test('Docker lifecycle HTTP contract 2', () async {
+    final (sessionId, protocolVersion) = await initialize();
+    final (_, body, _) = await rpc(
+      {
+        'jsonrpc': '2.0',
+        'id': 8,
+        'method': 'tools/call',
+        'params': {
+          'name': 'gcm_call',
+          'arguments': {'tool': 'system_stop', 'arguments': {}},
+        },
+      },
+      sessionId: sessionId,
+      protocolVersion: protocolVersion,
+    );
+    final result = body!['result'] as Map;
+    expect(result['isError'], isTrue);
+    expect(
+      (result['structuredContent'] as Map)['error']['code'],
+      'INVALID_ARGUMENT',
+    );
+    expect(
+      bridge.calls.where(
+        (c) => c.startsWith('systemStart') || c.startsWith('systemStop'),
+      ),
+      isEmpty,
+    );
+  });
+  test('Docker lifecycle HTTP contract 3', () async {
+    final (sessionId, protocolVersion) = await initialize();
+    final (_, body, _) = await rpc(
+      {
+        'jsonrpc': '2.0',
+        'id': 8,
+        'method': 'tools/call',
+        'params': {
+          'name': 'gcm_call',
+          'arguments': {'tool': 'system_start', 'arguments': {}},
+        },
+      },
+      sessionId: sessionId,
+      protocolVersion: protocolVersion,
+    );
+    final result = body!['result'] as Map;
+    expect(result['isError'], isNot(true));
+    expect((result['structuredContent'] as Map)['ready'], isTrue);
+    expect(
+      bridge.calls.where(
+        (c) => c.startsWith('systemStart') || c.startsWith('systemStop'),
+      ),
+      isEmpty,
+    );
+  });
+  test('Docker lifecycle HTTP contract 4', () async {
+    final (sessionId, protocolVersion) = await initialize();
+    final (_, body, _) = await rpc(
+      {
+        'jsonrpc': '2.0',
+        'id': 8,
+        'method': 'tools/call',
+        'params': {
+          'name': 'gcm_call',
+          'arguments': {
             'tool': 'system_start',
-            'arguments': <String, dynamic>{'installKernel': false},
+            'arguments': {'appRoot': '/host'},
           },
         },
       },
       sessionId: sessionId,
       protocolVersion: protocolVersion,
     );
-    final result = body!['result'] as Map<String, dynamic>;
+    final result = body!['result'] as Map;
     expect(result['isError'], isTrue);
-    final payload = result['structuredContent'] as Map<String, dynamic>;
-    expect((payload['error'] as Map<String, dynamic>)['code'], 'CONFLICT');
     expect(
-      bridge.calls.where((call) => call.startsWith('systemStart')),
+      (result['structuredContent'] as Map)['error']['code'],
+      'INVALID_ARGUMENT',
+    );
+    expect(
+      bridge.calls.where(
+        (c) => c.startsWith('systemStart') || c.startsWith('systemStop'),
+      ),
+      isEmpty,
+    );
+  });
+  test('Docker lifecycle HTTP contract 5', () async {
+    bridge.statusResult = const BridgeCommandResult(
+      exitCode: 1,
+      stdout: '',
+      stderr: 'Cannot connect',
+    );
+    final (sessionId, protocolVersion) = await initialize();
+    final (_, body, _) = await rpc(
+      {
+        'jsonrpc': '2.0',
+        'id': 8,
+        'method': 'tools/call',
+        'params': {
+          'name': 'gcm_call',
+          'arguments': {'tool': 'system_start', 'arguments': {}},
+        },
+      },
+      sessionId: sessionId,
+      protocolVersion: protocolVersion,
+    );
+    final result = body!['result'] as Map;
+    expect(result['isError'], isTrue);
+    expect(
+      (result['structuredContent'] as Map)['error']['code'],
+      'RUNTIME_UNAVAILABLE',
+    );
+    expect(
+      bridge.calls.where(
+        (c) => c.startsWith('systemStart') || c.startsWith('systemStop'),
+      ),
       isEmpty,
     );
   });

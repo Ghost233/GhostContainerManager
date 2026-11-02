@@ -15,7 +15,7 @@ void main() {
   GcmMcpServer makeServer({String? appVersion}) {
     final bridge = FakeContainerBridge();
     return GcmMcpServer(
-      systemService: SystemService(bridge: bridge, pingInterval: Duration.zero),
+      systemService: SystemService(bridge: bridge),
       containerService: ContainerService(bridge: bridge),
       port: 0,
       enableJsonResponse: true,

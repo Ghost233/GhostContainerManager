@@ -15,11 +15,11 @@
 | --- | --- | --- |
 | 应用级 | `AppCallbacks` 全量（窗口接管、入口接管、版本查询） | 由 SDK 框架承担，无业务语义风险 |
 | 服务级 onStatus | ✅ 注册 | 只读，映射到管理入口的实际观测状态（§3.3） |
-| 服务级 onLogs | ✅ 注册 | 只读批次，按 `LogQuery` 返回最近 N 条；底层映射容器日志读取（XPC FileHandle 路径） |
+| 服务级 onLogs | ✅ 注册 | 只读批次，按 `LogQuery` 返回最近 N 条；底层映射容器日志读取（Docker CLI FileHandle 路径） |
 | 服务级 onStart | ✅ 注册 | 映射到容器 start；语义简单明确 |
 | 服务级 onRecycle | ✅ 注册，语义按 §2 推荐方案 | SDK 无 onStop 回调，启动器侧的"重启"诉求由 recycle 承载 |
 
-**服务粒度推荐：一个容器 = 一个 MacLauncher 服务**。服务 ID 用容器名（Apple container 的容器标识），显示名直接用容器名。Compose 项目不注册为服务（其成员容器各自注册）；镜像、网络、挂载不是可"启动"的对象，不注册。
+**服务粒度推荐：一个容器 = 一个 MacLauncher 服务**。服务 ID 用容器名（Docker 兼容引擎 的容器标识），显示名直接用容器名。Compose 项目不注册为服务（其成员容器各自注册）；镜像、网络、挂载不是可"启动"的对象，不注册。
 
 **注册范围推荐：只注册 App 创建的资源**（带 `com.ghost233.*` label 的容器）。用户已有的容器默认不出现在启动器里——理由：E04 资源所有权（启动器的 start/recycle 是写操作，对用户既有资源应由用户显式请求而非默认暴露）；同时避免启动器被几十个旧容器淹没。**v1 裁剪拍板（task-31）：逐容器加入开关延至 v2；v1 = `com.ghost233.*` 容器自动注册，并随 ContainerService 快照动态增删**（建连后新建/删除的容器同步注册/注销，不是一次性快照）。
 
@@ -87,7 +87,7 @@ MacLauncher ──SDK(固定 268f88ef)──► MacLauncherBridge（Dart 适配�
                                  管理入口 Service layer（容器/镜像/系统…唯一业务入口）
                                         │  同一层同时服务：Flutter UI、内置 MCP server
                                         ▼
-                                 Swift 桥接（XPC 主 / CLI 补，仅平台适配）
+                                 Swift 桥接（Docker CLI 主 / CLI 补，仅平台适配）
 ```
 
 - **新增模块**：`MacLauncherBridge`（Dart），是 SDK 与管理入口之间唯一的适配层；SDK 类型不外泄到 Service layer（E02：I/O 边界先校验转换）。
