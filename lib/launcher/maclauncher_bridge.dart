@@ -6,6 +6,7 @@ import 'package:maclauncher_sdk/maclauncher_sdk.dart';
 import '../services/container_logs_parser.dart';
 import '../services/container_models.dart';
 import '../services/container_service.dart';
+import '../services/app_update_service.dart';
 
 /// Builds the pinned MacLauncher SDK client.
 ///
@@ -15,6 +16,7 @@ typedef MacLauncherSdkConnector = MacLauncherSdk Function({
   required String projectName,
   required SdkEntry? entry,
   required Map<String, ServiceCallbacks> services,
+  required AppCallbacks app,
 });
 
 /// Exposes managed containers as MacLauncher services.
@@ -22,10 +24,24 @@ class MacLauncherBridge {
   MacLauncherBridge({
     required ContainerService containers,
     MacLauncherSdkConnector? sdkConnector,
-  }) : this._(containers, sdkConnector);
+    AppUpdateService? updates,
+    Future<void> Function()? onOpenWindow,
+  }) : this._(
+         containers,
+         sdkConnector,
+         updates ?? AppUpdateService(),
+         onOpenWindow,
+       );
 
-  MacLauncherBridge._(this._containers, MacLauncherSdkConnector? sdkConnector)
-    : _sdkConnector = sdkConnector ?? _connectSdk;
+  MacLauncherBridge._(
+    this._containers,
+    MacLauncherSdkConnector? sdkConnector,
+    this._updates,
+    this._onOpenWindow,
+  ) : _sdkConnector = sdkConnector ?? _connectSdk;
+
+  final AppUpdateService _updates;
+  final Future<void> Function()? _onOpenWindow;
 
   static const projectId = 'com.ghost233.ghostcontainermanager';
   static const projectName = 'Ghost Container Manager';
@@ -57,9 +73,13 @@ class MacLauncherBridge {
     try {
       if (_sdk != null) return;
 
-      final snapshots = await _containers.listContainers(
-        const ContainerQuery(),
-      );
+      List<ContainerSnapshotInfo> snapshots;
+      try {
+        snapshots = await _containers.listContainers(const ContainerQuery());
+      } catch (_) {
+        // App updates and reopening stay available while Docker is offline.
+        snapshots = const [];
+      }
       if (_disposed) throw StateError('MacLauncherBridge is disposed');
       await _replaceRegistrations(snapshots);
       if (_disposed) throw StateError('MacLauncherBridge is disposed');
@@ -132,8 +152,32 @@ class MacLauncherBridge {
       projectName: projectName,
       entry: SdkEntry.currentAppBundle() ?? SdkEntry.currentExecutable(),
       services: services,
+      app: AppCallbacks(
+        onOpenWindow: _onOpenWindow,
+        onVersionStatus: _versionStatus,
+      ),
     );
     _registeredServiceIds = serviceIds;
+  }
+
+  Future<VersionStatus> _versionStatus() async {
+    try {
+      final info = await _updates.check();
+      return VersionStatus(
+        state: VersionQueryState.success,
+        currentVersion: info.currentVersion,
+        latestVersion: info.latestVersion,
+        hasUpdate: info.hasUpdate,
+        downloadUrl: info.downloadUrl,
+        sha256: info.sha256,
+      );
+    } catch (error) {
+      return VersionStatus(
+        state: VersionQueryState.failure,
+        currentVersion: _updates.currentVersion,
+        failureReason: '检查更新失败：$error',
+      );
+    }
   }
 
   bool _sameIds(Set<String> left, Set<String> right) {
@@ -317,11 +361,13 @@ MacLauncherSdk _connectSdk({
   required String projectName,
   required SdkEntry? entry,
   required Map<String, ServiceCallbacks> services,
+  required AppCallbacks app,
 }) {
   return MacLauncherSdk.connect(
     projectId: projectId,
     projectName: projectName,
     entry: entry,
     services: services,
+    app: app,
   );
 }

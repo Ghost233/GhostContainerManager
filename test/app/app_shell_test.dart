@@ -17,6 +17,12 @@ class _AppMenuChannel implements MenuBarChannel {
   final MenuBarPreferences preferences;
   final actionsController = StreamController<MenuBarAction>.broadcast();
 
+  int showWindowCalls = 0;
+  @override
+  Future<void> showWindow() async {
+    showWindowCalls++;
+  }
+
   @override
   Stream<MenuBarAction> get actions => actionsController.stream;
 

@@ -4,7 +4,12 @@ import FlutterMacOS
 class MainFlutterWindow: NSWindow {
   private var menuBarController: RunnerMenuBarController?
 
+  var isMenuBarVisible: Bool { menuBarController?.hasVisibleStatusItem == true }
+
+  func showMainWindow() { menuBarController?.showWindow() }
+
   override func awakeFromNib() {
+    isReleasedWhenClosed = false
     let flutterViewController = FlutterViewController()
     let windowFrame = self.frame
     self.contentViewController = flutterViewController

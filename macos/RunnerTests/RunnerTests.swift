@@ -1,12 +1,21 @@
 import Cocoa
 import FlutterMacOS
 import XCTest
+@testable import Ghost_Container_Manager
 
 class RunnerTests: XCTestCase {
-
-  func testExample() {
-    // If you add code to the Runner application, consider adding tests here.
-    // See https://developer.apple.com/documentation/xctest for more information about using XCTest.
+  @MainActor
+  func testClosingWindowHidesDockKeepsMenuBarAndSupportsReopening() throws {
+    let delegate = try XCTUnwrap(NSApp.delegate as? AppDelegate)
+    let window = try XCTUnwrap(delegate.mainFlutterWindow as? MainFlutterWindow)
+    window.showMainWindow()
+    XCTAssertEqual(NSApp.activationPolicy(), .regular)
+    window.performClose(nil)
+    XCTAssertFalse(window.isVisible)
+    XCTAssertEqual(NSApp.activationPolicy(), .accessory)
+    XCTAssertTrue(window.isMenuBarVisible)
+    XCTAssertTrue(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
+    XCTAssertTrue(window.isVisible)
+    XCTAssertEqual(NSApp.activationPolicy(), .regular)
   }
-
 }

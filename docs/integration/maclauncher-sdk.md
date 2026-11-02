@@ -1,29 +1,22 @@
-# MacLauncher SDK 接入规范
+# MacLauncher SDK 接入
 
-沿用 GhostModelDeck 的 Git 依赖方式，由根 `pubspec.yaml` 和 `pubspec.lock` 固定实际版本。当前提交为 `268f88ef5ff47dbafe88200d5cddd090983ad313`，包路径为 `packages/maclauncher_sdk`。本仓库尚未实现 SDK 业务接入。
+根 `pubspec.yaml` 与 `pubspec.lock` 固定 SDK 提交 `268f88ef5ff47dbafe88200d5cddd090983ad313`，包路径为 `packages/maclauncher_sdk`。当前固定版本已支持窗口与版本回调，本次接入不升级依赖。
 
-## 项目身份与能力
+## 能力与边界
 
-项目 ID 为 `com.ghost233.ghostcontainermanager`，显示名为 `Ghost Container Manager`。`maclauncher.json` 的入口预留为发布 `.app` 路径，当前文件尚不存在。服务列表为空，服务粒度在开发任务中确定。
+项目身份为 `com.ghost233.ghostcontainermanager`。`MacLauncherBridge` 将带 `com.ghost233.*` 标签的容器注册为服务；启动、重启、状态和日志都复用 `ContainerService`。
 
-只为已实现的能力注册 `ServiceCallbacks`。当前固定版本支持 `onStart`、`onRecycle`、`onStatus` 和 `onLogs`；应用级 `AppCallbacks` 支持窗口、入口接管和版本查询。能力由实际回调决定。
+应用级注册两个回调：
 
-## 生命周期与业务边界
+- `onOpenWindow`：调用同一原生窗口入口，恢复普通激活策略、Dock 图标并显示主窗口。菜单栏操作、Finder 重开和 Launcher 打开窗口使用相同行为。
+- `onVersionStatus`：调用 `AppUpdateService` 查询本项目 GitHub 最新正式 Release，返回当前版本、最新版本、是否可更新、匹配版本的 DMG 地址和 SHA-256。优先使用资产 digest，缺失时读取版本、文件名和大小一致的 manifest。失败回报 failure 与原始原因，不伪造“没有更新”。并发查询复用在途请求，失败后可重试。
 
-- SDK 负责通信、重连和入口协作；容器操作与资源回收由本应用的管理入口负责。`dispose()` 关闭通信并归还入口。
-- 桌面和 SDK 的操作共用状态、并发控制和资源所有权。单个 SDK 回调不能形成第二套容器管理逻辑。
-- 启动器未运行时，应用应能独立工作。断连、启动器退出和应用退出分别处理。
-- 运行时发现使用 `projectName` 和 `SdkEntry.currentAppBundle() ?? SdkEntry.currentExecutable()`。`pending-approval` 表示等待用户批准，保留重试并控制日志频率。
-- 状态与日志报告实际观测结果。命令受理、连接成功和业务就绪分别表达；查询失败保留错误原因。
-- 容器、镜像及用户已有资源的停止和删除策略由规格确定。后续再定义 `recycle` 的业务含义。
+下载与打开更新包由 Launcher 完成，安装沿用 Launcher 的用户手动替换流程。SDK 本身不下载、不替换应用，也不发布版本。本地试用包尚未发布的变更不会成为 Release 更新；开发构建没有可比较版本时如实返回查询失败。
 
-## 接入验收
+菜单栏由本应用维护；本次不注册入口接管回调。关闭主窗口隐藏 Dock，保留菜单栏恢复入口；重新打开时恢复用户原有菜单栏显示设置。关闭窗口、SDK 断连、应用退出与业务容器停止分别处理。
 
-开发阶段至少验证固定依赖可构建、应用独立运行、批准与重连、窗口与入口恢复、真实状态、错误和取消、重复操作，以及 SDK 断开后的资源行为。当前只检查依赖与配置，不宣称这些行为已经通过。
+## 验证
 
-## 固定源码
+更新源解析、版本比较、清单一致性、失败与并发重试由单元测试覆盖；SDK 窗口和版本回调由接入测试覆盖。真实 AppKit 测试验证关闭窗口后 Dock 隐藏、菜单栏保留，以及重新打开恢复。Launcher 未运行或未批准关联时，应用继续独立运行，SDK 保持原有重试策略。
 
-- [SDK 公共接口](https://github.com/Ghost233/MacLauncher/blob/268f88ef5ff47dbafe88200d5cddd090983ad313/packages/maclauncher_sdk/lib/src/client.dart)。
-- [入口自报](https://github.com/Ghost233/MacLauncher/blob/268f88ef5ff47dbafe88200d5cddd090983ad313/packages/maclauncher_sdk/lib/src/entry_report.dart)。
-
-升级 SDK 时同时更新固定 ref、lockfile 和受影响的验收。来源项目较早版本的研究与测试记录只作历史参考。
+SDK 契约见固定提交中的 `AppCallbacks`、`VersionStatus`；Launcher 下载与安装边界见其 `docs/adr/0002-updates-stop-at-the-door.md`。

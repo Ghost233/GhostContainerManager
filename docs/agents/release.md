@@ -1,6 +1,6 @@
 # GhostContainerManager 标准发布流程
 
-当前仓库处于基础配置阶段，尚无可发布的 Flutter 应用。先由人确定正式版本、完成应用和本地门禁，再使用以下流程。
+由人确定正式版本，完成本地门禁、真实 Mac 构建和打包预检后，使用以下流程发布。
 
 仅在用户明确要求正式发布时执行 `scripts/release.sh`。编辑发布 skill、脚本或 workflow 只完成编辑与验证。版本规则的唯一来源是 [发布版本号规则](../release-versioning.md)。
 

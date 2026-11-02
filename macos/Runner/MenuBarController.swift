@@ -19,6 +19,10 @@ final class RunnerMenuBarController: NSObject {
   private var statusItem: NSStatusItem?
   private var containers: [MenuContainer] = []
   private var totalRunning = 0
+  private var windowClosed = false
+  private var closeObserver: NSObjectProtocol?
+
+  var hasVisibleStatusItem: Bool { statusItem != nil }
 
   init(messenger: FlutterBinaryMessenger, window: NSWindow, defaults: UserDefaults = .standard) {
     self.window = window
@@ -28,7 +32,18 @@ final class RunnerMenuBarController: NSObject {
     channel.setMethodCallHandler { [weak self] call, result in
       self?.handle(call, result: result)
     }
+    closeObserver = NotificationCenter.default.addObserver(
+      forName: NSWindow.willCloseNotification, object: window, queue: .main
+    ) { [weak self] _ in
+      self?.windowClosed = true
+      self?.applyVisibility()
+      NSApp.setActivationPolicy(.accessory)
+    }
     applyVisibility()
+  }
+
+  deinit {
+    if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
   }
 
   private var visible: Bool {
@@ -44,6 +59,9 @@ final class RunnerMenuBarController: NSObject {
     switch call.method {
     case "getPreferences":
       result(["visible": visible, "defaultStartPage": defaultStartPage])
+    case "showWindow":
+      showWindow()
+      result(nil)
     case "setVisible":
       guard let arguments = call.arguments as? [String: Any],
         let visible = arguments["visible"] as? Bool
@@ -89,7 +107,7 @@ final class RunnerMenuBarController: NSObject {
   }
 
   private func applyVisibility() {
-    if visible {
+    if visible || windowClosed {
       if statusItem == nil {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = NSImage(
@@ -152,7 +170,10 @@ final class RunnerMenuBarController: NSObject {
     menu.addItem(item)
   }
 
-  private func showWindow() {
+  func showWindow() {
+    NSApp.setActivationPolicy(.regular)
+    windowClosed = false
+    applyVisibility()
     if window?.isMiniaturized == true { window?.deminiaturize(nil) }
     NSApp.activate(ignoringOtherApps: true)
     window?.makeKeyAndOrderFront(nil)

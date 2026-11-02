@@ -25,6 +25,12 @@ class _FakeMenuBarChannel implements MenuBarChannel {
   Object? startPageError;
   var loadPreferencesCalls = 0;
 
+  int showWindowCalls = 0;
+  @override
+  Future<void> showWindow() async {
+    showWindowCalls++;
+  }
+
   @override
   Stream<MenuBarAction> get actions => actionController.stream;
 
@@ -66,6 +72,22 @@ class _FakeMenuBarChannel implements MenuBarChannel {
 }
 
 void main() {
+  test(
+    'Launcher window action is forwarded to the native window entry',
+    () async {
+      final channel = _FakeMenuBarChannel();
+      final containers = ContainerService(bridge: FakeContainerBridge());
+      final controller = MenuBarController(
+        containers: containers,
+        channel: channel,
+      );
+      await controller.showWindow();
+      expect(channel.showWindowCalls, 1);
+      controller.dispose();
+      await containers.dispose();
+    },
+  );
+
   test('初始化幂等：偏好与容器快照只加载一次', () async {
     final bridge = FakeContainerBridge();
     final service = ContainerService(bridge: bridge);

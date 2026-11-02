@@ -7,6 +7,7 @@ import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
 import 'package:ghost_container_manager/launcher/maclauncher_bridge.dart';
 import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/errors.dart';
+import 'package:ghost_container_manager/services/app_update_service.dart';
 import 'package:maclauncher_sdk/maclauncher_sdk.dart';
 
 void main() {
@@ -24,6 +25,94 @@ void main() {
     containerService.stopPolling();
     await containerService.dispose();
     await sdk.close();
+  });
+
+  test(
+    'registers SDK window and version callbacks using actual update results',
+    () async {
+      var opened = 0;
+      final connector = FakeSdkConnector(sdk);
+      final launcher = MacLauncherBridge(
+        containers: containerService,
+        sdkConnector: connector.call,
+        onOpenWindow: () async {
+          opened++;
+        },
+        updates: AppUpdateService(
+          currentVersion: '1.1.1',
+          readJson: (_) async => {
+            'draft': false,
+            'prerelease': false,
+            'tag_name': 'v1.1.2',
+            'assets': [
+              {
+                'name': 'GhostContainerManager-1.1.2.dmg',
+                'size': 123,
+                'browser_download_url': 'https://github.com/Ghost233/GhostContainerManager/releases/download/v1.1.2/GhostContainerManager-1.1.2.dmg',
+                'digest': 'sha256:${'c' * 64}',
+              },
+            ],
+          },
+        ),
+      );
+      addTearDown(launcher.dispose);
+      await launcher.connect();
+      expect(
+        connector.app!.methods,
+        containsAll([kMethodOpenWindow, kMethodVersionStatus]),
+      );
+      await connector.app!.onOpenWindow!();
+      expect(opened, 1);
+      final status = await connector.app!.onVersionStatus!();
+      expect(status.state, VersionQueryState.success);
+      expect(status.currentVersion, '1.1.1');
+      expect(status.hasUpdate, isTrue);
+      expect(status.latestVersion, '1.1.2');
+      expect(status.sha256, 'c' * 64);
+    },
+  );
+
+  test(
+    'reports update lookup failure to Launcher without fabricating no-update',
+    () async {
+      final connector = FakeSdkConnector(sdk);
+      final launcher = MacLauncherBridge(
+        containers: containerService,
+        sdkConnector: connector.call,
+        updates: AppUpdateService(
+          currentVersion: '1.1.1',
+          readJson: (_) async => throw StateError('offline'),
+        ),
+      );
+      addTearDown(launcher.dispose);
+      await launcher.connect();
+      final status = await connector.app!.onVersionStatus!();
+      expect(status.state, VersionQueryState.failure);
+      expect(status.failureReason, contains('offline'));
+      expect(status.hasUpdate, isNull);
+    },
+  );
+
+  test('app callbacks remain available while Docker is offline and recover services later', () async {
+    containerBridge.containerListThrows = true;
+    final connector = FakeSdkConnector(sdk);
+    final launcher = MacLauncherBridge(
+      containers: containerService,
+      sdkConnector: connector.call,
+      onOpenWindow: () async {},
+    );
+    addTearDown(launcher.dispose);
+    await launcher.connect();
+    expect(connector.services, isEmpty);
+    expect(connector.app!.onVersionStatus, isNotNull);
+    expect(connector.app!.onOpenWindow, isNotNull);
+    containerBridge.containerListThrows = false;
+    containerBridge.containers = [
+      snapshot(id: 'recovered', labels: const {'com.ghost233.managed': 'true'}),
+    ];
+    await containerService.refresh();
+    await _flushAsync();
+    expect(connector.services!.keys, ['recovered']);
   });
 
   test('connect registers one SDK service per managed container', () async {
@@ -569,6 +658,7 @@ class _FakeSdkFactory {
     required String projectName,
     required SdkEntry? entry,
     required Map<String, ServiceCallbacks> services,
+    required AppCallbacks app,
   }) {
     final sdk = FakeMacLauncherSdk();
     registrations.add(_SdkRegistration(sdk, services));
@@ -589,16 +679,19 @@ class FakeSdkConnector {
   String? projectId;
   String? projectName;
   Map<String, ServiceCallbacks>? services;
+  AppCallbacks? app;
 
   MacLauncherSdk call({
     required String projectId,
     required String projectName,
     required SdkEntry? entry,
     required Map<String, ServiceCallbacks> services,
+    required AppCallbacks app,
   }) {
     this.projectId = projectId;
     this.projectName = projectName;
     this.services = services;
+    this.app = app;
     return sdk;
   }
 }

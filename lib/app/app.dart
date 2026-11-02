@@ -125,7 +125,10 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
     }
     if (widget.enableLauncher) {
       // MacLauncher 是可选集成：未安装或连接失败不影响主功能。
-      final launcher = MacLauncherBridge(containers: _containerService);
+      final launcher = MacLauncherBridge(
+        containers: _containerService,
+        onOpenWindow: _menuBar.showWindow,
+      );
       _launcher = launcher;
       unawaited(
         launcher.connect().catchError((Object error, StackTrace stack) {

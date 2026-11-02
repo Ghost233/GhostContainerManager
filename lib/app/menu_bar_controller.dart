@@ -53,6 +53,8 @@ abstract interface class MenuBarChannel {
 
   Future<void> setVisible(bool visible);
 
+  Future<void> showWindow();
+
   Future<void> setDefaultStartPage(String page);
 
   Future<void> updateContainers(
@@ -89,6 +91,9 @@ final class MethodChannelMenuBarChannel implements MenuBarChannel {
           : '容器',
     );
   }
+
+  @override
+  Future<void> showWindow() => _channel.invokeMethod<void>('showWindow');
 
   @override
   Future<void> setVisible(bool visible) {
@@ -201,6 +206,8 @@ class MenuBarController extends ChangeNotifier {
     }
     _syncContainers();
   }
+
+  Future<void> showWindow() => _channel.showWindow();
 
   Future<void> setVisible(bool value) async {
     if (_visible == value) return;
