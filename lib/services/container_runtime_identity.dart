@@ -118,7 +118,70 @@ class ContainerRuntimeIdentityService {
 
   /// Inspects only an immutable full ID. Mismatched labels remain visible so a
   /// caller can report conflicts rather than silently discard candidates.
-  Future<RuntimeContainerIdentity> inspect(String fullId) async {
+  Future<RuntimeContainerIdentity> inspect(String fullId) async =>
+      (await _inspect(fullId)).identity;
+
+  /// Reports only stable, validated states for the exact expected identity.
+  /// Errors and transitional or unrecognized states are not evidence of either
+  /// running or stopped. Markers establish consistency, not ownership.
+  Future<RuntimeContainerLifecycle> inspectLifecycle({
+    required String fullId,
+    required String runtimeName,
+    required String operationId,
+  }) async {
+    _validateName(runtimeName);
+    _validateOperation(operationId);
+    final inspection = await _inspect(fullId);
+    if (!inspection.identity.matches(
+      fullId: fullId,
+      runtimeName: runtimeName,
+      operationId: operationId,
+    )) {
+      throw const BridgeCallException('Container identity mismatch');
+    }
+    final state = inspection.state;
+    if (state is! Map ||
+        state['Status'] is! String ||
+        state['Running'] is! bool) {
+      throw const BridgeCallException('Invalid container lifecycle state');
+    }
+    return switch ((state['Status'], state['Running'])) {
+      ('running', true) => RuntimeContainerLifecycle.running,
+      ('created' || 'exited' || 'dead', false) =>
+        RuntimeContainerLifecycle.stopped,
+      _ => throw const BridgeCallException('Container lifecycle state unknown'),
+    };
+  }
+
+  /// Checks identity immediately before targeting the full ID, and verifies
+  /// the resulting state. A failure can leave the start outcome unknown.
+  Future<RuntimeContainerLifecycle> start({
+    required String fullId,
+    required String runtimeName,
+    required String operationId,
+  }) async {
+    final before = await inspectLifecycle(
+      fullId: fullId,
+      runtimeName: runtimeName,
+      operationId: operationId,
+    );
+    if (before == RuntimeContainerLifecycle.running) return before;
+    final result = await _run(['container', 'start', fullId]);
+    _check(result, 'start');
+    final after = await inspectLifecycle(
+      fullId: fullId,
+      runtimeName: runtimeName,
+      operationId: operationId,
+    );
+    if (after != RuntimeContainerLifecycle.running) {
+      throw const BridgeCallException('Container start outcome unknown');
+    }
+    return after;
+  }
+
+  Future<({RuntimeContainerIdentity identity, Object? state})> _inspect(
+    String fullId,
+  ) async {
     if (!_fullId.hasMatch(fullId)) {
       throw ArgumentError('Expected a full container ID');
     }
@@ -149,10 +212,13 @@ class ContainerRuntimeIdentityService {
         'Invalid or mismatched container identity',
       );
     }
-    return RuntimeContainerIdentity(
-      fullId: fullId,
-      runtimeName: name.substring(1),
-      labels: Map<String, String>.unmodifiable(labels.cast<String, String>()),
+    return (
+      identity: RuntimeContainerIdentity(
+        fullId: fullId,
+        runtimeName: name.substring(1),
+        labels: Map<String, String>.unmodifiable(labels.cast<String, String>()),
+      ),
+      state: raw['State'],
     );
   }
 
@@ -176,6 +242,8 @@ class ContainerRuntimeIdentityService {
     }
   }
 }
+
+enum RuntimeContainerLifecycle { running, stopped }
 
 class CreatedRuntimeContainer {
   const CreatedRuntimeContainer({
