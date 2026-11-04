@@ -6,11 +6,11 @@ Future<void> main(List<String> args) async {
   try {
     await DirectoryRegistry(File(args[0])).reserveCreate(
       operationId: args[1],
-      endpoint: 'opaque',
+      endpoint: 'b' * 64,
       directory: args[2],
       businessName: 'name',
       runtimeName: 'runtime',
-      requestDigest: 'digest',
+      requestDigest: 'a' * 64,
     );
     stdout.write('won');
   } on StateError {

@@ -260,9 +260,9 @@ class ResourceReservation {
         value['operationId'] is! String ||
         !_operationPattern.hasMatch(value['operationId'] as String) ||
         value['endpoint'] is! String ||
-        (value['endpoint'] as String).isEmpty ||
+        !_containerPattern.hasMatch(value['endpoint'] as String) ||
         value['requestDigest'] is! String ||
-        (value['requestDigest'] as String).isEmpty ||
+        !_containerPattern.hasMatch(value['requestDigest'] as String) ||
         !const ['prepared', 'unknown', 'cancelled'].contains(value['state']) ||
         !const ['create', 'start'].contains(value['kind'])) {
       throw const FormatException('Invalid reservation');
@@ -626,7 +626,10 @@ class DirectoryRegistry {
 
   /// Creates an intent and its resource reservation in one locked write.
   ///
-  /// Endpoint and digest are opaque caller-supplied values, not verified facts.
+  /// Endpoint namespace and request digest must be lowercase 64-hex digests
+  /// of nonsecret normalized data supplied by callers. No secrets should be
+  /// persisted in any reservation field. These opaque values do not establish
+  /// endpoint trust or authenticity and are not verified facts.
   /// This only coordinates callers of these APIs on this registry file; legacy
   /// APIs and external clients are not fenced. No runtime is wired to this API.
   /// Every submitter must hold [withIntentLock] across its whole operation and
@@ -701,6 +704,17 @@ class DirectoryRegistry {
         await _write(data);
         return requested;
       });
+
+  /// Immutable snapshot of active reservations, sorted by operation ID.
+  /// Callers must re-read and coordinate before acting on this snapshot.
+  Future<List<ResourceReservation>> activeReservations() async {
+    final active =
+        (await _read()).reservations.values
+            .where((reservation) => reservation.state != 'cancelled')
+            .toList()
+          ..sort((a, b) => a.operationId.compareTo(b.operationId));
+    return List.unmodifiable(active);
+  }
 
   Future<ResourceReservation?> readReservation(String operationId) async {
     if (!_operationPattern.hasMatch(operationId)) {

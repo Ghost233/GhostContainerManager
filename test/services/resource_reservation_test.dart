@@ -24,15 +24,15 @@ void main() {
 
   Future<ResourceReservation> create(
     String op, {
-    String digest = 'digest',
-    String endpoint = 'opaque',
+    String? digest,
+    String? endpoint,
   }) => registry.reserveCreate(
     operationId: op,
-    endpoint: endpoint,
+    endpoint: endpoint ?? 'b' * 64,
     directory: work.path,
     businessName: 'name',
     runtimeName: 'runtime',
-    requestDigest: digest,
+    requestDigest: digest ?? 'a' * 64,
   );
 
   test('unknown persists and can never be cancelled or bypassed', () async {
@@ -49,9 +49,9 @@ void main() {
       throwsStateError,
     );
     await expectLater(create('two'), throwsStateError);
-    await expectLater(create('one', digest: 'different'), throwsStateError);
+    await expectLater(create('one', digest: 'c' * 64), throwsStateError);
     expect((await create('one')).state, 'unknown');
-    await create('different-endpoint', endpoint: 'another');
+    await create('different-endpoint', endpoint: 'c' * 64);
   });
 
   test(
@@ -76,31 +76,31 @@ void main() {
     final id = 'a' * 64;
     await registry.reserveStart(
       operationId: 'one',
-      endpoint: 'e',
+      endpoint: 'b' * 64,
       containerId: id,
-      requestDigest: 'd',
+      requestDigest: 'a' * 64,
     );
     await expectLater(
       registry.reserveStart(
         operationId: 'two',
-        endpoint: 'e',
+        endpoint: 'b' * 64,
         containerId: id,
-        requestDigest: 'd',
+        requestDigest: 'a' * 64,
       ),
       throwsStateError,
     );
     await registry.reserveStart(
       operationId: 'two',
-      endpoint: 'e2',
+      endpoint: 'c' * 64,
       containerId: id,
-      requestDigest: 'd',
+      requestDigest: 'a' * 64,
     );
     expect(
       () => registry.reserveStart(
         operationId: 'short',
-        endpoint: 'e',
+        endpoint: 'b' * 64,
         containerId: 'a',
-        requestDigest: 'd',
+        requestDigest: 'a' * 64,
       ),
       throwsFormatException,
     );
@@ -124,7 +124,7 @@ void main() {
         runtimeName: 'old',
       );
       await expectLater(
-        create('blocked', endpoint: 'different'),
+        create('blocked', endpoint: 'c' * 64),
         throwsStateError,
       );
       await expectLater(
@@ -155,6 +155,122 @@ void main() {
     await storage.writeAsString(jsonEncode(data));
     await expectLater(registry.readReservation('one'), throwsFormatException);
   });
+
+  test('restart discovers immutable sorted active snapshot', () async {
+    expect(await registry.activeReservations(), isEmpty);
+    await create('z');
+    await registry.markReservationUnknown('z');
+    await create('a', endpoint: 'c' * 64);
+    await create('cancel', endpoint: 'd' * 64);
+    await registry.cancelPreparedReservation('cancel');
+    final restarted = DirectoryRegistry(storage);
+    final snapshot = await restarted.activeReservations();
+    expect(snapshot.map((r) => r.operationId), ['a', 'z']);
+    expect(snapshot.map((r) => r.state), ['prepared', 'unknown']);
+    expect(() => snapshot.clear(), throwsUnsupportedError);
+    await restarted.cancelPreparedReservation('a');
+    expect(snapshot.map((r) => r.operationId), ['a', 'z']);
+    expect((await restarted.activeReservations()).map((r) => r.operationId), [
+      'z',
+    ]);
+  });
+
+  test('digest fields reject credentials, URLs and malformed values', () async {
+    for (final invalid in [
+      '',
+      'https://user:password@example.com',
+      'user:password',
+      'a' * 63,
+      'a' * 65,
+      'A' * 64,
+      'g' * 64,
+      '${'a' * 64}\n',
+    ]) {
+      await expectLater(
+        create('invalid', endpoint: invalid),
+        throwsFormatException,
+      );
+      await expectLater(
+        create('invalid', digest: invalid),
+        throwsFormatException,
+      );
+      expect(
+        () => registry.reserveStart(
+          operationId: 'invalid',
+          endpoint: invalid,
+          containerId: 'f' * 64,
+          requestDigest: 'a' * 64,
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => registry.reserveStart(
+          operationId: 'invalid',
+          endpoint: 'b' * 64,
+          containerId: 'f' * 64,
+          requestDigest: invalid,
+        ),
+        throwsFormatException,
+      );
+      expect(await storage.exists(), isFalse);
+    }
+  });
+
+  test(
+    'stored malformed digest fields fail closed without rewriting',
+    () async {
+      await create('one');
+      final original = await storage.readAsString();
+      for (final field in ['endpoint', 'requestDigest']) {
+        for (final invalid in [
+          'https://user:password@example.com',
+          'A' * 64,
+          'a' * 63,
+        ]) {
+          final data = jsonDecode(original) as Map<String, dynamic>;
+          ((data['reservations'] as Map<String, dynamic>)['one']
+                  as Map<String, dynamic>)[field] =
+              invalid;
+          final corrupt = jsonEncode(data);
+          await storage.writeAsString(corrupt);
+          await expectLater(
+            registry.activeReservations(),
+            throwsFormatException,
+          );
+          await expectLater(
+            registry.readReservation('one'),
+            throwsFormatException,
+          );
+          await expectLater(create('two'), throwsFormatException);
+          expect(await storage.readAsString(), corrupt);
+        }
+      }
+    },
+  );
+
+  test(
+    'rejects non-digest inputs and persists supplied digest-shaped values',
+    () async {
+      const rawEndpoint = 'https://user:password@example.com';
+      const rawRequest = 'credential-token';
+      await expectLater(
+        create('bad-endpoint', endpoint: rawEndpoint),
+        throwsFormatException,
+      );
+      await expectLater(
+        create('bad-request', digest: rawRequest),
+        throwsFormatException,
+      );
+      expect(await storage.exists(), isFalse);
+      await create('one');
+      final contents = await storage.readAsString();
+      expect(contents, contains('a' * 64));
+      expect(contents, contains('b' * 64));
+      expect(contents, isNot(contains(rawEndpoint)));
+      expect(contents, isNot(contains(rawRequest)));
+      expect(contents, isNot(contains('password')));
+    },
+  );
 
   test('mark and cancel race has exactly one winner', () async {
     await create('one');
@@ -189,11 +305,11 @@ void main() {
           try {
             await DirectoryRegistry(File(path)).reserveCreate(
               operationId: 'op$i',
-              endpoint: 'e',
+              endpoint: 'b' * 64,
               directory: directory,
               businessName: 'n',
               runtimeName: 'r',
-              requestDigest: 'd',
+              requestDigest: 'a' * 64,
             );
             return true;
           } on StateError {
