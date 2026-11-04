@@ -11,6 +11,7 @@ class BridgeCommandResult {
     required this.stdout,
     required this.stderr,
     this.timedOut = false,
+    this.outputMayBeIncomplete = false,
   });
 
   factory BridgeCommandResult.fromMap(Map<Object?, Object?> map) {
@@ -19,6 +20,7 @@ class BridgeCommandResult {
       stdout: (map['stdout'] as String?) ?? '',
       stderr: (map['stderr'] as String?) ?? '',
       timedOut: (map['timedOut'] as bool?) ?? false,
+      outputMayBeIncomplete: (map['outputMayBeIncomplete'] as bool?) ?? true,
     );
   }
 
@@ -26,6 +28,10 @@ class BridgeCommandResult {
   final String stdout;
   final String stderr;
   final bool timedOut;
+
+  /// The bounded process replay buffer overflowed; callers requiring complete
+  /// output must reject the result even when the command exited successfully.
+  final bool outputMayBeIncomplete;
 
   bool get ok => exitCode == 0 && !timedOut;
 
@@ -182,6 +188,11 @@ class BridgeCallException implements Exception {
 
   @override
   String toString() => 'BridgeCallException($message)';
+}
+
+/// Opt-in command seam that explicitly reports potentially incomplete output.
+abstract interface class CompleteOutputContainerBridge {
+  Future<BridgeCommandResult> cliRunForIdentity(List<String> arguments);
 }
 
 abstract interface class ContainerBridge {
