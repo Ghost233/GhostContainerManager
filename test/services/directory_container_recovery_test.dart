@@ -182,8 +182,7 @@ void main() {
     expect(calls.where((c) => c[1] == 'start'), isEmpty);
   });
 
-  test('unique match while original create remains in flight cannot register or start', () async {
-    final requestFinished = Completer<void>();
+  test('prepared intent with unique match remains pending', () async {
     operation = 'still-in-flight';
     name = 'gcm-still-in-flight';
     await registry.createIntent(
@@ -194,14 +193,12 @@ void main() {
       shouldStart: true,
     );
     final result = await management.directoryRecovery!.recover(operation!);
-    expect(requestFinished.isCompleted, isFalse);
     expect(result.status, DirectoryCreationStatus.unknown);
     expect(await registry.query(temp.path), isEmpty);
     expect(
       calls.where((call) => call[1] == 'start' || call[1] == 'create'),
       isEmpty,
     );
-    requestFinished.complete();
   });
 
   test(
