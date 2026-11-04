@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ghost_container_manager/mcp/tools/project_tools.dart';
 import 'package:ghost_container_manager/mcp/tool_registrar.dart';
 import 'package:ghost_container_manager/mcp/tools/catalog_tools.dart';
+import 'package:ghost_container_manager/services/directory_registry.dart';
 import 'package:ghost_container_manager/services/errors.dart';
 import 'package:ghost_container_manager/services/project_build_log_store.dart';
 import 'package:ghost_container_manager/services/project_service.dart';
@@ -409,6 +410,9 @@ void main() {
 }
 
 class _FakeProjectService implements ProjectService {
+  @override
+  DirectoryRegistry get directoryRegistry => throw UnsupportedError('Not used');
+
   final calls = <String>[];
   Map<String, Object?>? lastResource;
   List<String>? lastApproved;

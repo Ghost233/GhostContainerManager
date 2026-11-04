@@ -18,6 +18,7 @@ import '../bridge/docker_container_bridge.dart';
 import 'app_constants.dart';
 import 'container_models.dart';
 import 'container_service.dart';
+import 'directory_registry.dart';
 import 'errors.dart';
 import 'image_models.dart';
 import 'image_service.dart';
@@ -358,6 +359,7 @@ class ProjectService {
     ProjectBuildLogStore? buildLogStore,
     String? resourceDirectory,
     ProjectCleanup? cleanup,
+    DirectoryRegistry? directoryRegistry,
     DateTime Function()? clock,
   }) => ProjectService._(
     cli,
@@ -368,6 +370,7 @@ class ProjectService {
     buildLogStore: buildLogStore,
     resourceDirectory: resourceDirectory,
     cleanup: cleanup,
+    directoryRegistry: directoryRegistry,
     clock: clock,
   );
 
@@ -380,8 +383,12 @@ class ProjectService {
     ProjectBuildLogStore? buildLogStore,
     String? resourceDirectory,
     ProjectCleanup? cleanup,
+    DirectoryRegistry? directoryRegistry,
     DateTime Function()? clock,
-  }) : _projectPaths = <String>{...projectPaths},
+    // Keep the public named parameter while initializing a private field.
+    // ignore: prefer_initializing_formals
+  }) : _directoryRegistry = directoryRegistry,
+       _projectPaths = <String>{...projectPaths},
        _cleanup =
            cleanup ??
            ProjectCleanup(
@@ -404,6 +411,24 @@ class ProjectService {
              directory: buildLogDirectory ?? _defaultBuildLogDirectory(),
              clock: clock,
            );
+
+  final DirectoryRegistry? _directoryRegistry;
+
+  /// Directory registrations shared by clients of this management service.
+  late final DirectoryRegistry directoryRegistry =
+      _directoryRegistry ?? DirectoryRegistry(_defaultDirectoryRegistryFile());
+
+  static File _defaultDirectoryRegistryFile() {
+    final home = Platform.environment['HOME'];
+    if (home == null || !home.startsWith('/')) {
+      throw StateError(
+        'An absolute HOME is required for directory registrations',
+      );
+    }
+    return File(
+      '$home/Library/Application Support/$applicationBundleId/directory-registry.json',
+    );
+  }
 
   final ProjectCli _cli;
   final ContainerService _containerService;

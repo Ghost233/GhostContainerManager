@@ -1,9 +1,37 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghost_container_manager/bridge/fake_container_bridge.dart';
+import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/directory_registry.dart';
+import 'package:ghost_container_manager/services/image_service.dart';
+import 'package:ghost_container_manager/services/project_service.dart';
+
+import 'project_service_test.dart' show FakeProjectCli;
 
 void main() {
+  test('共享管理入口登记后在重建入口中可查询', () async {
+    final root = await Directory.systemTemp.createTemp('gcm-directory-test-');
+    addTearDown(() => root.delete(recursive: true));
+    final directory = await Directory('${root.path}/work').create();
+    final storage = File('${root.path}/registry.json');
+    final bridge = FakeContainerBridge();
+    final containers = ContainerService(bridge: bridge);
+    addTearDown(containers.dispose);
+    ProjectService createService() => ProjectService(
+      cli: FakeProjectCli(),
+      containerService: containers,
+      imageService: ImageService(bridge: bridge, containerService: containers),
+      directoryRegistry: DirectoryRegistry(storage),
+    );
+    final first = createService();
+    expect(await first.directoryRegistry.query(directory.path), isEmpty);
+    expect(await storage.exists(), isFalse);
+    await first.directoryRegistry.register(directory.path, 'container:one');
+    expect(await createService().directoryRegistry.query(directory.path), [
+      'container:one',
+    ]);
+  });
   test('查询未登记管理目录为空且不创建登记', () async {
     final root = await Directory.systemTemp.createTemp('gcm-directory-test-');
     addTearDown(() => root.delete(recursive: true));
@@ -33,7 +61,16 @@ void main() {
     final parent = await Directory('${root.path}/parent').create();
     final child = await Directory('${parent.path}/child').create();
     final alias = await Link('${root.path}/alias').create(parent.path);
-    final registry = DirectoryRegistry(File('${root.path}/registry.json'));
+    final bridge = FakeContainerBridge();
+    final containers = ContainerService(bridge: bridge);
+    addTearDown(containers.dispose);
+    final service = ProjectService(
+      cli: FakeProjectCli(),
+      containerService: containers,
+      imageService: ImageService(bridge: bridge, containerService: containers),
+      directoryRegistry: DirectoryRegistry(File('${root.path}/registry.json')),
+    );
+    final registry = service.directoryRegistry;
     await registry.register(alias.path, 'container:parent');
     await registry.register(child.path, 'container:child');
     expect(await registry.query(parent.path), ['container:parent']);
