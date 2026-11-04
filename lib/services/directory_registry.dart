@@ -204,15 +204,121 @@ String? _resourceContainerId(String resource) {
   return _validId(id) ? id : null;
 }
 
+/// A cooperative local reservation, not proof of endpoint identity or request
+/// termination. Dispatch is forbidden until [DirectoryRegistry.markReservationUnknown]
+/// has durably succeeded; unknown reservations cannot be released by this API.
+class ResourceReservation {
+  const ResourceReservation._(
+    this.operationId,
+    this.endpoint,
+    this.kind,
+    this.directory,
+    this.businessName,
+    this.containerId,
+    this.requestDigest,
+    this.runtimeName,
+    this.state,
+  );
+
+  final String operationId;
+  final String endpoint;
+  final String kind;
+  final String? directory;
+  final String? businessName;
+  final String? containerId;
+  final String requestDigest;
+  final String? runtimeName;
+  final String state;
+
+  Map<String, Object?> toJson() => {
+    'operationId': operationId,
+    'endpoint': endpoint,
+    'kind': kind,
+    if (directory != null) 'directory': directory,
+    if (businessName != null) 'businessName': businessName,
+    if (containerId != null) 'containerId': containerId,
+    'requestDigest': requestDigest,
+    if (runtimeName != null) 'runtimeName': runtimeName,
+    'state': state,
+  };
+
+  static ResourceReservation fromJson(Object? value) {
+    if (value is! Map<String, dynamic> ||
+        value.keys.any(
+          (k) => !const {
+            'operationId',
+            'endpoint',
+            'kind',
+            'directory',
+            'businessName',
+            'containerId',
+            'requestDigest',
+            'runtimeName',
+            'state',
+          }.contains(k),
+        ) ||
+        value['operationId'] is! String ||
+        !_operationPattern.hasMatch(value['operationId'] as String) ||
+        value['endpoint'] is! String ||
+        (value['endpoint'] as String).isEmpty ||
+        value['requestDigest'] is! String ||
+        (value['requestDigest'] as String).isEmpty ||
+        !const ['prepared', 'unknown', 'cancelled'].contains(value['state']) ||
+        !const ['create', 'start'].contains(value['kind'])) {
+      throw const FormatException('Invalid reservation');
+    }
+    if (value['kind'] == 'create') {
+      if (value['directory'] is! String ||
+          !(value['directory'] as String).startsWith('/') ||
+          value['businessName'] is! String ||
+          (value['businessName'] as String).isEmpty ||
+          value['runtimeName'] is! String ||
+          (value['runtimeName'] as String).isEmpty ||
+          value.containsKey('containerId')) {
+        throw const FormatException('Invalid create reservation');
+      }
+    } else if (value.containsKey('directory') ||
+        value.containsKey('businessName') ||
+        value.containsKey('runtimeName') ||
+        value['containerId'] is! String ||
+        !_validId(value['containerId'] as String)) {
+      throw const FormatException('Invalid start reservation');
+    }
+    return ResourceReservation._(
+      value['operationId'] as String,
+      value['endpoint'] as String,
+      value['kind'] as String,
+      value['directory'] as String?,
+      value['businessName'] as String?,
+      value['containerId'] as String?,
+      value['requestDigest'] as String,
+      value['runtimeName'] as String?,
+      value['state'] as String,
+    );
+  }
+
+  bool sameResource(ResourceReservation other) =>
+      endpoint == other.endpoint &&
+      kind == other.kind &&
+      (kind == 'create'
+          ? directory == other.directory && businessName == other.businessName
+          : containerId == other.containerId);
+}
+
 class _RegistryData {
-  _RegistryData(this.entries, this.intents);
+  _RegistryData(this.entries, this.intents, this.reservations);
   final Map<String, List<String>> entries;
   final Map<String, CreationIntent> intents;
+  final Map<String, ResourceReservation> reservations;
 
   Map<String, Object> toJson() => {
-    'version': 1,
+    'version': reservations.isEmpty ? 1 : 2,
     'entries': entries,
     'intents': intents.map((key, value) => MapEntry(key, value.toJson())),
+    if (reservations.isNotEmpty)
+      'reservations': reservations.map(
+        (key, value) => MapEntry(key, value.toJson()),
+      ),
   };
 }
 
@@ -280,7 +386,7 @@ class DirectoryRegistry {
       if (error.osError?.errorCode == 2 &&
           await FileSystemEntity.type(storage.path, followLinks: false) ==
               FileSystemEntityType.notFound) {
-        return _RegistryData({}, {});
+        return _RegistryData({}, {}, {});
       }
       rethrow;
     }
@@ -291,18 +397,26 @@ class DirectoryRegistry {
     }
     final Map<String, dynamic> rawEntries;
     final Map<String, dynamic> rawIntents;
+    final Map<String, dynamic> rawReservations;
     if (data.containsKey('version')) {
-      if (data.length != 3 ||
-          data['version'] != 1 ||
+      final version = data['version'];
+      if (!((version == 1 && data.length == 3) ||
+              (version == 2 &&
+                  data.length == 4 &&
+                  data['reservations'] is Map<String, dynamic>)) ||
           data['entries'] is! Map<String, dynamic> ||
           data['intents'] is! Map<String, dynamic>) {
         throw const FormatException('Invalid registry version');
       }
       rawEntries = data['entries'] as Map<String, dynamic>;
       rawIntents = data['intents'] as Map<String, dynamic>;
+      rawReservations = version == 2
+          ? data['reservations'] as Map<String, dynamic>
+          : {};
     } else {
       rawEntries = data;
       rawIntents = {};
+      rawReservations = {};
     }
     final entries = rawEntries.map((key, value) {
       if (!key.startsWith('/') ||
@@ -338,7 +452,24 @@ class DirectoryRegistry {
         throw const FormatException('Missing registered container');
       }
     }
-    return _RegistryData(entries, intents);
+    final reservations = rawReservations.map((key, value) {
+      final reservation = ResourceReservation.fromJson(value);
+      if (key != reservation.operationId || intents.containsKey(key)) {
+        throw const FormatException('Conflicting reservation operation ID');
+      }
+      return MapEntry(key, reservation);
+    });
+    final active = reservations.values
+        .where((r) => r.state != 'cancelled')
+        .toList();
+    for (var i = 0; i < active.length; i++) {
+      for (var j = i + 1; j < active.length; j++) {
+        if (active[i].sameResource(active[j])) {
+          throw const FormatException('Conflicting resource reservations');
+        }
+      }
+    }
+    return _RegistryData(entries, intents, reservations);
   }
 
   Future<T> _locked<T>(String suffix, Future<T> Function() action) async {
@@ -465,6 +596,9 @@ class DirectoryRegistry {
     final identity = await _identity(directory);
     return _locked('.lock', () async {
       final data = await _read();
+      if (data.reservations.containsKey(operationId)) {
+        throw StateError('Operation ID already used');
+      }
       final existing = data.intents[operationId];
       if (existing != null) {
         if (existing.directory != identity ||
@@ -487,6 +621,129 @@ class DirectoryRegistry {
       data.intents[operationId] = intent;
       await _write(data);
       return intent;
+    });
+  }
+
+  /// Creates an intent and its resource reservation in one locked write.
+  ///
+  /// Endpoint and digest are opaque caller-supplied values, not verified facts.
+  /// This only coordinates callers of these APIs on this registry file; legacy
+  /// APIs and external clients are not fenced. No runtime is wired to this API.
+  /// Every submitter must hold [withIntentLock] across its whole operation and
+  /// persist [markReservationUnknown] before any external side effect. Never
+  /// dispatch if that write fails. Unknown is held indefinitely.
+  Future<ResourceReservation> reserveCreate({
+    required String operationId,
+    required String endpoint,
+    required String directory,
+    required String businessName,
+    required String runtimeName,
+    required String requestDigest,
+  }) async {
+    final identity = await _identity(directory);
+    return _reserve(
+      ResourceReservation.fromJson({
+        'operationId': operationId,
+        'endpoint': endpoint,
+        'kind': 'create',
+        'directory': identity,
+        'businessName': businessName,
+        'runtimeName': runtimeName,
+        'requestDigest': requestDigest,
+        'state': 'prepared',
+      }),
+    );
+  }
+
+  Future<ResourceReservation> reserveStart({
+    required String operationId,
+    required String endpoint,
+    required String containerId,
+    required String requestDigest,
+  }) => _reserve(
+    ResourceReservation.fromJson({
+      'operationId': operationId,
+      'endpoint': endpoint,
+      'kind': 'start',
+      'containerId': containerId,
+      'requestDigest': requestDigest,
+      'state': 'prepared',
+    }),
+  );
+
+  Future<ResourceReservation> _reserve(ResourceReservation requested) =>
+      _locked('.lock', () async {
+        final data = await _read();
+        // Legacy unfinished intents have no endpoint; their collision cannot be
+        // ruled out. Do not infer safety from missing information.
+        if (data.intents.values.any(
+              (i) => i.phase != CreationPhase.completed,
+            ) ||
+            data.intents.containsKey(requested.operationId)) {
+          throw StateError('Legacy intent prevents reservation');
+        }
+        final old = data.reservations[requested.operationId];
+        if (old != null) {
+          final oldJson = old.toJson()..remove('state');
+          final newJson = requested.toJson()..remove('state');
+          if (old.state == 'cancelled' ||
+              jsonEncode(oldJson) != jsonEncode(newJson)) {
+            throw StateError('Operation ID already used');
+          }
+          return old;
+        }
+        if (data.reservations.values.any(
+          (r) => r.state != 'cancelled' && r.sameResource(requested),
+        )) {
+          throw StateError('Resource already reserved');
+        }
+        data.reservations[requested.operationId] = requested;
+        await _write(data);
+        return requested;
+      });
+
+  Future<ResourceReservation?> readReservation(String operationId) async {
+    if (!_operationPattern.hasMatch(operationId)) {
+      throw ArgumentError.value(operationId);
+    }
+    return (await _read()).reservations[operationId];
+  }
+
+  /// Irreversibly holds the key even if submission never happens. Only the
+  /// caller that successfully transitions from prepared may submit once;
+  /// subsequent calls fail, including after a crash. This does not assert that
+  /// a request was sent, completed, or terminated.
+  Future<ResourceReservation> markReservationUnknown(String operationId) =>
+      _reservationTransition(operationId, 'unknown');
+
+  /// Cancels only a prepared intent. This is safe only under the documented
+  /// pre-dispatch protocol; it is not evidence about a submitted request.
+  Future<ResourceReservation> cancelPreparedReservation(String operationId) =>
+      _reservationTransition(operationId, 'cancelled');
+
+  Future<ResourceReservation> _reservationTransition(
+    String operationId,
+    String target,
+  ) {
+    if (!_operationPattern.hasMatch(operationId)) {
+      throw ArgumentError.value(operationId);
+    }
+    return _locked('.lock', () async {
+      final data = await _read();
+      final old = data.reservations[operationId];
+      if (old == null ||
+          (old.state != 'prepared' &&
+              !(target == 'cancelled' && old.state == 'cancelled'))) {
+        throw StateError('Invalid reservation transition');
+      }
+      if (old.state == target) return old;
+      final updated = ResourceReservation.fromJson({
+        ...old.toJson(),
+        'state': target,
+      });
+      data.reservations[operationId] = updated;
+      await _write(data);
+      return updated;
     });
   }
 
