@@ -16,7 +16,8 @@ typedef DockerCommandRunner = Future<BridgeCommandResult> Function(
   Duration timeout,
 );
 
-class DockerContainerBridge implements ContainerBridge {
+class DockerContainerBridge
+    implements ContainerBridge, CompleteOutputContainerBridge {
   DockerContainerBridge({
     String? executable,
     DockerCommandRunner? runner,
@@ -56,7 +57,7 @@ class DockerContainerBridge implements ContainerBridge {
   }) async {
     final limit = timeout ?? const Duration(seconds: 60);
     if (_runner != null) return _runner(arguments, limit);
-    final process = cliStart(arguments);
+    final process = _DockerProcess(() => _launch(arguments));
     final out = StringBuffer(), err = StringBuffer();
     final stdout = process.stdoutLines.listen(out.writeln);
     final stderr = process.stderrLines.listen(err.writeln);
@@ -72,9 +73,70 @@ class DockerContainerBridge implements ContainerBridge {
         stdout: out.toString(),
         stderr: err.toString(),
         timedOut: timedOut,
+        outputMayBeIncomplete: process.outputMayBeIncomplete,
       );
     } finally {
       timer.cancel();
+      await stdout.cancel();
+      await stderr.cancel();
+    }
+  }
+
+  @override
+  Future<BridgeCommandResult> cliRunForIdentity(List<String> arguments) async {
+    const cap = 8 * 1024 * 1024;
+    if (_runner != null) {
+      final result = await _runner(arguments, const Duration(seconds: 60));
+      return BridgeCommandResult(
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        timedOut: result.timedOut,
+        outputMayBeIncomplete:
+            result.outputMayBeIncomplete ||
+            utf8.encode(result.stdout).length > cap ||
+            utf8.encode(result.stderr).length > cap,
+      );
+    }
+    final process = await _launch(arguments);
+    await process.stdin.close();
+    final out = <int>[], err = <int>[];
+    var truncated = false;
+    void collect(List<int> target, List<int> bytes) {
+      final remaining = cap - target.length;
+      if (bytes.length > remaining) truncated = true;
+      target.addAll(bytes.take(remaining));
+    }
+
+    final stdout = process.stdout.listen((bytes) => collect(out, bytes));
+    final stderr = process.stderr.listen((bytes) => collect(err, bytes));
+    final drained = Future.wait([
+      stdout.asFuture<void>(),
+      stderr.asFuture<void>(),
+    ]);
+    var timedOut = false;
+    Timer? force;
+    final timer = Timer(const Duration(seconds: 60), () {
+      timedOut = true;
+      process.kill();
+      force = Timer(
+        const Duration(seconds: 2),
+        () => process.kill(ProcessSignal.sigkill),
+      );
+    });
+    try {
+      final code = await process.exitCode;
+      await drained;
+      return BridgeCommandResult(
+        exitCode: code,
+        stdout: utf8.decode(out, allowMalformed: true),
+        stderr: utf8.decode(err, allowMalformed: true),
+        timedOut: timedOut,
+        outputMayBeIncomplete: truncated,
+      );
+    } finally {
+      timer.cancel();
+      force?.cancel();
       await stdout.cancel();
       await stderr.cancel();
     }
@@ -599,6 +661,7 @@ class _DockerProcess implements BridgeCliProcess {
     _exit = _run(launch);
   }
   final _stdout = _ReplayLines(), _stderr = _ReplayLines();
+  bool get outputMayBeIncomplete => _stdout.overflowed || _stderr.overflowed;
   Process? _process;
   bool _terminated = false;
   late final Future<int> _exit;
@@ -656,6 +719,7 @@ class _DockerProcess implements BridgeCliProcess {
 
 class _ReplayLines {
   final _lines = <String>[];
+  bool overflowed = false;
   final _events = StreamController<String>.broadcast(sync: true);
   bool _done = false;
   Stream<String> get stream => Stream<String>.multi((sink) {
@@ -672,6 +736,7 @@ class _ReplayLines {
   void add(String line) {
     _lines.add(line);
     if (_lines.length > 5000) {
+      overflowed = true;
       _lines.removeAt(0);
     }
     _events.add(line);
