@@ -1,6 +1,79 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:io';
+import 'dart:isolate';
+
+// macOS flock locks open file descriptions, unlike process-scoped fcntl locks.
+// Isolates can therefore contend safely even inside the same process.
+final class _MacFileLock {
+  static final _libc = DynamicLibrary.open('/usr/lib/libSystem.B.dylib');
+  static final _malloc = _libc
+      .lookupFunction<
+        Pointer<Uint8> Function(IntPtr),
+        Pointer<Uint8> Function(int)
+      >('malloc');
+  static final _free = _libc
+      .lookupFunction<
+        Void Function(Pointer<Void>),
+        void Function(Pointer<Void>)
+      >('free');
+  static final _open = _libc
+      .lookupFunction<
+        Int32 Function(Pointer<Uint8>, Int32),
+        int Function(Pointer<Uint8>, int)
+      >('open');
+  static final _flock = _libc
+      .lookupFunction<Int32 Function(Int32, Int32), int Function(int, int)>(
+        'flock',
+      );
+  static final _close = _libc
+      .lookupFunction<Int32 Function(Int32), int Function(int)>('close');
+  static final _errno = _libc
+      .lookupFunction<Pointer<Int32> Function(), Pointer<Int32> Function()>(
+        '__error',
+      );
+
+  static int acquire(String path) {
+    if (!Platform.isMacOS) {
+      throw UnsupportedError('Directory registry locking requires macOS');
+    }
+    final bytes = utf8.encode(path);
+    if (bytes.contains(0)) throw ArgumentError.value(path, 'path');
+    final name = _malloc(bytes.length + 1);
+    if (name == nullptr) throw StateError('Cannot allocate lock path');
+    try {
+      name.asTypedList(bytes.length + 1)
+        ..setAll(0, bytes)
+        ..[bytes.length] = 0;
+      // O_RDWR | O_CLOEXEC. The lock file is created by Dart before this call;
+      // open's variadic O_CREAT mode argument has a different arm64 ABI.
+      final fd = _open(name, 0x01000002);
+      if (fd < 0) _throwError('Cannot open lock file', path);
+      if (_flock(fd, 2) != 0) {
+        final error = _errno().value;
+        _close(fd);
+        throw FileSystemException(
+          'Cannot acquire lock',
+          path,
+          OSError('', error),
+        );
+      }
+      return fd;
+    } finally {
+      _free(name.cast());
+    }
+  }
+
+  static void release(int fd, String path) {
+    // close releases the flock even if an explicit unlock would fail.
+    if (_close(fd) != 0) _throwError('Cannot close lock file', path);
+  }
+
+  static Never _throwError(String message, String path) {
+    throw FileSystemException(message, path, OSError('', _errno().value));
+  }
+}
 
 enum CreationPhase { prepared, created, registered }
 
@@ -190,12 +263,16 @@ class DirectoryRegistry {
     _locks[key] = done.future;
     try {
       await previous;
-      final lock = await File(key).open(mode: FileMode.append);
+      // Create without truncating; flock's open file description is separate.
+      final file = await File(key).open(mode: FileMode.append);
+      await file.close();
+      // flock may wait for another process or isolate. Never block the caller's
+      // event loop; the returned descriptor remains owned by this operation.
+      final fd = await Isolate.run(() => _MacFileLock.acquire(key));
       try {
-        await lock.lock(FileLock.blockingExclusive);
         return await action();
       } finally {
-        await lock.close();
+        _MacFileLock.release(fd, key);
       }
     } finally {
       done.complete();
@@ -203,6 +280,9 @@ class DirectoryRegistry {
     }
   }
 
+  // Flush before atomic replacement protects process-restart recovery from
+  // partial JSON. This does not promise survival of OS crash or power loss:
+  // the containing directory and its creation are not synchronously flushed.
   Future<void> _write(_RegistryData data) async {
     final temp = await storage.parent.createTemp('.directory-registry-');
     try {

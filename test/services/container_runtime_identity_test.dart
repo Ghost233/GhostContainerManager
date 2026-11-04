@@ -73,6 +73,66 @@ void main() {
     },
   );
 
+  test(
+    'create rejects option injection and malformed label keys before execution',
+    () async {
+      final calls = <List<String>>[];
+      final service = ContainerRuntimeIdentityService(
+        DockerContainerBridge(
+          runner: (args, _) async {
+            calls.add(args);
+            return ok(id);
+          },
+        ),
+      );
+      for (final image in [
+        '--name=other',
+        '--label=${ContainerRuntimeIdentityService.productLabel}=false',
+        ' --label=x=y',
+      ]) {
+        await expectLater(
+          service.create(
+            businessName: 'b',
+            runtimeName: 'r',
+            operationId: op,
+            image: image,
+          ),
+          throwsArgumentError,
+        );
+      }
+      for (final key in [
+        '${ContainerRuntimeIdentityService.operationLabel}=other',
+        '${ContainerRuntimeIdentityService.productLabel}=false',
+        '',
+        ' ${ContainerRuntimeIdentityService.productLabel}',
+      ]) {
+        await expectLater(
+          service.create(
+            businessName: 'b',
+            runtimeName: 'r',
+            operationId: op,
+            image: 'example',
+            labels: {key: 'x'},
+          ),
+          throwsArgumentError,
+        );
+      }
+      expect(calls, isEmpty);
+      await service.create(
+        businessName: 'b',
+        runtimeName: 'r',
+        operationId: op,
+        image: 'example',
+        arguments: ['--name=not-a-docker-option'],
+      );
+      expect(calls.single.sublist(calls.single.length - 3), [
+        '--',
+        'example',
+        '--name=not-a-docker-option',
+      ]);
+    },
+  );
+
   test('invalid create result and failure never become identity', () async {
     for (final result in [
       ok(''),

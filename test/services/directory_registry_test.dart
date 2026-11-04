@@ -59,24 +59,31 @@ void main() {
     final root = await Directory.systemTemp.createTemp('gcm-isolate-lock-');
     addTearDown(() => root.delete(recursive: true));
     final storage = '${root.path}/registry.json';
-    final marker = '${root.path}/marker';
-    final results = await Future.wait(
+    final workPath = root.path;
+    final counter = '${root.path}/counter';
+    await File(counter).writeAsString('0');
+    await Future.wait(
       List.generate(
-        4,
-        (_) => Isolate.run(() async {
+        8,
+        (worker) => Isolate.run(() async {
           final registry = DirectoryRegistry(File(storage));
-          return registry.withIntentLock('shared', () async {
-            final file = File(marker);
-            final overlap = await file.exists();
-            await file.writeAsString('held');
-            await Future<void>.delayed(const Duration(milliseconds: 100));
-            await file.delete();
-            return overlap;
-          });
+          for (var i = 0; i < 20; i++) {
+            await registry.withIntentLock('shared', () async {
+              final file = File(counter);
+              final previous = int.parse(await file.readAsString());
+              await Future<void>.delayed(const Duration(milliseconds: 2));
+              await file.writeAsString('${previous + 1}');
+            });
+            await registry.register(workPath, 'container:worker-$worker-$i');
+          }
         }),
       ),
     );
-    expect(results, everyElement(isFalse));
+    expect(await File(counter).readAsString(), '160');
+    expect(
+      await DirectoryRegistry(File(storage)).query(workPath),
+      hasLength(160),
+    );
   });
   test('跨进程恢复锁互斥', () async {
     final root = await Directory.systemTemp.createTemp('gcm-process-lock-');

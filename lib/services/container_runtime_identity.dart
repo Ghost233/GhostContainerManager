@@ -39,6 +39,10 @@ class ContainerRuntimeIdentityService {
     _validateName(runtimeName);
     _validateOperation(operationId);
     if (image.trim().isEmpty ||
+        image.trim().startsWith('-') ||
+        labels.keys.any(
+          (key) => key.isEmpty || key.contains('=') || key.trim() != key,
+        ) ||
         labels.containsKey(productLabel) ||
         labels.containsKey(operationLabel)) {
       throw ArgumentError('Invalid image or reserved container label');
@@ -56,6 +60,7 @@ class ContainerRuntimeIdentityService {
         '--label',
         '${entry.key}=${entry.value}',
       ],
+      '--',
       image,
       ...arguments,
     ]);
