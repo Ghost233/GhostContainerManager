@@ -216,6 +216,44 @@ class _RegistryData {
   };
 }
 
+// jsonDecode validates syntax first but discards repeated keys. Compare decoded
+// key tokens within each object, keeping arrays and objects on an explicit stack.
+void _rejectDuplicateKeys(String source) {
+  final scopes = <Set<String>?>[];
+  var i = 0;
+  while (i < source.length) {
+    final char = source.codeUnitAt(i);
+    if (char == 0x22) {
+      final start = i++;
+      while (source.codeUnitAt(i) != 0x22) {
+        if (source.codeUnitAt(i) == 0x5c) i++;
+        i++;
+      }
+      i++;
+      var next = i;
+      while (next < source.length &&
+          const [0x20, 0x09, 0x0a, 0x0d].contains(source.codeUnitAt(next))) {
+        next++;
+      }
+      if (next < source.length && source.codeUnitAt(next) == 0x3a) {
+        final key = jsonDecode(source.substring(start, i)) as String;
+        if (!scopes.last!.add(key)) {
+          throw const FormatException('Duplicate registry object key');
+        }
+      }
+    } else {
+      if (char == 0x7b) {
+        scopes.add(<String>{});
+      } else if (char == 0x5b) {
+        scopes.add(null);
+      } else if (char == 0x7d || char == 0x5d) {
+        scopes.removeLast();
+      }
+      i++;
+    }
+  }
+}
+
 /// Shared management entry for explicit directory resource registrations.
 /// [storage] is an application-owned file, not a file in the managed directory.
 class DirectoryRegistry {
@@ -247,6 +285,7 @@ class DirectoryRegistry {
       rethrow;
     }
     final data = jsonDecode(contents);
+    _rejectDuplicateKeys(contents);
     if (data is! Map<String, dynamic>) {
       throw const FormatException('Invalid registry');
     }
