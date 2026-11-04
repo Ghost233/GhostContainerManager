@@ -75,7 +75,11 @@ final class _MacFileLock {
   }
 }
 
-enum CreationPhase { prepared, created, registered }
+/// The last durably completed step; [completed] includes the final refresh.
+enum CreationPhase { prepared, created, registered, started, completed }
+
+/// The step that failed, without persisting error messages or runtime secrets.
+enum CreationFailureStage { create, register, start, refresh }
 
 /// Only recovery identity is stored; runtime configuration and secrets are not.
 class CreationIntent {
@@ -86,6 +90,8 @@ class CreationIntent {
     required this.runtimeName,
     required this.phase,
     this.containerId,
+    this.shouldStart,
+    this.failureStage,
   });
 
   final String operationId;
@@ -95,6 +101,10 @@ class CreationIntent {
   final CreationPhase phase;
   final String? containerId;
 
+  /// Null means an old record whose start requirement is unknown.
+  final bool? shouldStart;
+  final CreationFailureStage? failureStage;
+
   Map<String, Object?> toJson() => {
     'operationId': operationId,
     'directory': directory,
@@ -102,6 +112,8 @@ class CreationIntent {
     'runtimeName': runtimeName,
     'phase': phase.name,
     if (containerId != null) 'containerId': containerId,
+    if (shouldStart != null) 'shouldStart': shouldStart,
+    if (failureStage != null) 'failureStage': failureStage!.name,
   };
 
   static CreationIntent fromJson(Object? value) {
@@ -114,6 +126,8 @@ class CreationIntent {
             'runtimeName',
             'phase',
             'containerId',
+            'shouldStart',
+            'failureStage',
           }.contains(key),
         ) ||
         value['operationId'] is! String ||
@@ -121,12 +135,30 @@ class CreationIntent {
         value['businessName'] is! String ||
         value['runtimeName'] is! String ||
         value['phase'] is! String ||
-        (value.containsKey('containerId') && value['containerId'] is! String)) {
+        (value.containsKey('containerId') && value['containerId'] is! String) ||
+        (value.containsKey('shouldStart') && value['shouldStart'] is! bool) ||
+        (value.containsKey('failureStage') &&
+            value['failureStage'] is! String)) {
       throw const FormatException('Invalid creation intent');
     }
     final phase = CreationPhase.values.where((p) => p.name == value['phase']);
     final id = value['containerId'] as String?;
+    final start = value['shouldStart'] as bool?;
+    final failureName = value['failureStage'];
+    final failures = CreationFailureStage.values.where(
+      (s) => s.name == failureName,
+    );
     if (phase.length != 1 ||
+        (failureName != null && failures.length != 1) ||
+        (phase.isNotEmpty &&
+            phase.single == CreationPhase.started &&
+            start != true) ||
+        (phase.isNotEmpty &&
+            phase.single == CreationPhase.completed &&
+            start == null) ||
+        (phase.isNotEmpty &&
+            failureName != null &&
+            !_failureAllowed(phase.single, start, failures.single)) ||
         !_operationPattern.hasMatch(value['operationId'] as String) ||
         !(value['directory'] as String).startsWith('/') ||
         (value['businessName'] as String).isEmpty ||
@@ -141,9 +173,25 @@ class CreationIntent {
       runtimeName: value['runtimeName'] as String,
       phase: phase.single,
       containerId: id,
+      shouldStart: start,
+      failureStage: failureName == null ? null : failures.single,
     );
   }
 }
+
+bool _failureAllowed(
+  CreationPhase phase,
+  bool? start,
+  CreationFailureStage failure,
+) => switch (failure) {
+  CreationFailureStage.create => phase == CreationPhase.prepared,
+  CreationFailureStage.register => phase == CreationPhase.created,
+  CreationFailureStage.start =>
+    phase == CreationPhase.registered && start == true,
+  CreationFailureStage.refresh =>
+    (phase == CreationPhase.registered && start == false) ||
+        (phase == CreationPhase.started && start == true),
+};
 
 final _operationPattern = RegExp(r'^[a-zA-Z0-9_-]{1,128}$');
 final _containerPattern = RegExp(r'^[0-9a-f]{64}$');
@@ -246,7 +294,7 @@ class DirectoryRegistry {
       }
     }
     for (final intent in intents.values) {
-      if (intent.phase == CreationPhase.registered &&
+      if (intent.phase.index >= CreationPhase.registered.index &&
           owners[intent.containerId] != intent.directory) {
         throw const FormatException('Missing registered container');
       }
@@ -350,7 +398,7 @@ class DirectoryRegistry {
   Future<List<CreationIntent>> pendingIntents() async {
     final intents =
         (await _read()).intents.values
-            .where((intent) => intent.phase != CreationPhase.registered)
+            .where((intent) => intent.phase != CreationPhase.completed)
             .toList()
           ..sort((a, b) => a.operationId.compareTo(b.operationId));
     return List.unmodifiable(intents);
@@ -368,6 +416,7 @@ class DirectoryRegistry {
     required String directory,
     required String businessName,
     required String runtimeName,
+    bool shouldStart = false,
   }) async {
     if (!_operationPattern.hasMatch(operationId) ||
         businessName.isEmpty ||
@@ -381,7 +430,9 @@ class DirectoryRegistry {
       if (existing != null) {
         if (existing.directory != identity ||
             existing.businessName != businessName ||
-            existing.runtimeName != runtimeName) {
+            existing.runtimeName != runtimeName ||
+            (existing.shouldStart != null &&
+                existing.shouldStart != shouldStart)) {
           throw StateError('Operation ID already used');
         }
         return existing;
@@ -392,10 +443,43 @@ class DirectoryRegistry {
         businessName: businessName,
         runtimeName: runtimeName,
         phase: CreationPhase.prepared,
+        shouldStart: shouldStart,
       );
       data.intents[operationId] = intent;
       await _write(data);
       return intent;
+    });
+  }
+
+  /// Records only the failed step. Successful advancement clears the failure.
+  Future<CreationIntent> recordIntentFailure(
+    String operationId,
+    CreationFailureStage failureStage,
+  ) async {
+    if (!_operationPattern.hasMatch(operationId)) {
+      throw ArgumentError.value(operationId, 'operationId');
+    }
+    return _locked('.lock', () async {
+      final data = await _read();
+      final old = data.intents[operationId];
+      if (old == null ||
+          !_failureAllowed(old.phase, old.shouldStart, failureStage)) {
+        throw StateError('Invalid intent failure stage');
+      }
+      if (old.failureStage == failureStage) return old;
+      final updated = CreationIntent(
+        operationId: old.operationId,
+        directory: old.directory,
+        businessName: old.businessName,
+        runtimeName: old.runtimeName,
+        phase: old.phase,
+        containerId: old.containerId,
+        shouldStart: old.shouldStart,
+        failureStage: failureStage,
+      );
+      data.intents[operationId] = updated;
+      await _write(data);
+      return updated;
     });
   }
 
@@ -417,10 +501,18 @@ class DirectoryRegistry {
       if (old.containerId != null && old.containerId != containerId) {
         throw StateError('Container ID cannot change');
       }
-      if (phase.index < old.phase.index || phase.index > old.phase.index + 1) {
-        throw StateError('Invalid intent transition');
-      }
       if (phase == old.phase) return old;
+      final valid = switch (old.phase) {
+        CreationPhase.prepared => phase == CreationPhase.created,
+        CreationPhase.created => phase == CreationPhase.registered,
+        CreationPhase.registered =>
+          old.shouldStart == true
+              ? phase == CreationPhase.started
+              : old.shouldStart == false && phase == CreationPhase.completed,
+        CreationPhase.started => phase == CreationPhase.completed,
+        CreationPhase.completed => false,
+      };
+      if (!valid) throw StateError('Invalid intent transition');
       if (phase == CreationPhase.registered) {
         _register(data, old.directory, 'container:$containerId');
       }
@@ -431,6 +523,7 @@ class DirectoryRegistry {
         runtimeName: old.runtimeName,
         phase: phase,
         containerId: containerId,
+        shouldStart: old.shouldStart,
       );
       data.intents[operationId] = updated;
       await _write(data);

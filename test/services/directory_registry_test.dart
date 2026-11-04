@@ -11,6 +11,115 @@ import 'package:ghost_container_manager/services/project_service.dart';
 import 'project_service_test.dart' show FakeProjectCli;
 
 void main() {
+  test('启动与刷新阶段及失败可重启恢复', () async {
+    final root = await Directory.systemTemp.createTemp('gcm-stages-');
+    addTearDown(() => root.delete(recursive: true));
+    final work = await Directory('${root.path}/work').create();
+    final storage = File('${root.path}/registry.json');
+    final registry = DirectoryRegistry(storage);
+    const op = 'start';
+    final id = 'a' * 64;
+    await registry.createIntent(
+      operationId: op,
+      directory: work.path,
+      businessName: 'business',
+      runtimeName: 'runtime',
+      shouldStart: true,
+    );
+    await registry.recordIntentFailure(op, CreationFailureStage.create);
+    expect(
+      (await DirectoryRegistry(storage).readIntent(op))!.failureStage,
+      CreationFailureStage.create,
+    );
+    await registry.advanceIntent(op, CreationPhase.created, containerId: id);
+    await registry.recordIntentFailure(op, CreationFailureStage.register);
+    await registry.advanceIntent(op, CreationPhase.registered, containerId: id);
+    await registry.recordIntentFailure(op, CreationFailureStage.start);
+    final restarted = DirectoryRegistry(storage);
+    final pending = (await restarted.pendingIntents()).single;
+    expect(pending.shouldStart, isTrue);
+    expect(pending.containerId, id);
+    expect(pending.failureStage, CreationFailureStage.start);
+    expect(await restarted.query(work.path), ['container:$id']);
+    await expectLater(
+      restarted.advanceIntent(op, CreationPhase.completed, containerId: id),
+      throwsStateError,
+    );
+    await restarted.advanceIntent(op, CreationPhase.started, containerId: id);
+    await restarted.recordIntentFailure(op, CreationFailureStage.refresh);
+    expect(
+      (await DirectoryRegistry(storage).pendingIntents()).single.failureStage,
+      CreationFailureStage.refresh,
+    );
+    await restarted.advanceIntent(op, CreationPhase.completed, containerId: id);
+    expect(await restarted.pendingIntents(), isEmpty);
+    expect((await restarted.readIntent(op))!.failureStage, isNull);
+  });
+
+  test('并发重复失败记录与推进不丢失已知容器', () async {
+    final root = await Directory.systemTemp.createTemp('gcm-stage-race-');
+    addTearDown(() => root.delete(recursive: true));
+    final work = await Directory('${root.path}/work').create();
+    final storage = File('${root.path}/registry.json');
+    final registry = DirectoryRegistry(storage);
+    final id = 'c' * 64;
+    await registry.createIntent(
+      operationId: 'op',
+      directory: work.path,
+      businessName: 'b',
+      runtimeName: 'r',
+      shouldStart: false,
+    );
+    await Future.wait(
+      List.generate(
+        8,
+        (_) =>
+            DirectoryRegistry(storage)
+                .advanceIntent('op', CreationPhase.created, containerId: id),
+      ),
+    );
+    await Future.wait(
+      List.generate(
+        8,
+        (_) =>
+            DirectoryRegistry(storage)
+                .recordIntentFailure('op', CreationFailureStage.register),
+      ),
+    );
+    await Future.wait(
+      List.generate(
+        8,
+        (_) =>
+            DirectoryRegistry(storage)
+                .advanceIntent('op', CreationPhase.registered, containerId: id),
+      ),
+    );
+    final recovered = (await DirectoryRegistry(
+      storage,
+    ).pendingIntents()).single;
+    expect(recovered.containerId, id);
+    expect(recovered.failureStage, isNull);
+    expect(await registry.query(work.path), ['container:$id']);
+  });
+
+  test('旧已登记意图启动要求未知并保守保留', () async {
+    final root = await Directory.systemTemp.createTemp('gcm-old-intent-');
+    addTearDown(() => root.delete(recursive: true));
+    final work = await Directory('${root.path}/work').create();
+    final path = await work.resolveSymbolicLinks();
+    final id = 'b' * 64;
+    final storage = File('${root.path}/registry.json');
+    await storage.writeAsString(
+      '{"version":1,"entries":{"$path":["container:$id"]},"intents":{"old":{"operationId":"old","directory":"$path","businessName":"b","runtimeName":"r","phase":"registered","containerId":"$id"}}}',
+    );
+    final registry = DirectoryRegistry(storage);
+    expect((await registry.pendingIntents()).single.shouldStart, isNull);
+    await expectLater(
+      registry.advanceIntent('old', CreationPhase.completed, containerId: id),
+      throwsStateError,
+    );
+    expect(await registry.query(work.path), ['container:$id']);
+  });
   test('重启发现待恢复意图并识别大小写不同的容器归属', () async {
     final root = await Directory.systemTemp.createTemp('gcm-discover-');
     addTearDown(() => root.delete(recursive: true));
@@ -52,8 +161,14 @@ void main() {
       (await DirectoryRegistry(
         storage,
       ).pendingIntents()).map((intent) => intent.operationId),
-      ['z'],
+      ['a', 'z'],
     );
+    await restarted.advanceIntent(
+      'a',
+      CreationPhase.completed,
+      containerId: id,
+    );
+    expect((await restarted.pendingIntents()).map((i) => i.operationId), ['z']);
   });
   test('跨 isolate 恢复锁互斥', () async {
     final root = await Directory.systemTemp.createTemp('gcm-isolate-lock-');
