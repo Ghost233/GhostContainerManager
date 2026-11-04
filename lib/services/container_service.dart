@@ -10,6 +10,8 @@ import 'dart:convert';
 import '../bridge/container_bridge.dart';
 import 'container_logs_parser.dart';
 import 'container_models.dart';
+import 'directory_container_recovery.dart';
+import 'directory_registry.dart';
 import 'errors.dart';
 import 'image_models.dart';
 
@@ -66,9 +68,47 @@ class ContainerService {
     required ContainerBridge bridge,
     Duration? foregroundInterval,
     Duration? backgroundInterval,
+    DirectoryRegistry? directoryRegistry,
   }) : _bridge = bridge,
        foregroundInterval = foregroundInterval ?? const Duration(seconds: 2),
-       backgroundInterval = backgroundInterval ?? const Duration(seconds: 10);
+       backgroundInterval = backgroundInterval ?? const Duration(seconds: 10) {
+    if (directoryRegistry != null) {
+      configureDirectoryRecovery(directoryRegistry);
+    }
+  }
+
+  DirectoryContainerRecovery? _directoryRecovery;
+  DirectoryRegistry Function()? _directoryRegistryProvider;
+
+  /// Directory creation is opt-in; global operations retain their behavior.
+  DirectoryContainerRecovery? get directoryRecovery {
+    final provider = _directoryRegistryProvider;
+    if (_directoryRecovery == null && provider != null) {
+      _directoryRecovery = DirectoryContainerRecovery(
+        registry: provider(),
+        bridge: _bridge,
+        refresh: () async {
+          if (_refreshInFlight) {
+            throw StateError('Container refresh already in flight');
+          }
+          await refresh();
+        },
+      );
+    }
+    return _directoryRecovery;
+  }
+
+  void configureDirectoryRecovery(DirectoryRegistry registry) =>
+      configureDirectoryRecoveryProvider(() => registry);
+
+  void configureDirectoryRecoveryProvider(
+    DirectoryRegistry Function() provider,
+  ) {
+    if (_directoryRegistryProvider != null) {
+      throw StateError('Directory recovery already configured');
+    }
+    _directoryRegistryProvider = provider;
+  }
 
   final ContainerBridge _bridge;
 
