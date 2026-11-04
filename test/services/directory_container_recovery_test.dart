@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -5,12 +6,30 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ghost_container_manager/bridge/container_bridge.dart';
 import 'package:ghost_container_manager/bridge/docker_container_bridge.dart';
 import 'package:ghost_container_manager/services/container_runtime_identity.dart';
+import 'package:ghost_container_manager/services/container_service.dart';
 import 'package:ghost_container_manager/services/directory_container_recovery.dart';
 import 'package:ghost_container_manager/services/directory_registry.dart';
 
+class FaultRegistry extends DirectoryRegistry {
+  FaultRegistry(super.storage);
+  bool failCreated = false;
+
+  @override
+  Future<CreationIntent> advanceIntent(
+    String operationId,
+    CreationPhase phase, {
+    String? containerId,
+  }) {
+    if (failCreated && phase == CreationPhase.created) {
+      throw FileSystemException('injected write failure');
+    }
+    return super.advanceIntent(operationId, phase, containerId: containerId);
+  }
+}
+
 void main() {
   late Directory temp;
-  late DirectoryRegistry registry;
+  late FaultRegistry registry;
   final id = 'a' * 64;
   final calls = <List<String>>[];
   String? operation;
@@ -19,21 +38,27 @@ void main() {
   var failStart = false;
   var loseResponse = false;
   var failRefresh = false;
+  var running = false;
+  late ContainerService management;
+  late DockerContainerBridge bridge;
+  Completer<void>? blockRefresh;
 
   BridgeCommandResult ok(String text) =>
       BridgeCommandResult(exitCode: 0, stdout: text, stderr: '');
   late DirectoryContainerRecovery service;
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('gcm-recovery-');
-    registry = DirectoryRegistry(File('${temp.path}/registry.json'));
+    registry = FaultRegistry(File('${temp.path}/registry.json'));
     calls.clear();
     queryMode = 'one';
     failStart = false;
     loseResponse = false;
     failRefresh = false;
+    running = false;
+    blockRefresh = null;
     operation = null;
     name = null;
-    final bridge = DockerContainerBridge(
+    bridge = DockerContainerBridge(
       runner: (args, _) async {
         calls.add(args);
         if (args[1] == 'create') {
@@ -63,6 +88,10 @@ void main() {
           return ok(id);
         }
         if (args[1] == 'ls') {
+          if (!args.contains('--filter')) {
+            await blockRefresh?.future;
+            return ok('');
+          }
           if (queryMode == 'unavailable') {
             throw const BridgeCallException('offline');
           }
@@ -76,6 +105,10 @@ void main() {
               {
                 'Id': actualId,
                 'Name': '/$name',
+                'State': {
+                  'Status': running ? 'running' : 'created',
+                  'Running': running,
+                },
                 'Config': {
                   'Labels': {
                     ContainerRuntimeIdentityService.productLabel:
@@ -90,11 +123,13 @@ void main() {
         if (args[1] == 'start') {
           expect(args.last, id);
           if (failStart) throw const BridgeCallException('start failed');
+          running = true;
           return ok('');
         }
         throw StateError('Unexpected $args');
       },
     );
+    management = ContainerService(bridge: bridge, directoryRegistry: registry);
     service = DirectoryContainerRecovery(
       registry: registry,
       bridge: bridge,
@@ -126,19 +161,47 @@ void main() {
     expect(calls.where((c) => c[1] == 'create').length, 1);
   });
 
-  test('lost response recovers and never recreates', () async {
+  test('unique match after unknown create remains pending without termination proof', () async {
     loseResponse = true;
     final result = await service.create(
       directory: temp.path,
       businessName: 'web',
       image: 'image',
+      start: true,
     );
     expect(result.status, DirectoryCreationStatus.unknown);
+    final recovered = await service.recover(result.operationId);
+    expect(recovered.status, DirectoryCreationStatus.unknown);
+    expect(recovered.containerId, id);
     expect(
-      (await service.recover(result.operationId)).status,
-      DirectoryCreationStatus.registered,
+      (await registry.readIntent(result.operationId))!.phase,
+      CreationPhase.prepared,
     );
+    expect(await registry.query(temp.path), isEmpty);
     expect(calls.where((c) => c[1] == 'create').length, 1);
+    expect(calls.where((c) => c[1] == 'start'), isEmpty);
+  });
+
+  test('unique match while original create remains in flight cannot register or start', () async {
+    final requestFinished = Completer<void>();
+    operation = 'still-in-flight';
+    name = 'gcm-still-in-flight';
+    await registry.createIntent(
+      operationId: operation!,
+      directory: temp.path,
+      businessName: 'web',
+      runtimeName: name!,
+      shouldStart: true,
+    );
+    final result = await management.directoryRecovery!.recover(operation!);
+    expect(requestFinished.isCompleted, isFalse);
+    expect(result.status, DirectoryCreationStatus.unknown);
+    expect(await registry.query(temp.path), isEmpty);
+    expect(
+      calls.where((call) => call[1] == 'start' || call[1] == 'create'),
+      isEmpty,
+    );
+    requestFinished.complete();
   });
 
   test(
@@ -175,11 +238,99 @@ void main() {
     expect(result.stage, DirectoryCreationStage.start);
     expect(result.containerId, id);
     expect(await registry.query(temp.path), ['container:$id']);
+    expect(
+      (await registry.readIntent(result.operationId))!.failureStage,
+      CreationFailureStage.start,
+    );
     failStart = false;
-    failRefresh = true;
+    service = DirectoryContainerRecovery(
+      registry: DirectoryRegistry(registry.storage),
+      bridge: bridge,
+      refresh: () async {
+        if (failRefresh) throw StateError('refresh');
+      },
+    );
     final retried = await service.retryStart(result.operationId);
-    expect(retried.stage, DirectoryCreationStage.refresh);
-    expect(retried.containerId, id);
+    expect(retried.status, DirectoryCreationStatus.unknown);
+    expect(retried.stage, DirectoryCreationStage.start);
+    expect(calls.where((c) => c[1] == 'start').length, 1);
+    running = true;
+    failRefresh = true;
+    final reconciled = await service.recover(result.operationId);
+    expect(reconciled.status, DirectoryCreationStatus.unknown);
+    expect(reconciled.stage, DirectoryCreationStage.start);
+    expect(reconciled.containerId, id);
+    expect(calls.where((c) => c[1] == 'start').length, 1);
+    expect(
+      (await registry.readIntent(result.operationId))!.failureStage,
+      CreationFailureStage.start,
+    );
+  });
+
+  test(
+    'known ID is reported but cannot prove termination after write failure',
+    () async {
+      registry.failCreated = true;
+      final result = await management.directoryRecovery!.create(
+        directory: temp.path,
+        businessName: 'web',
+        image: 'image',
+      );
+      expect(result.containerId, id);
+      expect(result.stage, DirectoryCreationStage.storage);
+      expect(
+        (await registry.readIntent(result.operationId))!.phase,
+        CreationPhase.prepared,
+      );
+      registry.failCreated = false;
+      final mismatch = await management.directoryRecovery!.recover(
+        result.operationId,
+        expectedContainerId: 'b' * 64,
+      );
+      expect(mismatch.status, DirectoryCreationStatus.conflict);
+      final recovered = await management.directoryRecovery!.recover(
+        result.operationId,
+        expectedContainerId: id,
+      );
+      expect(recovered.status, DirectoryCreationStatus.unknown);
+      expect(recovered.containerId, id);
+      expect(await registry.query(temp.path), isEmpty);
+      expect(calls.where((c) => c[1] == 'create').length, 1);
+    },
+  );
+
+  test('in-flight global refresh does not complete recovery', () async {
+    blockRefresh = Completer<void>();
+    final inFlight = management.refresh();
+    final result = await management.directoryRecovery!.create(
+      directory: temp.path,
+      businessName: 'web',
+      image: 'image',
+    );
+    expect(result.stage, DirectoryCreationStage.refresh);
+    expect(
+      (await registry.readIntent(result.operationId))!.failureStage,
+      CreationFailureStage.refresh,
+    );
+    blockRefresh!.complete();
+    await inFlight;
+    expect(
+      (await management.directoryRecovery!.recover(result.operationId)).status,
+      DirectoryCreationStatus.registered,
+    );
+  });
+
+  test('shared container management entry creates and completes', () async {
+    final result = await management.directoryRecovery!.create(
+      directory: temp.path,
+      businessName: 'web',
+      image: 'image',
+    );
+    expect(result.status, DirectoryCreationStatus.registered);
+    expect(
+      (await registry.readIntent(result.operationId))!.phase,
+      CreationPhase.completed,
+    );
   });
 
   test('reserved labels and broken registry fail before create', () async {

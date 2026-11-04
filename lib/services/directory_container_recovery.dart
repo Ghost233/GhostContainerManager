@@ -29,19 +29,18 @@ class DirectoryCreationResult {
 }
 
 /// Additive shared service; the legacy global container APIs are unchanged.
-/// A recovery never issues another create, starts or deletes a container.
+/// Recovery never recreates or deletes a container, and does not retry an
+/// uncertain start.
 class DirectoryContainerRecovery {
   DirectoryContainerRecovery({
     required DirectoryRegistry registry,
     required ContainerBridge bridge,
     required Future<void> Function() refresh,
   }) : _registry = registry,
-       _bridge = bridge,
        _identity = ContainerRuntimeIdentityService(bridge),
        _refresh = refresh;
 
   final DirectoryRegistry _registry;
-  final ContainerBridge _bridge;
   final ContainerRuntimeIdentityService _identity;
   final Future<void> Function() _refresh;
 
@@ -78,6 +77,7 @@ class DirectoryContainerRecovery {
         directory: directory,
         businessName: businessName,
         runtimeName: runtimeName,
+        shouldStart: start,
       );
       // Even a random collision must not cause a second create.
       if (intent.phase != CreationPhase.prepared) {
@@ -94,6 +94,19 @@ class DirectoryContainerRecovery {
           arguments: arguments,
         )).fullId;
       } catch (error) {
+        try {
+          await _registry.recordIntentFailure(
+            operationId,
+            CreationFailureStage.create,
+          );
+        } catch (storageError) {
+          return DirectoryCreationResult(
+            operationId: operationId,
+            status: DirectoryCreationStatus.unknown,
+            stage: DirectoryCreationStage.storage,
+            error: (error, storageError),
+          );
+        }
         return DirectoryCreationResult(
           operationId: operationId,
           status: DirectoryCreationStatus.unknown,
@@ -116,38 +129,53 @@ class DirectoryContainerRecovery {
           error: error,
         );
       }
-      final result = await _recoverLocked(
-        (await _registry.readIntent(operationId))!,
-      );
-      if (result.status != DirectoryCreationStatus.registered) return result;
-      if (start) return _startLocked(intent.operationId, id);
-      return _refreshLocked(operationId, id);
+      try {
+        return await _recoverLocked((await _registry.readIntent(operationId))!);
+      } catch (error) {
+        return DirectoryCreationResult(
+          operationId: operationId,
+          containerId: id,
+          status: DirectoryCreationStatus.failed,
+          stage: DirectoryCreationStage.storage,
+          error: error,
+        );
+      }
     });
   }
 
-  Future<DirectoryCreationResult> recover(String operationId) =>
-      _registry.withIntentLock(operationId, () async {
-        final intent = await _registry.readIntent(operationId);
-        if (intent == null) throw StateError('Unknown creation intent');
-        return _recoverLocked(intent);
-      });
+  Future<DirectoryCreationResult> recover(
+    String operationId, {
+    String? expectedContainerId,
+  }) => _registry.withIntentLock(operationId, () async {
+    final intent = await _registry.readIntent(operationId);
+    if (intent == null) throw StateError('Unknown creation intent');
+    return _recoverLocked(intent, expectedContainerId: expectedContainerId);
+  });
 
   /// Explicit retry: re-check identity by full ID under the same operation lock.
   Future<DirectoryCreationResult> retryStart(String operationId) =>
       _registry.withIntentLock(operationId, () async {
         final intent = await _registry.readIntent(operationId);
         if (intent == null) throw StateError('Unknown creation intent');
-        if (intent.phase != CreationPhase.registered) {
-          throw StateError('Container is not registered');
-        }
-        final result = await _recoverLocked(intent);
-        if (result.status != DirectoryCreationStatus.registered) return result;
-        return _startLocked(operationId, intent.containerId!);
+        return _recoverLocked(intent);
       });
 
-  Future<DirectoryCreationResult> _recoverLocked(CreationIntent intent) async {
+  Future<DirectoryCreationResult> _recoverLocked(
+    CreationIntent intent, {
+    String? expectedContainerId,
+  }) async {
     final operationId = intent.operationId;
-    final knownId = intent.containerId;
+    if (intent.containerId != null &&
+        expectedContainerId != null &&
+        intent.containerId != expectedContainerId) {
+      return DirectoryCreationResult(
+        operationId: operationId,
+        containerId: intent.containerId,
+        status: DirectoryCreationStatus.conflict,
+        stage: DirectoryCreationStage.identity,
+      );
+    }
+    final knownId = intent.containerId ?? expectedContainerId;
     final RuntimeContainerQuery query;
     try {
       query = await _identity.queryOperation(operationId);
@@ -189,67 +217,158 @@ class DirectoryContainerRecovery {
         stage: DirectoryCreationStage.identity,
       );
     }
+    // A prepared intent does not prove the original request has terminated.
+    // A unique match, including an externally supplied ID, cannot establish
+    // quiescence after a timeout or a process restart. Do not register or start.
+    if (intent.phase == CreationPhase.prepared) {
+      return DirectoryCreationResult(
+        operationId: operationId,
+        containerId: match.fullId,
+        status: DirectoryCreationStatus.unknown,
+        stage: DirectoryCreationStage.create,
+      );
+    }
     try {
-      if (intent.phase == CreationPhase.prepared) {
-        intent = await _registry.advanceIntent(
-          operationId,
-          CreationPhase.created,
-          containerId: match.fullId,
-        );
-      }
       if (intent.phase == CreationPhase.created) {
-        await _registry.advanceIntent(
+        intent = await _registry.advanceIntent(
           operationId,
           CreationPhase.registered,
           containerId: match.fullId,
         );
       }
     } catch (error) {
+      Object reported = error;
+      if (intent.phase == CreationPhase.created) {
+        try {
+          await _registry.recordIntentFailure(
+            operationId,
+            CreationFailureStage.register,
+          );
+        } catch (storageError) {
+          reported = (error, storageError);
+        }
+      }
       return DirectoryCreationResult(
         operationId: operationId,
         containerId: match.fullId,
         status: DirectoryCreationStatus.failed,
         stage: DirectoryCreationStage.storage,
-        error: error,
+        error: reported,
       );
     }
-    return DirectoryCreationResult(
-      operationId: operationId,
-      containerId: match.fullId,
-      status: DirectoryCreationStatus.registered,
-    );
-  }
-
-  Future<DirectoryCreationResult> _startLocked(
-    String operationId,
-    String id,
-  ) async {
-    try {
-      await _bridge.containerStart(id);
-    } catch (error) {
+    final id = match.fullId;
+    if (intent.phase == CreationPhase.completed) {
       return DirectoryCreationResult(
         operationId: operationId,
         containerId: id,
-        status: DirectoryCreationStatus.failed,
-        stage: DirectoryCreationStage.start,
-        error: error,
+        status: DirectoryCreationStatus.registered,
       );
     }
-    return _refreshLocked(operationId, id);
-  }
-
-  Future<DirectoryCreationResult> _refreshLocked(
-    String operationId,
-    String id,
-  ) async {
+    if (intent.shouldStart == null) {
+      return DirectoryCreationResult(
+        operationId: operationId,
+        containerId: id,
+        status: DirectoryCreationStatus.unknown,
+        stage: DirectoryCreationStage.start,
+      );
+    }
+    if (intent.phase == CreationPhase.registered &&
+        intent.shouldStart == true) {
+      if (intent.failureStage == CreationFailureStage.start) {
+        // Even a running observation cannot prove a prior start request has
+        // terminated: another actor may have started the same container.
+        return DirectoryCreationResult(
+          operationId: operationId,
+          containerId: id,
+          status: DirectoryCreationStatus.unknown,
+          stage: DirectoryCreationStage.start,
+        );
+      } else {
+        // This durable sentinel is written before issuing start. A crash after
+        // the write is indistinguishable from a request still in flight.
+        try {
+          await _registry.recordIntentFailure(
+            operationId,
+            CreationFailureStage.start,
+          );
+        } catch (error) {
+          return DirectoryCreationResult(
+            operationId: operationId,
+            containerId: id,
+            status: DirectoryCreationStatus.failed,
+            stage: DirectoryCreationStage.storage,
+            error: error,
+          );
+        }
+        try {
+          await _identity.start(
+            fullId: id,
+            runtimeName: intent.runtimeName,
+            operationId: operationId,
+          );
+        } catch (error) {
+          return DirectoryCreationResult(
+            operationId: operationId,
+            containerId: id,
+            status: DirectoryCreationStatus.unknown,
+            stage: DirectoryCreationStage.start,
+            error: error,
+          );
+        }
+      }
+      try {
+        intent = await _registry.advanceIntent(
+          operationId,
+          CreationPhase.started,
+          containerId: id,
+        );
+      } catch (error) {
+        return DirectoryCreationResult(
+          operationId: operationId,
+          containerId: id,
+          status: DirectoryCreationStatus.failed,
+          stage: DirectoryCreationStage.storage,
+          error: error,
+        );
+      }
+    }
     try {
       await _refresh();
     } catch (error) {
+      try {
+        await _registry.recordIntentFailure(
+          operationId,
+          CreationFailureStage.refresh,
+        );
+      } catch (storageError) {
+        return DirectoryCreationResult(
+          operationId: operationId,
+          containerId: id,
+          status: DirectoryCreationStatus.failed,
+          stage: DirectoryCreationStage.storage,
+          error: (error, storageError),
+        );
+      }
       return DirectoryCreationResult(
         operationId: operationId,
         containerId: id,
         status: DirectoryCreationStatus.failed,
         stage: DirectoryCreationStage.refresh,
+        error: error,
+      );
+    }
+    try {
+      await _registry.advanceIntent(
+        operationId,
+        CreationPhase.completed,
+        containerId: id,
+      );
+    } catch (error) {
+      return DirectoryCreationResult(
+        operationId: operationId,
+        containerId: id,
+        status: DirectoryCreationStatus.failed,
+        stage: DirectoryCreationStage.storage,
         error: error,
       );
     }

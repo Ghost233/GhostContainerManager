@@ -99,6 +99,9 @@ class _GhostContainerManagerAppState extends State<GhostContainerManagerApp> {
       containerService: _containerService,
       imageService: _imageService,
     );
+    _containerService.configureDirectoryRecoveryProvider(
+      () => _projectService.directoryRegistry,
+    );
     _registryService = RegistryService(
       containers: _containerService,
       images: _imageService,
