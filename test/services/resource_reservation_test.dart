@@ -35,6 +35,23 @@ void main() {
     requestDigest: digest ?? 'a' * 64,
   );
 
+  test(
+    'active reservation blocks new legacy intent across namespaces',
+    () async {
+      await create('one');
+      await expectLater(
+        registry.createIntent(
+          operationId: 'legacy',
+          directory: work.path,
+          businessName: 'different',
+          runtimeName: 'different',
+        ),
+        throwsStateError,
+      );
+      expect(await registry.pendingIntents(), isEmpty);
+    },
+  );
+
   test('unknown persists and can never be cancelled or bypassed', () async {
     await create('one');
     await registry.markReservationUnknown('one');
@@ -49,9 +66,30 @@ void main() {
       throwsStateError,
     );
     await expectLater(create('two'), throwsStateError);
+    await expectLater(
+      restarted.createIntent(
+        operationId: 'legacy',
+        directory: work.path,
+        businessName: 'different',
+        runtimeName: 'different',
+      ),
+      throwsStateError,
+    );
+    await expectLater(
+      restarted.reserveStart(
+        operationId: 'start',
+        endpoint: 'c' * 64,
+        containerId: 'f' * 64,
+        requestDigest: 'a' * 64,
+      ),
+      throwsStateError,
+    );
     await expectLater(create('one', digest: 'c' * 64), throwsStateError);
     expect((await create('one')).state, 'unknown');
-    await create('different-endpoint', endpoint: 'c' * 64);
+    await expectLater(
+      create('different-endpoint', endpoint: 'c' * 64),
+      throwsStateError,
+    );
   });
 
   test(
@@ -72,39 +110,45 @@ void main() {
     },
   );
 
-  test('start resource uses endpoint and full container ID', () async {
-    final id = 'a' * 64;
-    await registry.reserveStart(
-      operationId: 'one',
-      endpoint: 'b' * 64,
-      containerId: id,
-      requestDigest: 'a' * 64,
-    );
-    await expectLater(
-      registry.reserveStart(
-        operationId: 'two',
+  test(
+    'start requires full ID and conservatively blocks other endpoints',
+    () async {
+      final id = 'a' * 64;
+      await registry.reserveStart(
+        operationId: 'one',
         endpoint: 'b' * 64,
         containerId: id,
         requestDigest: 'a' * 64,
-      ),
-      throwsStateError,
-    );
-    await registry.reserveStart(
-      operationId: 'two',
-      endpoint: 'c' * 64,
-      containerId: id,
-      requestDigest: 'a' * 64,
-    );
-    expect(
-      () => registry.reserveStart(
-        operationId: 'short',
-        endpoint: 'b' * 64,
-        containerId: 'a',
-        requestDigest: 'a' * 64,
-      ),
-      throwsFormatException,
-    );
-  });
+      );
+      await expectLater(
+        registry.reserveStart(
+          operationId: 'two',
+          endpoint: 'b' * 64,
+          containerId: id,
+          requestDigest: 'a' * 64,
+        ),
+        throwsStateError,
+      );
+      await expectLater(
+        registry.reserveStart(
+          operationId: 'two',
+          endpoint: 'c' * 64,
+          containerId: id,
+          requestDigest: 'a' * 64,
+        ),
+        throwsStateError,
+      );
+      expect(
+        () => registry.reserveStart(
+          operationId: 'short',
+          endpoint: 'b' * 64,
+          containerId: 'a',
+          requestDigest: 'a' * 64,
+        ),
+        throwsFormatException,
+      );
+    },
+  );
 
   test(
     'legacy data survives and unresolved legacy intents block reservations',
@@ -115,7 +159,6 @@ void main() {
           path: ['opaque'],
         }),
       );
-      await create('new');
       expect(await registry.query(work.path), ['opaque']);
       await registry.createIntent(
         operationId: 'legacy',
@@ -129,7 +172,7 @@ void main() {
       );
       await expectLater(
         registry.createIntent(
-          operationId: 'new',
+          operationId: 'legacy',
           directory: work.path,
           businessName: 'x',
           runtimeName: 'x',
@@ -138,6 +181,197 @@ void main() {
       );
     },
   );
+
+  test(
+    'legacy retries work without reservations and block all reservations',
+    () async {
+      Future<CreationIntent> legacy() => registry.createIntent(
+        operationId: 'legacy',
+        directory: work.path,
+        businessName: 'old',
+        runtimeName: 'old',
+      );
+      final first = await legacy();
+      expect((await legacy()).operationId, first.operationId);
+      final restarted = DirectoryRegistry(storage);
+      await expectLater(
+        restarted.reserveStart(
+          operationId: 'new',
+          endpoint: 'c' * 64,
+          containerId: 'd' * 64,
+          requestDigest: 'a' * 64,
+        ),
+        throwsStateError,
+      );
+      expect((await restarted.pendingIntents()).single.operationId, 'legacy');
+    },
+  );
+
+  test(
+    'completed legacy permits reservation and its own idempotent retry',
+    () async {
+      Future<CreationIntent> legacy() => registry.createIntent(
+        operationId: 'legacy',
+        directory: work.path,
+        businessName: 'old',
+        runtimeName: 'old',
+      );
+      await legacy();
+      for (final phase in [
+        CreationPhase.created,
+        CreationPhase.registered,
+        CreationPhase.completed,
+      ]) {
+        await registry.advanceIntent('legacy', phase, containerId: 'f' * 64);
+      }
+      await create('new');
+      expect((await legacy()).phase, CreationPhase.completed);
+      await expectLater(
+        registry.createIntent(
+          operationId: 'other',
+          directory: work.path,
+          businessName: 'old',
+          runtimeName: 'old',
+        ),
+        throwsStateError,
+      );
+      expect((await create('new')).state, 'prepared');
+    },
+  );
+
+  test(
+    'cancelled tombstone permits legacy and preserves operation IDs',
+    () async {
+      await create('reserved');
+      await registry.cancelPreparedReservation('reserved');
+      await registry.cancelPreparedReservation('reserved');
+      await registry.createIntent(
+        operationId: 'legacy',
+        directory: work.path,
+        businessName: 'old',
+        runtimeName: 'old',
+      );
+      await expectLater(
+        registry.createIntent(
+          operationId: 'reserved',
+          directory: work.path,
+          businessName: 'old',
+          runtimeName: 'old',
+        ),
+        throwsStateError,
+      );
+      expect(
+        (await DirectoryRegistry(storage).readReservation('reserved'))!.state,
+        'cancelled',
+      );
+    },
+  );
+
+  test('mixed active legacy state fails closed without repair', () async {
+    await create('reservation');
+    final data =
+        jsonDecode(await storage.readAsString()) as Map<String, dynamic>;
+    (data['intents'] as Map<String, dynamic>)['legacy'] = {
+      'operationId': 'legacy',
+      'directory': await work.resolveSymbolicLinks(),
+      'businessName': 'old',
+      'runtimeName': 'old',
+      'phase': 'prepared',
+      'shouldStart': false,
+    };
+    final corrupt = jsonEncode(data);
+    await storage.writeAsString(corrupt);
+    await expectLater(registry.pendingIntents(), throwsFormatException);
+    await expectLater(registry.activeReservations(), throwsFormatException);
+    await expectLater(
+      registry.cancelPreparedReservation('reservation'),
+      throwsFormatException,
+    );
+    await expectLater(
+      registry.createIntent(
+        operationId: 'legacy',
+        directory: work.path,
+        businessName: 'old',
+        runtimeName: 'old',
+      ),
+      throwsFormatException,
+    );
+    expect(await storage.readAsString(), corrupt);
+  });
+
+  test('v2 duplicate keys including escaped keys fail closed', () async {
+    await create('one');
+    final original = await storage.readAsString();
+    for (final corrupt in [
+      original.replaceFirst('"version":2', '"version":2,"version":2'),
+      original.replaceFirst(
+        '"state":"prepared"',
+        r'"state":"prepared","sta\u0074e":"unknown"',
+      ),
+      original.replaceFirst('"reservations":{', '"reservations":{"one":{},'),
+    ]) {
+      expect(corrupt, isNot(original));
+      await storage.writeAsString(corrupt);
+      await expectLater(
+        registry.activeReservations(),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            'Duplicate registry object key',
+          ),
+        ),
+      );
+      await expectLater(registry.readReservation('one'), throwsFormatException);
+      await expectLater(registry.pendingIntents(), throwsFormatException);
+      await expectLater(registry.readIntent('old'), throwsFormatException);
+      await expectLater(registry.query(work.path), throwsFormatException);
+      await expectLater(
+        registry.register(work.path, 'x'),
+        throwsFormatException,
+      );
+      await expectLater(
+        registry.createIntent(
+          operationId: 'old',
+          directory: work.path,
+          businessName: 'b',
+          runtimeName: 'r',
+        ),
+        throwsFormatException,
+      );
+      await expectLater(create('another'), throwsFormatException);
+      await expectLater(
+        registry.reserveStart(
+          operationId: 'start',
+          endpoint: 'b' * 64,
+          containerId: 'f' * 64,
+          requestDigest: 'a' * 64,
+        ),
+        throwsFormatException,
+      );
+      await expectLater(
+        registry.markReservationUnknown('one'),
+        throwsFormatException,
+      );
+      await expectLater(
+        registry.cancelPreparedReservation('one'),
+        throwsFormatException,
+      );
+      await expectLater(
+        registry.advanceIntent(
+          'old',
+          CreationPhase.created,
+          containerId: 'f' * 64,
+        ),
+        throwsFormatException,
+      );
+      await expectLater(
+        registry.recordIntentFailure('old', CreationFailureStage.create),
+        throwsFormatException,
+      );
+      expect(await storage.readAsString(), corrupt);
+    }
+  });
 
   test('corrupt reservation and conflicting stored keys fail closed', () async {
     await create('one');
@@ -158,18 +392,16 @@ void main() {
 
   test('restart discovers immutable sorted active snapshot', () async {
     expect(await registry.activeReservations(), isEmpty);
-    await create('z');
-    await registry.markReservationUnknown('z');
-    await create('a', endpoint: 'c' * 64);
     await create('cancel', endpoint: 'd' * 64);
     await registry.cancelPreparedReservation('cancel');
+    await create('z');
+    await registry.markReservationUnknown('z');
     final restarted = DirectoryRegistry(storage);
     final snapshot = await restarted.activeReservations();
-    expect(snapshot.map((r) => r.operationId), ['a', 'z']);
-    expect(snapshot.map((r) => r.state), ['prepared', 'unknown']);
+    expect(snapshot.map((r) => r.operationId), ['z']);
+    expect(snapshot.map((r) => r.state), ['unknown']);
     expect(() => snapshot.clear(), throwsUnsupportedError);
-    await restarted.cancelPreparedReservation('a');
-    expect(snapshot.map((r) => r.operationId), ['a', 'z']);
+    expect(snapshot.map((r) => r.operationId), ['z']);
     expect((await restarted.activeReservations()).map((r) => r.operationId), [
       'z',
     ]);
@@ -272,6 +504,45 @@ void main() {
     },
   );
 
+  test('lock and write failures never grant dispatch permission', () async {
+    // A directory at the lock path prevents even the initial reservation.
+    await Directory('${storage.path}.lock').create();
+    var dispatched = false;
+    await expectLater(() async {
+      await create('lock-failure');
+      dispatched = true;
+    }(), throwsA(isA<FileSystemException>()));
+    expect(dispatched, isFalse);
+    expect(await storage.exists(), isFalse);
+    await Directory('${storage.path}.lock').delete();
+
+    await registry.register(work.path, 'opaque');
+    final initial = await storage.readAsString();
+    expect((await Process.run('chmod', ['500', root.path])).exitCode, 0);
+    await expectLater(
+      create('write-failure'),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(await storage.readAsString(), initial);
+    expect(await registry.activeReservations(), isEmpty);
+    expect((await Process.run('chmod', ['700', root.path])).exitCode, 0);
+    await create('prepared');
+    final before = await storage.readAsString();
+    expect((await Process.run('chmod', ['500', root.path])).exitCode, 0);
+    await expectLater(() async {
+      await registry.markReservationUnknown('prepared');
+      dispatched = true;
+    }(), throwsA(isA<FileSystemException>()));
+    expect(dispatched, isFalse);
+    expect(await storage.readAsString(), before);
+    expect(
+      (await DirectoryRegistry(storage).activeReservations()).single.state,
+      'prepared',
+    );
+    expect((await Process.run('chmod', ['700', root.path])).exitCode, 0);
+    await registry.cancelPreparedReservation('prepared');
+  });
+
   test('mark and cancel race has exactly one winner', () async {
     await create('one');
     final results = await Future.wait([
@@ -321,6 +592,49 @@ void main() {
     expect(results.where((r) => r), hasLength(1));
   });
 
+  test(
+    'cross-isolate legacy and reservation have exactly one winner',
+    () async {
+      final path = storage.path;
+      final directory = work.path;
+      final results = await Future.wait(
+        List.generate(
+          2,
+          (i) => Isolate.run(() async {
+            final other = DirectoryRegistry(File(path));
+            try {
+              if (i == 0) {
+                await other.createIntent(
+                  operationId: 'legacy',
+                  directory: directory,
+                  businessName: 'old',
+                  runtimeName: 'old',
+                );
+              } else {
+                await other.reserveStart(
+                  operationId: 'new',
+                  endpoint: 'c' * 64,
+                  containerId: 'd' * 64,
+                  requestDigest: 'a' * 64,
+                );
+              }
+              return true;
+            } on StateError {
+              return false;
+            }
+          }),
+        ),
+      );
+      expect(results.where((r) => r), hasLength(1));
+      final restarted = DirectoryRegistry(storage);
+      expect(
+        (await restarted.pendingIntents()).length +
+            (await restarted.activeReservations()).length,
+        1,
+      );
+    },
+  );
+
   test('cross-process contenders cannot both reserve', () async {
     var sdk = Platform.environment['GCM_FLUTTER_SDK'];
     if (sdk == null) {
@@ -350,4 +664,48 @@ void main() {
     expect(processes.where((p) => p.stdout == 'won'), hasLength(1));
     expect(processes.where((p) => p.stdout == 'collision'), hasLength(3));
   });
+
+  test(
+    'cross-process legacy and reservation have exactly one winner',
+    () async {
+      var sdk = Platform.environment['GCM_FLUTTER_SDK'];
+      if (sdk == null) {
+        var directory = File(Platform.resolvedExecutable).parent;
+        while (directory.parent.path != directory.path) {
+          if (await File('${directory.path}/bin/dart').exists()) {
+            sdk = directory.path;
+            break;
+          }
+          directory = directory.parent;
+        }
+      }
+      expect(sdk, isNotNull, reason: 'Flutter SDK must be discoverable');
+      final results = await Future.wait([
+        Process.run('$sdk/bin/dart', [
+          'run',
+          'test/support/reservation_process.dart',
+          storage.path,
+          'legacy',
+          work.path,
+          'legacy',
+        ]),
+        Process.run('$sdk/bin/dart', [
+          'run',
+          'test/support/reservation_process.dart',
+          storage.path,
+          'new',
+          work.path,
+        ]),
+      ]);
+      expect(results.map((p) => p.exitCode), everyElement(0));
+      expect(results.where((p) => p.stdout == 'won'), hasLength(1));
+      expect(results.where((p) => p.stdout == 'collision'), hasLength(1));
+      final restarted = DirectoryRegistry(storage);
+      expect(
+        (await restarted.pendingIntents()).length +
+            (await restarted.activeReservations()).length,
+        1,
+      );
+    },
+  );
 }

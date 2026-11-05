@@ -297,6 +297,8 @@ class ResourceReservation {
     );
   }
 
+  /// Compares the stored logical keys; this does not prove disjoint runtime
+  /// resources or endpoint identities and is not used for admission.
   bool sameResource(ResourceReservation other) =>
       endpoint == other.endpoint &&
       kind == other.kind &&
@@ -462,12 +464,15 @@ class DirectoryRegistry {
     final active = reservations.values
         .where((r) => r.state != 'cancelled')
         .toList();
-    for (var i = 0; i < active.length; i++) {
-      for (var j = i + 1; j < active.length; j++) {
-        if (active[i].sameResource(active[j])) {
-          throw const FormatException('Conflicting resource reservations');
-        }
-      }
+    // Legacy records have no trustworthy endpoint or comparable identity.
+    // A mixed active state cannot be proven safe and must not be repaired here.
+    if (active.isNotEmpty &&
+        intents.values.any((i) => i.phase != CreationPhase.completed)) {
+      throw const FormatException('Conflicting legacy and reservation state');
+    }
+    // Opaque endpoint digests and cross-kind names cannot prove disjointness.
+    if (active.length > 1) {
+      throw const FormatException('Conflicting resource reservations');
     }
     return _RegistryData(entries, intents, reservations);
   }
@@ -610,6 +615,10 @@ class DirectoryRegistry {
         }
         return existing;
       }
+      // Neither legacy intent names nor endpoint identity establish disjointness.
+      if (data.reservations.values.any((r) => r.state != 'cancelled')) {
+        throw StateError('Active reservation prevents legacy intent');
+      }
       final intent = CreationIntent(
         operationId: operationId,
         directory: identity,
@@ -624,14 +633,17 @@ class DirectoryRegistry {
     });
   }
 
-  /// Creates an intent and its resource reservation in one locked write.
+  /// Creates a reservation in one locked write.
   ///
   /// Endpoint namespace and request digest must be lowercase 64-hex digests
   /// of nonsecret normalized data supplied by callers. No secrets should be
   /// persisted in any reservation field. These opaque values do not establish
   /// endpoint trust or authenticity and are not verified facts.
-  /// This only coordinates callers of these APIs on this registry file; legacy
-  /// APIs and external clients are not fenced. No runtime is wired to this API.
+  /// New legacy intents and reservations are mutually exclusive on this file.
+  /// Unverified namespaces and identities force all active reservations to
+  /// serialize; an unknown reservation can block all new admissions forever.
+  /// Existing runtime callers and external clients remain uncoordinated; this
+  /// is not application-wide fencing. No runtime is wired to this API.
   /// Every submitter must hold [withIntentLock] across its whole operation and
   /// persist [markReservationUnknown] before any external side effect. Never
   /// dispatch if that write fails. Unknown is held indefinitely.
@@ -695,9 +707,7 @@ class DirectoryRegistry {
           }
           return old;
         }
-        if (data.reservations.values.any(
-          (r) => r.state != 'cancelled' && r.sameResource(requested),
-        )) {
+        if (data.reservations.values.any((r) => r.state != 'cancelled')) {
           throw StateError('Resource already reserved');
         }
         data.reservations[requested.operationId] = requested;
