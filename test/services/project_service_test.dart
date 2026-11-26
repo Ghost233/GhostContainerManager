@@ -269,6 +269,7 @@ void main() {
       imageService: ImageService(bridge: bridge, containerService: containers),
       projectPaths: [temp.path],
       buildLogStore: _FakeProjectBuildLogStore(),
+      resourceDirectory: '${temp.path}/clock-project-resources',
       clock: () => now,
     );
     final projectDir = Directory('${temp.path}/myapp')..createSync();

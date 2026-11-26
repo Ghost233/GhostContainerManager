@@ -31,13 +31,13 @@ GCM 后端统一使用 Docker CLI；`compose_up`、`compose_down` 调用标准 `
 ## 工具发现：gcm_help
 
 server 采用精简注册：`tools/list` 只返回 `gcm_help` 与 `gcm_call` 两个
-工具，全部 38 个业务工具经 `gcm_help` 发现、经 `gcm_call` 调用。`gcm_help`
+工具，全部 39 个业务工具经 `gcm_help` 发现、经 `gcm_call` 调用。`gcm_help`
 支持三种模式：
 
 **默认模式** `gcm_help({})` — 返回全部工具，按 8 个领域分组：
 
 ```json
-{"usage": "...", "totalTools": 38, "domains": {
+{"usage": "...", "totalTools": 39, "domains": {
   "system":    ["system_status", "system_start", "system_stop"],
   "container": ["container_list", "container_inspect", "container_stats",
                 "container_create", "container_start", "container_stop",
@@ -46,7 +46,7 @@ server 采用精简注册：`tools/list` 只返回 `gcm_help` 与 `gcm_call` 两
   "image":     ["image_list", "image_inspect", "image_delete", "image_pull"],
   "mount":     ["mount_list", "mount_inspect"],
   "network":   ["network_list", "network_get"],
-  "compose":   ["compose_list", "compose_up", "compose_down"],
+  "compose":   ["compose_list", "compose_config", "compose_up", "compose_down"],
   "project":   ["project_list", "project_get", "project_init", "project_build",
                 "project_test", "project_reclaim", "project_publish",
                 "project_restore", "project_resource_record",

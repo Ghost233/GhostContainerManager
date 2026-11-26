@@ -53,8 +53,8 @@ void main() {
   });
 
   group('tool catalog', () {
-    test('38 entries across eight domains, matching the v1 spec', () {
-      expect(kToolCatalog, hasLength(38));
+    test('39 entries across eight domains, matching the v1 spec', () {
+      expect(kToolCatalog, hasLength(39));
       final byDomain = catalogByDomain();
       expect(byDomain.keys, <String>[
         'system',
@@ -71,7 +71,7 @@ void main() {
       expect(byDomain['image'], hasLength(4));
       expect(byDomain['mount'], hasLength(2));
       expect(byDomain['network'], hasLength(2));
-      expect(byDomain['compose'], hasLength(3));
+      expect(byDomain['compose'], hasLength(4));
       expect(byDomain['project'], hasLength(11));
       expect(byDomain['registry'], hasLength(3));
     });
@@ -169,7 +169,7 @@ void main() {
       }
     });
 
-    test('idempotentHint 与生命周期并发契约逐一核对（issue #32，穷举 38 条）', () {
+    test('idempotentHint 与生命周期并发契约逐一核对（issue #32，穷举 39 条）', () {
       // 对照 docs/spec/container-lifecycle.md §3 并发契约核对：
       // start/stop/kill 幂等（重试无额外效果）；delete 对 notFound 视为
       // 成功（幂等）；create 重名报 CONFLICT（非幂等）；restart 每次执行
@@ -199,6 +199,7 @@ void main() {
         'network_list': true,
         'network_get': true,
         'compose_list': true,
+        'compose_config': true,
         'compose_up': true,
         'compose_down': true,
         'project_list': true,

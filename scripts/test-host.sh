@@ -159,10 +159,12 @@ pathlib.Path(sys.argv[2]).write_text(json.dumps(candidate, indent=2) + '\n')
 PY
 elif [[ "$host_mode" == check ]]; then
   run_check format "$GCM_FLUTTER_SDK/bin/cache/dart-sdk/bin/dart" format --output=none --set-exit-if-changed lib test
-  run_check analyze "$GCM_FLUTTER_SDK/bin/flutter" --suppress-analytics analyze --no-pub
+  run_check analyze "$GCM_FLUTTER_SDK/bin/cache/dart-sdk/bin/dart" analyze --fatal-infos --fatal-warnings
   run_check test "$GCM_FLUTTER_SDK/bin/flutter" --suppress-analytics test --no-pub --concurrency=1
 elif [[ "$host_mode" == format ]]; then
   run_check format "$GCM_FLUTTER_SDK/bin/cache/dart-sdk/bin/dart" format --output=none --set-exit-if-changed "$@"
+elif [[ "$host_mode" == analyze ]]; then
+  run_check analyze "$GCM_FLUTTER_SDK/bin/cache/dart-sdk/bin/dart" analyze --fatal-infos --fatal-warnings "$@"
 else
   run_check "$host_mode" "$GCM_FLUTTER_SDK/bin/flutter" --suppress-analytics "$host_mode" --no-pub "$@"
 fi

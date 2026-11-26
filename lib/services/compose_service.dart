@@ -4,6 +4,7 @@ library;
 // ignore_for_file: prefer_initializing_formals
 
 import '../bridge/container_bridge.dart';
+import 'compose_config_validator.dart';
 import 'container_models.dart';
 import 'container_service.dart';
 import 'errors.dart';
@@ -161,6 +162,11 @@ class ComposeService {
         )
         .toList(growable: false);
   }
+
+  Future<Map<String, Object?>> validateConfig(
+    String file, {
+    bool summary = false,
+  }) => ComposeConfigValidator(_bridge).validate(file, summary: summary);
 
   /// `docker compose up`. [file] must be an absolute path (the CLI runs
   /// with an unspecified working directory, so relative paths are unsafe).

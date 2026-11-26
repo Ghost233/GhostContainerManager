@@ -9,7 +9,7 @@ MCP 协议只注册 `gcm_help` 与 `gcm_call`。业务名称、schema、风险�
 | image | `image_list`, `image_inspect`, `image_delete`, `image_pull` |
 | mount | `mount_list`, `mount_inspect` |
 | network | `network_list`, `network_get` |
-| compose | `compose_list`, `compose_up`, `compose_down` |
+| compose | `compose_list`, `compose_config`, `compose_up`, `compose_down` |
 | project | `project_list`, `project_get`, `project_init`, `project_build`, `project_test`, `project_reclaim`, `project_publish`, `project_restore`, `project_resource_record`, `project_cleanup_plan`, `project_cleanup_execute` |
 | registry | `registry_status`, `registry_start`, `registry_stop` |
 
@@ -20,6 +20,8 @@ MCP 协议只注册 `gcm_help` 与 `gcm_call`。业务名称、schema、风险�
 镜像接受 name:tag、name@sha256:digest 与镜像 ID。Dockerfile 大小不设固定上限。挂载聚合支持 bind、volume、tmpfs，卷由引擎管理，不能把远程引擎路径当宿主路径。
 
 `system_status` 返回真实连接与版本信息；`system_start` 仅检查当前连接；`system_stop` 明确返回不支持通用引擎停止。引擎安装、启停和数据目录由外部管理。
+
+ `compose_config` 只校验现有绝对本地路径的 Compose 文件，不展开变量、不加载外部环境文件，也不启动或连接引擎。可选 `summary:true` 只返回服务名和隔离设置，不返回原始 YAML、镜像配置或宿主机路径。拒绝符号链接、include、extends、env_file、label_file 等外部引用。
 
 `compose_up` 使用 `docker compose --file ... up --detach`，dry-run 是 Compose 全局参数；`compose_down` 使用标准 down，removeOrphans 删除孤立容器，不表示保留网络。默认不删除持久卷。
 

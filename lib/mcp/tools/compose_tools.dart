@@ -45,6 +45,25 @@ void registerComposeTools(
 
   registerCatalogTool(
     service,
+    'compose_config',
+    callback: (args, extra) => guardToolCall(() async {
+      final file = args['file'];
+      if (file is! String || file.isEmpty) {
+        throw const GcmException(
+          GcmErrorCode.invalidArgument,
+          'compose_config requires a local file.',
+        );
+      }
+      final data = await composeService.validateConfig(
+        file,
+        summary: args['summary'] == true,
+      );
+      return (data: data, summary: 'Compose 格式校验通过；未启动资源。');
+    }),
+  );
+
+  registerCatalogTool(
+    service,
     'compose_up',
     callback: (args, extra) => guardToolCall(() async {
       final file = args['file'];

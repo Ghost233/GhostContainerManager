@@ -964,6 +964,30 @@ final List<ToolCatalogEntry> kToolCatalog = [
     annotations: _readOnly('List Compose Projects'),
   ),
   ToolCatalogEntry(
+    name: 'compose_config',
+    domain: 'compose',
+    title: 'Validate Compose Configuration',
+    description:
+        '仅校验现有本地 Compose 文件，不启动 Docker 引擎或资源。'
+        '不展开变量、不解析环境文件、不返回完整配置；禁止 include、extends 和外部配置文件。',
+    inputSchema: const JsonObject(
+      properties: <String, JsonSchema>{
+        'file': JsonString(description: 'Compose 文件的绝对本机路径'),
+        'summary': JsonBoolean(description: '返回有界的服务隔离摘要', defaultValue: false),
+      },
+      required: ['file'],
+      additionalProperties: false,
+    ),
+    outputSchema: const JsonObject(
+      properties: <String, JsonSchema>{
+        'valid': JsonBoolean(),
+        'services': JsonArray(items: JsonObject()),
+      },
+      required: ['valid'],
+    ),
+    annotations: _readOnly('Validate Compose Configuration'),
+  ),
+  ToolCatalogEntry(
     name: 'compose_up',
     domain: 'compose',
     title: 'Compose Up',
