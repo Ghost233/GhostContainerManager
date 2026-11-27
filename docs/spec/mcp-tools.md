@@ -6,7 +6,7 @@ MCP 协议只注册 `gcm_help` 与 `gcm_call`。业务名称、schema、风险�
 |---|---|
 | system | `system_status`, `system_start`, `system_stop` |
 | container | `container_list`, `container_inspect`, `container_stats`, `container_create`, `container_start`, `container_stop`, `container_restart`, `container_kill`, `container_delete`, `container_exec` |
-| image | `image_list`, `image_inspect`, `image_delete`, `image_pull` |
+| image | `image_list`, `image_inspect`, `image_delete`, `image_pull`, `image_save`, `image_load` |
 | mount | `mount_list`, `mount_inspect` |
 | network | `network_list`, `network_get` |
 | compose | `compose_list`, `compose_config`, `compose_up`, `compose_down` |
@@ -24,6 +24,12 @@ MCP 协议只注册 `gcm_help` 与 `gcm_call`。业务名称、schema、风险�
  `compose_config` 只校验现有绝对本地路径的 Compose 文件，不展开变量、不加载外部环境文件，也不启动或连接引擎。可选 `summary:true` 只返回服务名和隔离设置，不返回原始 YAML、镜像配置或宿主机路径。拒绝符号链接、include、extends、env_file、label_file 等外部引用。
 
 `compose_up` 使用 `docker compose --file ... up --detach`，dry-run 是 Compose 全局参数；`compose_down` 使用标准 down，removeOrphans 删除孤立容器，不表示保留网络。默认不删除持久卷。
+
+## 镜像归档
+
+- `image_save` 接受镜像 `reference` 与本机绝对 `path`（`.tar`）。调用标准 `docker image save`，不覆盖已有文件，返回 `context`、`bytes` 和 `sha256`。镜像详情页「导出镜像」可以复制摘要。
+- `image_load` 接受同一归档的 `path`、导出时记录的 `expectedSha256` 及 `confirmTagChanges:true`。GCM 对临时副本重新校验后才执行 `docker image load`；校验不通过不会触及镜像。成功返回 Docker context 与 Docker 报告的已加载引用，不启动容器。Docker 可能覆盖归档中的同名 tag，调用前确认目标 context 与 tag。
+- 文件始终在 **GCM 所在电脑** 上，不是远程 Docker 主机的路径。远程 context 由 Docker CLI 传输归档。导入前确认本机临时目录有足够容纳一份归档的空间。导入超时或连接中断后先检查目标镜像，不能直接假定未导入或重试。
 
 ## 结果与资源保护
 

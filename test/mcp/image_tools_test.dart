@@ -151,6 +151,8 @@ void main() {
       'image_inspect': 'Inspect Image',
       'image_delete': 'Delete Image',
       'image_pull': 'Pull Image',
+      'image_save': 'Export Image Archive',
+      'image_load': 'Import Image Archive',
     };
     expect(byName.keys, containsAll(expectedTitles.keys));
     for (final entry in expectedTitles.entries) {

@@ -687,7 +687,7 @@ final List<ToolCatalogEntry> kToolCatalog = [
     ),
     annotations: _annotations('Execute Container Command'),
   ),
-  // ---- image（4）----
+  // ---- image（6）----
   ToolCatalogEntry(
     name: 'image_list',
     domain: 'image',
@@ -809,6 +809,60 @@ final List<ToolCatalogEntry> kToolCatalog = [
       required: ['reference'],
     ),
     annotations: _annotations('Pull Image', idempotent: true),
+  ),
+  ToolCatalogEntry(
+    name: 'image_save',
+    domain: 'image',
+    title: 'Export Image Archive',
+    description:
+        '用当前 Docker context 导出镜像为 GCM 运行电脑上的 .tar。返回字节数与 SHA-256；不覆盖已有文件。',
+    inputSchema: const JsonObject(
+      properties: <String, JsonSchema>{
+        'reference': JsonString(description: _referenceDescription),
+        'path': JsonString(description: 'GCM 所在电脑上的绝对 .tar 路径'),
+      },
+      required: ['reference', 'path'],
+      additionalProperties: false,
+    ),
+    outputSchema: const JsonObject(
+      properties: <String, JsonSchema>{
+        'reference': JsonString(),
+        'path': JsonString(),
+        'context': JsonString(),
+        'bytes': JsonInteger(),
+        'sha256': JsonString(),
+      },
+      required: ['reference', 'path', 'context', 'bytes', 'sha256'],
+    ),
+    annotations: _annotations('Export Image Archive'),
+  ),
+  ToolCatalogEntry(
+    name: 'image_load',
+    domain: 'image',
+    title: 'Import Image Archive',
+    description: '校验 GCM 所在电脑上的 .tar SHA-256，然后通过当前 Docker context 导入。不启动容器；Docker 可能覆盖归档中同名 tag。',
+    inputSchema: const JsonObject(
+      properties: <String, JsonSchema>{
+        'path': JsonString(description: 'GCM 所在电脑上的绝对 .tar 路径'),
+        'expectedSha256': JsonString(pattern: r'^[a-f0-9]{64}$'),
+        'confirmTagChanges': JsonBoolean(
+          description: '确认 Docker 可能恢复或覆盖归档中的同名 tag',
+        ),
+      },
+      required: ['path', 'expectedSha256', 'confirmTagChanges'],
+      additionalProperties: false,
+    ),
+    outputSchema: const JsonObject(
+      properties: <String, JsonSchema>{
+        'path': JsonString(),
+        'context': JsonString(),
+        'bytes': JsonInteger(),
+        'sha256': JsonString(),
+        'loadedReferences': JsonArray(items: JsonString()),
+      },
+      required: ['path', 'context', 'bytes', 'sha256', 'loadedReferences'],
+    ),
+    annotations: _annotations('Import Image Archive', destructive: true),
   ),
   // ---- mount（2）----
   ToolCatalogEntry(

@@ -135,4 +135,35 @@ void registerImageTools(ToolRegistrar service, ImageService imageService) {
       }
     }),
   );
+  registerCatalogTool(
+    service,
+    'image_save',
+    callback: (args, extra) => guardToolCall(() async {
+      extra.signal.throwIfAborted();
+      final receipt = await imageService.archives.save(
+        args['reference'] as String,
+        args['path'] as String,
+      );
+      return (
+        data: receipt,
+        summary: '已通过 ${receipt['context']} 导出镜像（${receipt['bytes']} 字节）。',
+      );
+    }),
+  );
+  registerCatalogTool(
+    service,
+    'image_load',
+    callback: (args, extra) => guardToolCall(() async {
+      extra.signal.throwIfAborted();
+      final receipt = await imageService.archives.load(
+        args['path'] as String,
+        expectedSha256: args['expectedSha256'] as String,
+        confirmTagChanges: args['confirmTagChanges'] as bool,
+      );
+      return (
+        data: receipt,
+        summary: 'SHA-256 已校验；Docker context ${receipt['context']} 导入成功，未启动容器。',
+      );
+    }),
+  );
 }

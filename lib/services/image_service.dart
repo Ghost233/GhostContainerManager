@@ -17,6 +17,7 @@ import 'dart:async';
 import '../bridge/container_bridge.dart';
 import 'container_service.dart';
 import 'errors.dart';
+import 'image_archive.dart';
 import 'image_models.dart';
 
 class ImageService {
@@ -24,9 +25,11 @@ class ImageService {
     required ContainerBridge bridge,
     ContainerService? containerService,
   }) : _bridge = bridge,
-       _containerService = containerService;
+       _containerService = containerService,
+       archives = ImageArchiveService(bridge);
 
   final ContainerBridge _bridge;
+  final ImageArchiveService archives;
 
   /// Used only for the delete in-use pre-check. When null (e.g. minimal
   /// wiring), the pre-check is skipped and the upstream error passes

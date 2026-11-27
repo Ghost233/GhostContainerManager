@@ -9,7 +9,7 @@ void main() {
     test('definitions 覆盖全部 39 个注册表条目且不可修改', () {
       final registry = GcmToolRegistry();
       final definitions = registry.definitions();
-      expect(definitions, hasLength(39));
+      expect(definitions, hasLength(41));
       expect(definitions.keys, containsAll(kToolCatalog.map((e) => e.name)));
       final existing = registry.lookup('container_create')!;
       expect(

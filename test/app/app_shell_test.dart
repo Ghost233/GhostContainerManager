@@ -59,6 +59,7 @@ Future<void> _pumpApp(
     GhostContainerManagerApp(
       bridge: fake,
       enableMcp: false,
+      enableLauncher: false,
       menuBarChannel:
           menuBarChannel ?? _AppMenuChannel(const MenuBarPreferences()),
     ),

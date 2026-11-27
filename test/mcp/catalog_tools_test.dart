@@ -53,8 +53,8 @@ void main() {
   });
 
   group('tool catalog', () {
-    test('39 entries across eight domains, matching the v1 spec', () {
-      expect(kToolCatalog, hasLength(39));
+    test('41 entries across eight domains, matching the v1 spec', () {
+      expect(kToolCatalog, hasLength(41));
       final byDomain = catalogByDomain();
       expect(byDomain.keys, <String>[
         'system',
@@ -68,7 +68,7 @@ void main() {
       ]);
       expect(byDomain['system'], hasLength(3));
       expect(byDomain['container'], hasLength(10));
-      expect(byDomain['image'], hasLength(4));
+      expect(byDomain['image'], hasLength(6));
       expect(byDomain['mount'], hasLength(2));
       expect(byDomain['network'], hasLength(2));
       expect(byDomain['compose'], hasLength(4));
@@ -194,6 +194,8 @@ void main() {
         'image_inspect': true,
         'image_delete': true,
         'image_pull': true,
+        'image_save': false,
+        'image_load': false,
         'mount_list': true,
         'mount_inspect': true,
         'network_list': true,

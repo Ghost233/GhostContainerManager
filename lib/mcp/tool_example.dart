@@ -2,10 +2,9 @@
 /// 必能通过其 inputSchema 校验的示例参数对象，随 gcm_help tool 模式输出。
 ///
 /// 示例由 schema 派生（单一事实来源不双写）：枚举取首值、整数/数值取
-/// minimum（无则 1）、字符串取 defaultValue 或「example」（注册表内仅有
-/// 的 pattern 是名称前缀规则，该占位串满足）、对象只填 required 字段、
+/// minimum（无则 1）、字符串取 defaultValue 或匹配已知 pattern 的占位值、对象只填 required 字段、
 /// 数组给单元素。正确性由 test/mcp/catalog_tools_test.dart 强制——
-/// 35 个示例逐一过 mcp_dart 内建校验器，任何 schema 改动导致示例失效
+/// 全部示例逐一过 mcp_dart 内建校验器，任何 schema 改动导致示例失效
 /// 都会测试变红。
 library;
 
@@ -16,7 +15,9 @@ Object? exampleForSchema(JsonSchema schema) {
   return switch (schema) {
     final JsonObject o => _objectExample(o),
     final JsonString s =>
-      s.enumValues?.first ?? s.defaultValue?.toString() ?? 'example',
+      s.enumValues?.first ??
+          s.defaultValue?.toString() ??
+          (s.pattern == r'^[a-f0-9]{64}$' ? '0' * 64 : 'example'),
     final JsonInteger i => i.defaultValue ?? i.minimum ?? 1,
     final JsonNumber n => n.defaultValue ?? n.minimum ?? 1,
     final JsonBoolean b => b.defaultValue ?? true,

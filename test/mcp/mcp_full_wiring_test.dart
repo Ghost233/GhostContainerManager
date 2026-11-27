@@ -104,7 +104,7 @@ void main() {
     enableJsonResponse: true,
   );
 
-  test('tools/list exposes the slim two-tool surface; gcm_help catalogs all 39 tools', () async {
+  test('tools/list exposes the slim two-tool surface; gcm_help catalogs all 41 tools', () async {
     final server = makeServer();
     await server.start();
     addTearDown(server.stop);
@@ -215,6 +215,8 @@ void main() {
       'image_inspect',
       'image_delete',
       'image_pull',
+      'image_save',
+      'image_load',
       'mount_list',
       'mount_inspect',
       'network_list',
@@ -238,7 +240,7 @@ void main() {
       'registry_start',
       'registry_stop',
     };
-    expect(catalogNames, hasLength(39), reason: 'catalog: $catalogNames');
+    expect(catalogNames, hasLength(41), reason: 'catalog: $catalogNames');
     expect(
       catalogNames,
       expected,
@@ -246,7 +248,7 @@ void main() {
           'missing: ${expected.difference(catalogNames)}; '
           'unexpected: ${catalogNames.difference(expected)}',
     );
-    expect(structured['totalTools'], 39);
+    expect(structured['totalTools'], 41);
   });
 
   test('settings switch on launch starts the server; off stops it', () async {

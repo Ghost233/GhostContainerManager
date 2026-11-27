@@ -11,6 +11,7 @@ library;
 import 'dart:async';
 
 // Flutter 的 painting 库自带同名 ImageInfo，隐藏以使用镜像域模型。
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart' hide ImageInfo;
 
 import '../../app/placeholders.dart';
@@ -49,6 +50,7 @@ class _ImagesPageState extends State<ImagesPage> {
   String _search = '';
   String? _selectedReference;
   final Set<String> _deleting = <String>{};
+  bool _importing = false;
 
   bool get _ready => widget.controller.readiness?.ready ?? false;
 
@@ -112,6 +114,35 @@ class _ImagesPageState extends State<ImagesPage> {
       builder: (context) => _PullDialog(service: widget.service),
     );
     if (pulled == true) await _refresh();
+  }
+
+  Future<void> _importArchive() async {
+    setState(() => _importing = true);
+    try {
+      final file = await openFile(
+        acceptedTypeGroups: const [_imageArchiveType],
+      );
+      if (file == null || !mounted) return;
+      final checksum = await showDialog<String>(
+        context: context,
+        builder: (context) => _ImageArchiveImportDialog(fileName: file.name),
+      );
+      if (checksum == null || !mounted) return;
+      final receipt = await widget.service.archives.load(
+        file.path,
+        expectedSha256: checksum,
+        confirmTagChanges: true,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('镜像已导入 ${receipt['context']}，未启动容器。')),
+      );
+      await _refresh();
+    } catch (error) {
+      if (mounted) await _showArchiveError(context, '导入失败', error);
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
   }
 
   Future<void> _confirmDelete(ImageInfo image) async {
@@ -210,19 +241,23 @@ class _ImagesPageState extends State<ImagesPage> {
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 8),
       child: Row(
         children: [
-          SizedBox(
-            width: 280,
-            height: 32,
-            child: TextField(
-              decoration: const InputDecoration(
-                hintText: '搜索镜像',
-                prefixIcon: Icon(Icons.search, size: 18),
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(vertical: 8),
-                border: OutlineInputBorder(),
+          Flexible(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 280),
+              child: SizedBox(
+                height: 32,
+                child: TextField(
+                  decoration: const InputDecoration(
+                    hintText: '搜索镜像',
+                    prefixIcon: Icon(Icons.search, size: 18),
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(vertical: 8),
+                    border: OutlineInputBorder(),
+                  ),
+                  style: theme.textTheme.bodySmall,
+                  onChanged: (value) => setState(() => _search = value),
+                ),
               ),
-              style: theme.textTheme.bodySmall,
-              onChanged: (value) => setState(() => _search = value),
             ),
           ),
           const SizedBox(width: 16),
@@ -232,7 +267,15 @@ class _ImagesPageState extends State<ImagesPage> {
               color: theme.colorScheme.outline,
             ),
           ),
-          const Spacer(),
+          const SizedBox(width: 12),
+          OutlinedButton.icon(
+            onPressed: _importing ? null : _importArchive,
+            icon: _importing
+                ? const GcmInlineSpinner()
+                : const Icon(Icons.file_open_outlined, size: 18),
+            label: const Text('导入镜像'),
+          ),
+          const SizedBox(width: 8),
           FilledButton.tonalIcon(
             onPressed: _openPullDialog,
             icon: const Icon(Icons.download, size: 18),
@@ -423,6 +466,55 @@ class _ImageDetailView extends StatefulWidget {
 class _ImageDetailViewState extends State<_ImageDetailView> {
   ImageInspection? _inspection;
   Object? _error;
+  bool _exporting = false;
+
+  Future<void> _exportArchive() async {
+    setState(() => _exporting = true);
+    try {
+      final file = await getSaveLocation(
+        acceptedTypeGroups: const [_imageArchiveType],
+        suggestedName:
+            '${widget.reference.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_')}.tar',
+      );
+      if (file == null || !mounted) return;
+      final path = file.path.endsWith('.tar') ? file.path : '${file.path}.tar';
+      final receipt = await widget.service.archives.save(
+        widget.reference,
+        path,
+      );
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('镜像已导出'),
+          content: SizedBox(
+            width: 540,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SelectableText(receipt['path']! as String),
+                const SizedBox(height: 12),
+                Text('Docker context：${receipt['context']}'),
+                const Text('SHA-256'),
+                CopyValue(value: receipt['sha256']! as String),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('好'),
+            ),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (mounted) await _showArchiveError(context, '导出失败', error);
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
 
   @override
   void initState() {
@@ -453,7 +545,25 @@ class _ImageDetailViewState extends State<_ImageDetailView> {
             label: const Text('返回镜像列表'),
           ),
           const SizedBox(height: 8),
-          Text(widget.reference, style: theme.textTheme.titleLarge),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  widget.reference,
+                  style: theme.textTheme.titleLarge,
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: _inspection == null || _exporting
+                    ? null
+                    : _exportArchive,
+                icon: _exporting
+                    ? const GcmInlineSpinner()
+                    : const Icon(Icons.save_alt, size: 18),
+                label: const Text('导出镜像'),
+              ),
+            ],
+          ),
           const SizedBox(height: 16),
           Expanded(
             child: switch ((_inspection, _error)) {
@@ -780,3 +890,88 @@ String formatImageSize(int? bytes) {
 String _formatDate(DateTime time) =>
     '${time.year}-${time.month.toString().padLeft(2, '0')}-'
     '${time.day.toString().padLeft(2, '0')}';
+
+const _imageArchiveType = XTypeGroup(
+  label: 'Docker 镜像归档',
+  extensions: ['tar'],
+  uniformTypeIdentifiers: ['public.tar-archive'],
+);
+
+Future<void> _showArchiveError(
+  BuildContext context,
+  String title,
+  Object error,
+) => showDialog<void>(
+  context: context,
+  builder: (context) => AlertDialog(
+    title: Text(title),
+    content: Text(
+      error is GcmException
+          ? '${error.message}${error.hint == null ? '' : '\n${error.hint}'}'
+          : '无法处理镜像归档，请检查文件、权限和 Docker context。',
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('好'),
+      ),
+    ],
+  ),
+);
+
+class _ImageArchiveImportDialog extends StatefulWidget {
+  const _ImageArchiveImportDialog({required this.fileName});
+  final String fileName;
+
+  @override
+  State<_ImageArchiveImportDialog> createState() =>
+      _ImageArchiveImportDialogState();
+}
+
+class _ImageArchiveImportDialogState extends State<_ImageArchiveImportDialog> {
+  String _checksum = '';
+  bool _confirm = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final valid = RegExp(r'^[a-f0-9]{64}$').hasMatch(_checksum);
+    return AlertDialog(
+      title: const Text('导入镜像'),
+      content: SizedBox(
+        width: 480,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.fileName),
+            const Text('粘贴导出时显示的 SHA-256。校验不符不会导入。'),
+            TextField(
+              decoration: const InputDecoration(labelText: 'SHA-256'),
+              onChanged: (value) =>
+                  setState(() => _checksum = value.trim().toLowerCase()),
+            ),
+            CheckboxListTile(
+              value: _confirm,
+              onChanged: (value) => setState(() => _confirm = value == true),
+              title: const Text('确认 Docker 可能覆盖归档中的同名 tag；不会启动容器。'),
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: valid && _confirm
+              ? () => Navigator.of(context).pop(_checksum)
+              : null,
+          child: const Text('校验并导入'),
+        ),
+      ],
+    );
+  }
+}
